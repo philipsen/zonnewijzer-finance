@@ -30,7 +30,10 @@
           </div>
         </template>
         <template v-else>
-          <span>Welcome, {{ user.name }}</span>
+          <div class="user-info">
+            <span>Welcome, {{ user.name }}</span>
+            <span v-if="user.role" :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
+          </div>
           <button @click="signOut" class="sign-out-btn">Sign Out</button>
         </template>
       </div>
@@ -191,5 +194,30 @@ main {
   main {
     padding: 1rem;
   }
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.role-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.role-base {
+  background-color: #e3f2fd;
+  color: #1565c0;
+}
+
+.role-admin {
+  background-color: #fff3e0;
+  color: #e65100;
 }
 </style>

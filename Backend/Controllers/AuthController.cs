@@ -83,7 +83,8 @@ namespace Backend.Controllers
                         id = user.Id,
                         email = user.Email,
                         name = user.Name,
-                        picture = user.PictureUrl
+                        picture = user.PictureUrl,
+                        role = user.Role.ToString()
                     }
                 });
             }
@@ -122,7 +123,8 @@ namespace Backend.Controllers
                     id = user.Id,
                     email = user.Email,
                     name = user.Name,
-                    picture = user.PictureUrl
+                    picture = user.PictureUrl,
+                    role = user.Role.ToString()
                 });
             }
             catch (Exception ex)
@@ -156,6 +158,7 @@ namespace Backend.Controllers
                         email = u.Email,
                         name = u.Name,
                         picture = u.PictureUrl,
+                        role = u.Role.ToString(),
                         createdAt = u.CreatedAt,
                         lastLoginAt = u.LastLoginAt
                     })
@@ -202,6 +205,19 @@ namespace Backend.Controllers
                     user.Email = request.Email.Trim();
                 }
 
+                // Only allow role changes for admin users
+                if (!string.IsNullOrWhiteSpace(request.Role))
+                {
+                    var currentUser = await _context.Users.FindAsync(currentUserId);
+                    if (currentUser?.Role == UserRole.Admin)
+                    {
+                        if (Enum.TryParse<UserRole>(request.Role, true, out var newRole))
+                        {
+                            user.Role = newRole;
+                        }
+                    }
+                }
+
                 await _context.SaveChangesAsync();
 
                 return Ok(new
@@ -210,12 +226,67 @@ namespace Backend.Controllers
                     email = user.Email,
                     name = user.Name,
                     picture = user.PictureUrl,
+                    role = user.Role.ToString(),
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
             }
             catch (Exception ex)
             {
+                return BadRequest($"Update failed: {ex.Message}");
+            }        }
+
+        [HttpPut("users/{id}/role")]
+        public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleRequest request)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                {
+                    return Unauthorized();
+                }
+
+                // Check if current user is admin
+                var currentUser = await _context.Users.FindAsync(currentUserId);
+                if (currentUser?.Role != UserRole.Admin)
+                {
+                    _logger.LogWarning("Non-admin user {UserId} attempted to change user role", currentUserId);
+                    return Forbid("Only administrators can change user roles");
+                }
+
+                var user = await _context.Users.FindAsync(id);
+                if (user == null)
+                {
+                    return NotFound("User not found");
+                }
+
+                if (!Enum.TryParse<UserRole>(request.Role, true, out var newRole))
+                {
+                    return BadRequest("Invalid role. Valid roles are: Base, Admin");
+                }
+
+                user.Role = newRole;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Admin {AdminId} changed role of user {UserId} to {Role}", currentUserId, id, newRole);
+
+                return Ok(new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    name = user.Name,
+                    picture = user.PictureUrl,
+                    role = user.Role.ToString(),
+                    createdAt = user.CreatedAt,
+                    lastLoginAt = user.LastLoginAt
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating user role");
                 return BadRequest($"Update failed: {ex.Message}");
             }
         }
@@ -245,6 +316,7 @@ namespace Backend.Controllers
                     email = user.Email,
                     name = user.Name,
                     picture = user.PictureUrl,
+                    role = user.Role.ToString(),
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -254,16 +326,5 @@ namespace Backend.Controllers
                 return Unauthorized();
             }
         }
-    }
-
-    public class GoogleAuthRequest
-    {
-        public string Credential { get; set; } = string.Empty;
-    }
-
-    public class UpdateUserRequest
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
     }
 }

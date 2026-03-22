@@ -77,6 +77,9 @@ namespace Backend.Migrations
                     b.Property<string>("PictureUrl")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Role")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Email")

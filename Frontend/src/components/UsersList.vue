@@ -37,6 +37,21 @@
           <p class="user-email">{{ user.email }}</p>
           <div class="user-dates">
             <div class="date-item">
+              <span class="date-label">Role:</span>
+              <div class="role-management">
+                <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
+                <select 
+                  v-if="currentUserRole === 'Admin' && user.id !== currentUserId"
+                  :value="user.role"
+                  @change="updateUserRole(user, $event.target.value)"
+                  class="role-select"
+                >
+                  <option value="Base">Base</option>
+                  <option value="Admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div class="date-item">
               <span class="date-label">Joined:</span>
               <span class="date-value">{{ formatDate(user.createdAt) }}</span>
             </div>
@@ -69,6 +84,52 @@ export default {
     const users = ref([])
     const loading = ref(true)
     const error = ref('')
+    const currentUserRole = ref('')
+    const currentUserId = ref(null)
+
+    const fetchCurrentUser = async () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+
+        const response = await axios.get('/api/auth/user', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        currentUserRole.value = response.data.role
+        currentUserId.value = response.data.id
+      } catch (error) {
+        console.error('Failed to fetch current user:', error)
+      }
+    }
+
+    const updateUserRole = async (user, newRole) => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+
+        const response = await axios.put(`/api/auth/users/${user.id}/role`, {
+          role: newRole
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+
+        // Update the user in the local list
+        const userIndex = users.value.findIndex(u => u.id === user.id)
+        if (userIndex !== -1) {
+          users.value[userIndex] = { ...users.value[userIndex], role: newRole }
+        }
+
+        console.log('Role updated successfully')
+      } catch (error) {
+        console.error('Failed to update role:', error)
+        if (error.response?.status === 403) {
+          alert('Only administrators can change user roles.')
+        } else {
+          alert('Failed to update role. Please try again.')
+        }
+      }
+    }
 
     const fetchUsers = async () => {
       try {
@@ -117,6 +178,7 @@ export default {
     }
 
     onMounted(() => {
+      fetchCurrentUser()
       fetchUsers()
     })
 
@@ -124,8 +186,11 @@ export default {
       users,
       loading,
       error,
+      currentUserRole,
+      currentUserId,
       formatDate,
-      getUserInitials
+      getUserInitials,
+      updateUserRole
     }
   }
 }
@@ -305,6 +370,47 @@ export default {
 .btn-edit:hover {
   background-color: #0056b3;
   transform: translateY(-1px);
+}
+
+/* Role management styles */
+.role-management {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.role-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.role-base {
+  background-color: #e3f2fd;
+  color: #1565c0;
+}
+
+.role-admin {
+  background-color: #fff3e0;
+  color: #e65100;
+}
+
+.role-select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: white;
+  cursor: pointer;
+}
+
+.role-select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
 @media (max-width: 768px) {

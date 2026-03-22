@@ -1,5 +1,6 @@
 <template>
   <div class="edit-user-page">
+    here
     <div class="page-header">
       <div class="header-content">
         <router-link to="/users" class="back-link">
@@ -61,6 +62,28 @@
           >
         </div>
 
+        <div v-if="currentUserRole === 'Admin'" class="form-group">
+          <label for="role" class="form-label">Role</label>
+          <select
+            id="role"
+            v-model="form.role"
+            class="form-select"
+          >
+            <option value="Base">Base</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </div>
+
+        <div v-else-if="user.role" class="form-group">
+          <label class="form-label">Role</label>
+          <div class="role-display">
+            <span :class="['role-badge', 'role-' + user.role.toLowerCase()]">
+              {{ user.role }}
+            </span>
+            <span class="role-note">Only admins can edit roles</span>
+          </div>
+        </div>
+
         <div class="user-metadata">
           <div class="metadata-item">
             <span class="metadata-label">Member since:</span>
@@ -109,16 +132,20 @@ export default {
     const loading = ref(true)
     const saving = ref(false)
     const error = ref('')
+    const currentUserRole = ref('')
     
     const form = ref({
       name: '',
-      email: ''
+      email: '',
+      role: ''
     })
 
     const hasChanges = computed(() => {
       if (!user.value) return false
-      return form.value.name !== user.value.name || 
-             form.value.email !== user.value.email
+      const nameChanged = form.value.name !== user.value.name
+      const emailChanged = form.value.email !== user.value.email
+      const roleChanged = currentUserRole.value === 'Admin' && form.value.role !== user.value.role
+      return nameChanged || emailChanged || roleChanged
     })
 
     const fetchUser = async () => {
@@ -132,6 +159,14 @@ export default {
         }
 
         const userId = route.params.id
+        
+        // Get current user info to check role permissions
+        const currentUserResponse = await axios.get('/api/auth/user', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        currentUserRole.value = currentUserResponse.data.role
+        
+        // Get user to edit
         const response = await axios.get(`/api/auth/users/${userId}`, {
           headers: { Authorization: `Bearer ${token}` }
         })
@@ -139,7 +174,8 @@ export default {
         user.value = response.data
         form.value = {
           name: response.data.name,
-          email: response.data.email
+          email: response.data.email,
+          role: response.data.role || 'Base'
         }
       } catch (err) {
         console.error('Failed to fetch user:', err)
@@ -163,10 +199,17 @@ export default {
         const token = localStorage.getItem('token')
         const userId = route.params.id
 
-        const response = await axios.put(`/api/auth/users/${userId}`, {
+        const updateData = {
           name: form.value.name,
           email: form.value.email
-        }, {
+        }
+        
+        // Only include role if current user is admin
+        if (currentUserRole.value === 'Admin') {
+          updateData.role = form.value.role
+        }
+        
+        const response = await axios.put(`/api/auth/users/${userId}`, updateData, {
           headers: { Authorization: `Bearer ${token}` }
         })
         
@@ -215,6 +258,7 @@ export default {
       loading,
       saving,
       error,
+      currentUserRole,
       hasChanges,
       updateUser,
       cancelEdit,
@@ -353,6 +397,52 @@ export default {
   outline: none;
   border-color: #007bff;
   box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.form-select {
+  padding: 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 1rem;
+  background-color: white;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.role-display {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.role-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 15px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.role-admin {
+  background-color: #dc3545;
+  color: white;
+}
+
+.role-base {
+  background-color: #6c757d;
+  color: white;
+}
+
+.role-note {
+  font-size: 0.8rem;
+  color: #666;
+  font-style: italic;
 }
 
 .user-metadata {
