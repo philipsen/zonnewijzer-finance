@@ -49,6 +49,7 @@ artifacts/
 
 # Logs
 *.log
+logs/
 
 # SQLite databases
 *.db

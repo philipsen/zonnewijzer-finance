@@ -14,12 +14,14 @@ namespace Backend.Controllers
         private readonly ApplicationDbContext _context;
         private readonly IJwtService _jwtService;
         private readonly IConfiguration _configuration;
+        private readonly ILogger<AuthController> _logger;
 
-        public AuthController(ApplicationDbContext context, IJwtService jwtService, IConfiguration configuration)
+        public AuthController(ApplicationDbContext context, IJwtService jwtService, IConfiguration configuration, ILogger<AuthController> logger)
         {
             _context = context;
             _jwtService = jwtService;
             _configuration = configuration;
+            _logger = logger;
         }
 
         [HttpPost("google")]
@@ -27,9 +29,12 @@ namespace Backend.Controllers
         {
             try
             {
+                _logger.LogInformation("Google authentication attempt started");
+                
                 var clientId = _configuration["Google:ClientId"];
                 if (string.IsNullOrEmpty(clientId))
                 {
+                    _logger.LogError("Google Client ID not configured");
                     return BadRequest("Google Client ID not configured");
                 }
 
@@ -37,6 +42,8 @@ namespace Backend.Controllers
                 {
                     Audience = new[] { clientId }
                 });
+
+                _logger.LogInformation("Google token validated for user {Email}", payload.Email);
 
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.GoogleId == payload.Subject);
 
@@ -52,17 +59,21 @@ namespace Backend.Controllers
                         LastLoginAt = DateTime.UtcNow
                     };
                     _context.Users.Add(user);
+                    _logger.LogInformation("New user created: {Email} with Google ID {GoogleId}", payload.Email, payload.Subject);
                 }
                 else
                 {
                     user.LastLoginAt = DateTime.UtcNow;
                     user.Name = payload.Name;
                     user.PictureUrl = payload.Picture;
+                    _logger.LogInformation("Existing user login: {Email} (ID: {UserId})", user.Email, user.Id);
                 }
 
                 await _context.SaveChangesAsync();
 
                 var token = _jwtService.GenerateToken(user);
+
+                _logger.LogInformation("Authentication successful for user {Email}", user.Email);
 
                 return Ok(new
                 {
@@ -78,6 +89,7 @@ namespace Backend.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Authentication failed for Google credential");
                 return BadRequest($"Authentication failed: {ex.Message}");
             }
         }
@@ -92,14 +104,18 @@ namespace Backend.Controllers
                 
                 if (userIdString == null || !int.TryParse(userIdString, out int userId))
                 {
+                    _logger.LogWarning("Invalid token provided for user lookup");
                     return Unauthorized();
                 }
 
                 var user = await _context.Users.FindAsync(userId);
                 if (user == null)
                 {
+                    _logger.LogWarning("User not found for ID {UserId}", userId);
                     return NotFound();
                 }
+
+                _logger.LogInformation("User profile retrieved for {Email} (ID: {UserId})", user.Email, user.Id);
 
                 return Ok(new
                 {
@@ -109,8 +125,9 @@ namespace Backend.Controllers
                     picture = user.PictureUrl
                 });
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Error retrieving user profile");
                 return Unauthorized();
             }
         }
@@ -125,8 +142,11 @@ namespace Backend.Controllers
                 
                 if (userIdString == null || !int.TryParse(userIdString, out int userId))
                 {
+                    _logger.LogWarning("Unauthorized attempt to access users list");
                     return Unauthorized();
                 }
+
+                _logger.LogInformation("User {UserId} requesting all users list", userId);
 
                 var users = await _context.Users
                     .OrderByDescending(u => u.CreatedAt)
@@ -141,10 +161,13 @@ namespace Backend.Controllers
                     })
                     .ToListAsync();
 
+                _logger.LogInformation("Retrieved {UserCount} users for user {RequestingUserId}", users.Count, userId);
+
                 return Ok(users);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Error retrieving users list");
                 return Unauthorized();
             }
         }

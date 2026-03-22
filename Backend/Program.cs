@@ -4,12 +4,57 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Backend.Data;
 using Backend.Services;
+using Serilog;
+using Serilog.Formatting.Compact;
 
-var builder = WebApplication.CreateBuilder(args);
+// Configure Serilog early
+Directory.CreateDirectory("logs");
 
-// Add services to the container.
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .WriteTo.File(
+        new CompactJsonFormatter(),
+        "logs/log-.txt",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7)
+    .CreateBootstrapLogger();
+
+try
+{
+    Log.Information("Starting Finance App backend");
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    // Replace default logging with Serilog
+    builder.Host.UseSerilog((context, services, configuration) => {
+        var loggerConfig = configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext();
+        
+        // Use normal console format in development, compact JSON in production
+        if (context.HostingEnvironment.IsDevelopment())
+        {
+            loggerConfig.WriteTo.Console();
+        }
+        else
+        {
+            loggerConfig.WriteTo.Console(new CompactJsonFormatter());
+        }
+        
+        // Always use compact JSON for file logging
+        loggerConfig.WriteTo.File(
+            new CompactJsonFormatter(),
+            "logs/log-.txt",
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 7,
+            shared: true,
+            flushToDiskInterval: TimeSpan.FromSeconds(1));
+    });
+
+    // Add services to the container.
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
 // Temporarily commented out due to .NET 10 compatibility issue
 // builder.Services.AddSwaggerGen();
 
@@ -50,24 +95,40 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 
 var app = builder.Build();
 
-// Ensure database is created
-using (var scope = app.Services.CreateScope())
-{
-    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    context.Database.EnsureCreated();
+    // Add Serilog request logging
+    app.UseSerilogRequestLogging(options =>
+    {
+        options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+    });
+
+    // Ensure database is created
+    using (var scope = app.Services.CreateScope())
+    {
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        context.Database.EnsureCreated();
+    }
+
+    // Configure the HTTP request pipeline.
+    if (app.Environment.IsDevelopment())
+    {
+        // Temporarily commented out due to .NET 10 compatibility issue
+        // app.UseSwagger();
+        // app.UseSwaggerUI();
+    }
+
+    app.UseCors("AllowVueApp");
+    app.UseAuthentication();
+    app.UseAuthorization();
+    app.MapControllers();
+
+    Log.Information("Finance App backend started successfully");
+    app.Run();
 }
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+catch (Exception ex)
 {
-    // Temporarily commented out due to .NET 10 compatibility issue
-    // app.UseSwagger();
-    // app.UseSwaggerUI();
+    Log.Fatal(ex, "Finance App backend terminated unexpectedly");
 }
-
-app.UseCors("AllowVueApp");
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapControllers();
-
-app.Run();
+finally
+{
+    Log.CloseAndFlush();
+}
