@@ -210,6 +210,6 @@ appsettings.Production.json
 connectionstring.json
 .fake
 Backend/finance.db-shm
-.gitignore
-.gitignore
 Backend/finance.db-wal
+database/finance.db-shm
+database/finance.db-wal
