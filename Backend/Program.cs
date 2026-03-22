@@ -101,11 +101,11 @@ var app = builder.Build();
         options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
     });
 
-    // Ensure database is created
+    // Ensure database migrations are applied
     using (var scope = app.Services.CreateScope())
     {
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        context.Database.EnsureCreated();
+        context.Database.Migrate();
     }
 
     // Configure the HTTP request pipeline.

@@ -8,6 +8,8 @@
       <nav v-if="user" class="main-nav">
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link to="/users" class="nav-link">Users</router-link>
+        <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
+        <router-link to="/upload-sessions" class="nav-link">Upload</router-link>
       </nav>
       <div class="nav-actions">
         <template v-if="!user">

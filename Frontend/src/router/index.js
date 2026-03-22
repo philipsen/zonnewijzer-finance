@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../components/Home.vue'
 import UsersList from '../components/UsersList.vue'
 import EditUser from '../components/EditUser.vue'
+import UploadChargingSessions from '../components/UploadChargingSessions.vue'
+import ChargingSessionsList from '../components/ChargingSessionsList.vue'
 
 const routes = [
   {
@@ -18,6 +20,16 @@ const routes = [
     path: '/users/:id/edit',
     name: 'EditUser',
     component: EditUser
+  },
+  {
+    path: '/upload-sessions',
+    name: 'UploadChargingSessions',
+    component: UploadChargingSessions
+  },
+  {
+    path: '/charging-sessions',
+    name: 'ChargingSessionsList',
+    component: ChargingSessionsList
   }
 ]
 

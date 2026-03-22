@@ -208,3 +208,4 @@ $RECYCLE.BIN/
 # Application specific
 appsettings.Production.json
 connectionstring.json
+.fake
