@@ -1,0 +1,37 @@
+# .NET Core build artifacts
+**/bin/
+**/obj/
+**/out/
+**/TestResults/
+
+# User secrets and logs
+**/logs/
+**/.vscode/
+**/.vs/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Various
+*.bak
+*.tmp
+**/node_modules/
+**/dist/
+
+# CSV files
+*.csv
+
+# IDEs
+**/.idea/
+**/.vscode/

@@ -132,7 +132,7 @@ export default {
         }
 
         const userId = route.params.id
-        const response = await axios.get(`http://localhost:5293/api/auth/users/${userId}`, {
+        const response = await axios.get(`/api/auth/users/${userId}`, {
           headers: { Authorization: `Bearer ${token}` }
         })
         
@@ -163,7 +163,7 @@ export default {
         const token = localStorage.getItem('token')
         const userId = route.params.id
 
-        const response = await axios.put(`http://localhost:5293/api/auth/users/${userId}`, {
+        const response = await axios.put(`/api/auth/users/${userId}`, {
           name: form.value.name,
           email: form.value.email
         }, {

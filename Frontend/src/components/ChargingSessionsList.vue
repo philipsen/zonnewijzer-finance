@@ -147,7 +147,7 @@ export default {
           return
         }
 
-        const response = await axios.get('http://localhost:5293/api/chargingsessions/available-months', {
+        const response = await axios.get('/api/chargingsessions/available-months', {
           headers: { Authorization: `Bearer ${token}` }
         })
         
@@ -188,7 +188,7 @@ export default {
           return
         }
 
-        let url = `http://localhost:5293/api/chargingsessions?page=${page}&pageSize=${pagination.value.pageSize}`
+        let url = `/api/chargingsessions?page=${page}&pageSize=${pagination.value.pageSize}`
         
         // Add month filter if selected
         if (selectedMonth.value) {

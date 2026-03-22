@@ -159,7 +159,7 @@ export default {
         formData.append('file', selectedFile.value)
 
         const token = localStorage.getItem('token')
-        const response = await axios.post('http://localhost:5293/api/chargingsessions/upload', formData, {
+        const response = await axios.post('/api/chargingsessions/upload', formData, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'multipart/form-data'

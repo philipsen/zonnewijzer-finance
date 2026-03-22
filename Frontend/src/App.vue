@@ -54,7 +54,7 @@ export default {
     const handleCredentialResponse = async (response) => {
       console.log('Google credential response:', response)
       try {
-        const result = await axios.post('http://localhost:5293/api/auth/google', {
+        const result = await axios.post('/api/auth/google', {
           credential: response.credential
         })
         user.value = result.data.user
@@ -75,7 +75,7 @@ export default {
       const token = localStorage.getItem('token')
       if (token) {
         try {
-          const response = await axios.get('http://localhost:5293/api/auth/user', {
+          const response = await axios.get('/api/auth/user', {
             headers: { Authorization: `Bearer ${token}` }
           })
           user.value = response.data

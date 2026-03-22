@@ -63,9 +63,17 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowVueApp", policy =>
     {
-        policy.WithOrigins("http://localhost:3000", "http://localhost:3001")
+        policy.WithOrigins(
+                "http://localhost:3000",      // Development frontend
+                "http://localhost:3001",      // Alternative dev port
+                "http://localhost:5000",      // Docker frontend external
+                "http://localhost:5293",      // Backend port (in case of frontend calling backend)
+                "http://frontend",            // Docker frontend internal
+                "http://frontend:80"          // Docker frontend internal with port
+              )
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 

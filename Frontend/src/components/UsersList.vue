@@ -80,7 +80,7 @@ export default {
           return
         }
 
-        const response = await axios.get('http://localhost:5293/api/auth/users', {
+        const response = await axios.get('/api/auth/users', {
           headers: { Authorization: `Bearer ${token}` }
         })
         
