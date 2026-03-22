@@ -209,3 +209,7 @@ $RECYCLE.BIN/
 appsettings.Production.json
 connectionstring.json
 .fake
+Backend/finance.db-shm
+.gitignore
+.gitignore
+Backend/finance.db-wal
