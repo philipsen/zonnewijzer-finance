@@ -41,7 +41,7 @@
               <div class="role-management">
                 <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
                 <select 
-                  v-if="currentUserRole === 'Admin' && user.id !== currentUserId"
+                  v-if="currentUserRole && user.id !== currentUserId"
                   :value="user.role"
                   @change="updateUserRole(user, $event.target.value)"
                   class="role-select"

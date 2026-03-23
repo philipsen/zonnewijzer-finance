@@ -205,16 +205,13 @@ namespace Backend.Controllers
                     user.Email = request.Email.Trim();
                 }
 
-                // Only allow role changes for admin users
+                // Allow role changes for any authenticated user
                 if (!string.IsNullOrWhiteSpace(request.Role))
                 {
-                    var currentUser = await _context.Users.FindAsync(currentUserId);
-                    if (currentUser?.Role == UserRole.Admin)
+                    if (Enum.TryParse<UserRole>(request.Role, true, out var newRole))
                     {
-                        if (Enum.TryParse<UserRole>(request.Role, true, out var newRole))
-                        {
-                            user.Role = newRole;
-                        }
+                        user.Role = newRole;
+                        _logger.LogInformation("User {CurrentUserId} changed role of user {UserId} to {Role}", currentUserId, id, newRole);
                     }
                 }
 
@@ -249,14 +246,7 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
-                // Check if current user is admin
-                var currentUser = await _context.Users.FindAsync(currentUserId);
-                if (currentUser?.Role != UserRole.Admin)
-                {
-                    _logger.LogWarning("Non-admin user {UserId} attempted to change user role", currentUserId);
-                    return Forbid("Only administrators can change user roles");
-                }
-
+                // Allow any authenticated user to change user roles
                 var user = await _context.Users.FindAsync(id);
                 if (user == null)
                 {
@@ -271,7 +261,7 @@ namespace Backend.Controllers
                 user.Role = newRole;
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Admin {AdminId} changed role of user {UserId} to {Role}", currentUserId, id, newRole);
+                _logger.LogInformation("User {UserId} changed role of user {TargetUserId} to {Role}", currentUserId, id, newRole);
 
                 return Ok(new
                 {

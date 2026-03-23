@@ -12,6 +12,7 @@ namespace Backend.Data
 
         public DbSet<User> Users { get; set; }
         public DbSet<ChargingSession> ChargingSessions { get; set; }
+        public DbSet<Invoice> Invoices { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -36,6 +37,26 @@ namespace Backend.Data
                 
                 // Create unique index to prevent duplicates
                 entity.HasIndex(e => new { e.Start, e.UserId, e.StationId }).IsUnique();
+            });
+
+            modelBuilder.Entity<Invoice>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.Year).IsRequired();
+                entity.Property(e => e.Month).IsRequired();
+                entity.Property(e => e.InvoiceNumber).HasMaxLength(255).IsRequired();
+                entity.Property(e => e.TotalAmount).HasPrecision(10, 2).IsRequired();
+                entity.Property(e => e.PdfPath).HasMaxLength(500);
+                
+                // Foreign key to User
+                entity.HasOne(e => e.User)
+                      .WithMany()
+                      .HasForeignKey(e => e.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+                
+                // Unique constraint for user + year + month to prevent duplicate invoices
+                entity.HasIndex(e => new { e.UserId, e.Year, e.Month }).IsUnique();
             });
         }
     }

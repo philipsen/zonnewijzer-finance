@@ -4,6 +4,7 @@ import UsersList from '../components/UsersList.vue'
 import EditUser from '../components/EditUser.vue'
 import UploadChargingSessions from '../components/UploadChargingSessions.vue'
 import ChargingSessionsList from '../components/ChargingSessionsList.vue'
+import InvoiceGrid from '../components/InvoiceGrid.vue'
 
 const routes = [
   {
@@ -30,6 +31,11 @@ const routes = [
     path: '/charging-sessions',
     name: 'ChargingSessionsList',
     component: ChargingSessionsList
+  },
+  {
+    path: '/invoices',
+    name: 'InvoiceGrid',
+    component: InvoiceGrid
   }
 ]
 

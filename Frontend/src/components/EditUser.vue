@@ -62,7 +62,7 @@
           >
         </div>
 
-        <div v-if="currentUserRole === 'Admin'" class="form-group">
+        <div v-if="currentUserRole" class="form-group">
           <label for="role" class="form-label">Role</label>
           <select
             id="role"
@@ -80,7 +80,7 @@
             <span :class="['role-badge', 'role-' + user.role.toLowerCase()]">
               {{ user.role }}
             </span>
-            <span class="role-note">Only admins can edit roles</span>
+            <span class="role-note">You must be logged in to edit roles</span>
           </div>
         </div>
 
@@ -144,7 +144,7 @@ export default {
       if (!user.value) return false
       const nameChanged = form.value.name !== user.value.name
       const emailChanged = form.value.email !== user.value.email
-      const roleChanged = currentUserRole.value === 'Admin' && form.value.role !== user.value.role
+      const roleChanged = currentUserRole.value && form.value.role !== user.value.role
       return nameChanged || emailChanged || roleChanged
     })
 
@@ -204,8 +204,8 @@ export default {
           email: form.value.email
         }
         
-        // Only include role if current user is admin
-        if (currentUserRole.value === 'Admin') {
+        // Only include role if current user is authenticated
+        if (currentUserRole.value) {
           updateData.role = form.value.role
         }
         
