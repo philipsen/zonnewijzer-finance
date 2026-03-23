@@ -12,12 +12,14 @@ namespace Backend.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly IJwtService _jwtService;
+        private readonly IPdfService _pdfService;
         private readonly ILogger<InvoicesController> _logger;
 
-        public InvoicesController(ApplicationDbContext context, IJwtService jwtService, ILogger<InvoicesController> logger)
+        public InvoicesController(ApplicationDbContext context, IJwtService jwtService, IPdfService pdfService, ILogger<InvoicesController> logger)
         {
             _context = context;
             _jwtService = jwtService;
+            _pdfService = pdfService;
             _logger = logger;
         }
 
@@ -118,10 +120,10 @@ namespace Backend.Controllers
 
                 // Calculate total kWh and amount
                 var totalKwh = chargingSessions.Sum(cs => cs.ChargedKwh);
-                var ratePerKwh = 0.22m; // $0.22 per kWh
+                var ratePerKwh = 0.22m; // €0.22 per kWh
                 var totalAmount = totalKwh * ratePerKwh;
 
-                var invoiceData = new
+                var invoiceData = new InvoiceData
                 {
                     UserId = userId,
                     UserName = $"Charging User {userId}",
@@ -132,7 +134,7 @@ namespace Backend.Controllers
                     TotalKwh = Math.Round(totalKwh, 2),
                     RatePerKwh = ratePerKwh,
                     TotalAmount = Math.Round(totalAmount, 2),
-                    Sessions = chargingSessions.Select(cs => new
+                    Sessions = chargingSessions.Select(cs => new SessionData
                     {
                         Start = cs.Start,
                         End = cs.End,
@@ -143,8 +145,11 @@ namespace Backend.Controllers
                     GeneratedAt = DateTime.UtcNow
                 };
 
-                // For now, return the invoice data as JSON (in production, generate actual PDF)
-                return Ok(invoiceData);
+                // Generate PDF
+                var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
+                var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{userId}_{year}_{month:D2}.pdf";
+
+                return File(pdfBytes, "application/pdf", fileName);
             }
             catch (Exception ex)
             {

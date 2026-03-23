@@ -18,8 +18,8 @@
       <div class="grid-info">
         <h2>Invoice Grid</h2>
         <p class="description">
-          Click on any link to generate an invoice PDF on-the-fly based on charging session data.
-          Rate: $0.22 per kWh
+          Click on any link to generate and download an invoice PDF based on charging session data.
+          Rate: €0.22 per kWh
         </p>
       </div>
 
@@ -58,8 +58,8 @@
                       class="invoice-link"
                       @click.prevent="generatePdfInvoice(userRow.user.id, monthData.year, monthData.month)"
                     >
-                      <div class="invoice-label">Generate Invoice</div>
-                      <div class="invoice-rate">@$0.22/kWh</div>
+                      <div class="invoice-label">Download PDF</div>
+                      <div class="invoice-rate">@€0.22/kWh</div>
                     </a>
                   </template>
                   <template v-else>
@@ -128,15 +128,22 @@ export default {
       try {
         const token = localStorage.getItem('token')
         const response = await axios.get(`/api/invoices/${userId}/${year}/${month}`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob' // Important: handle response as blob for PDF
         })
         
-        // Log the invoice data (in production, this would open/download a PDF)
-        console.log('Generated Invoice:', response.data)
+        // Create a blob URL and trigger download
+        const blob = new Blob([response.data], { type: 'application/pdf' })
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `Invoice_User${userId}_${year}-${String(month).padStart(2, '0')}.pdf`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
         
-        // For now, show the invoice data as an alert
-        const invoice = response.data
-        alert(`Invoice Generated!\n\nUser: ${invoice.userName}\nMonth: ${invoice.monthName}\nTotal kWh: ${invoice.totalKwh}\nRate: $${invoice.ratePerKwh}/kWh\nTotal Amount: $${invoice.totalAmount}\n\nInvoice: ${invoice.invoiceNumber}`)
+        console.log(`PDF invoice generated and downloaded for User ${userId}, ${year}-${month}`)
         
       } catch (err) {
         console.error('Failed to generate invoice:', err)
