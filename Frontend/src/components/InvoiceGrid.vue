@@ -1,9 +1,5 @@
 <template>
   <div class="invoice-grid-page">
-    <div class="page-header">
-      <h1>Invoice Grid</h1>
-      <p>View and manage invoices for all users by month</p>
-    </div>
 
     <div v-if="loading" class="loading">
       Loading invoice data...
