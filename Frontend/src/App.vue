@@ -156,7 +156,7 @@ body {
 .nav-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.5rem;
 }
 
 .sign-out-btn {
@@ -190,6 +190,13 @@ main {
   
   .nav-actions {
     align-self: flex-end;
+    width: 100%;
+    justify-content: flex-end;
+  }
+  
+  .user-info {
+    min-width: 150px;
+    font-size: 0.9rem;
   }
   
   main {
@@ -199,8 +206,15 @@ main {
 
 .user-info {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  background-color: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  min-width: 200px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .role-badge {

@@ -8,16 +8,16 @@
       <p>Dashboard content will go here.</p>
       <div class="features">
         <div class="feature-card">
-          <h3>Expenses</h3>
-          <p>Track your spending</p>
+          <router-link to="/charging-sessions" class="card-link">
+            <h3>Charging Sessions</h3>
+            <p>View and manage charging sessions</p>
+          </router-link>
         </div>
         <div class="feature-card">
-          <h3>Income</h3>
-          <p>Monitor your earnings</p>
-        </div>
-        <div class="feature-card">
-          <h3>Reports</h3>
-          <p>View financial reports</p>
+          <router-link to="/invoices" class="card-link">
+            <h3>Invoices</h3>
+            <p>Generate and download invoices</p>
+          </router-link>
         </div>
       </div>
     </div>
@@ -67,10 +67,27 @@ export default {
   border: 1px solid #dee2e6;
   border-radius: 8px;
   background-color: #fff;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .feature-card h3 {
   margin-top: 0;
   color: #495057;
+}
+
+.card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.card-link:hover {
+  text-decoration: none;
+  color: inherit;
 }
 </style>
