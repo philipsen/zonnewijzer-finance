@@ -3,7 +3,7 @@
     <nav class="navbar">
       <div class="navbar-brand">
         <img src="/assets/zonnewijzer_logo.png" alt="Zonnewijzer Logo" class="logo">
-        <h1>Finance App</h1>
+        <h1>Zonnewijzer Finance App</h1>
       </div>
       <nav v-if="user" class="main-nav">
         <router-link to="/" class="nav-link">Home</router-link>

@@ -1,0 +1,29 @@
+services:
+  backend:
+    image: philipsen/finance-backend:latest
+    container_name: finance-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
+    volumes:
+      - ./database:/app/database
+      - ./logs:/app/logs
+    networks:
+      - finance-network
+    restart: unless-stopped
+
+  frontend:
+    image: philipsen/finance-frontend:latest
+    container_name: finance-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - finance-network
+    restart: unless-stopped
+
+networks:
+  finance-network:
+    driver: bridge

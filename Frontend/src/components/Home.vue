@@ -1,6 +1,6 @@
 <template>
   <div class="home">
-    <h2>Welcome to the Finance App</h2>
+    <h2>Welcome to the Zonnewijzer Finance App</h2>
     <div v-if="!isAuthenticated" class="auth-prompt">
       <p>Please sign in with Google to access your financial data.</p>
     </div>

@@ -1,29 +1,25 @@
 services:
   backend:
-    build:
-      context: ./Backend
-      dockerfile: Dockerfile
+    image: philipsen/finance-backend:latest
     container_name: finance-backend
+    ports:
+      - "5000:5000"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__DefaultConnection=Data Source=/app/data/finance.db
+      - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
     volumes:
-      - ./database:/app/data
-      - ./Backend/logs:/app/logs
+      - ./database:/app/database
+      - ./logs:/app/logs
     networks:
       - finance-network
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./Frontend
-      dockerfile: Dockerfile
+    image: philipsen/finance-frontend:latest
     container_name: finance-frontend
     ports:
-      - "5000:80"
-    depends_on:
-      - backend
+      - "3000:80"
     networks:
       - finance-network
     restart: unless-stopped
@@ -31,7 +27,3 @@ services:
 networks:
   finance-network:
     driver: bridge
-
-volumes:
-  database:
-    driver: local
