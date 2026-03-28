@@ -41,7 +41,7 @@
               <div class="role-management">
                 <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
                 <select 
-                  v-if="currentUserRole && user.id !== currentUserId"
+                  v-if="currentUserRole === 'Admin' && user.id !== currentUserId"
                   :value="user.role"
                   @change="updateUserRole(user, $event.target.value)"
                   class="role-select"
@@ -63,6 +63,7 @@
         </div>
         <div class="user-actions">
           <router-link 
+            v-if="currentUserRole === 'Admin'"
             :to="`/users/${user.id}/edit`" 
             class="btn btn-edit"
           >

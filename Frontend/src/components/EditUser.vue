@@ -13,6 +13,11 @@
       Loading user data...
     </div>
 
+    <div v-else-if="!isAdmin" class="access-denied">
+      <h2>Access Denied</h2>
+      <p>Only administrators can edit users.</p>
+    </div>
+
     <div v-else-if="error" class="error">
       {{ error }}
     </div>
@@ -132,6 +137,19 @@ export default {
     const saving = ref(false)
     const error = ref('')
     const currentUserRole = ref('')
+
+    // Decode role from JWT to guard the UI
+    const isAdmin = ref(false)
+    const token = localStorage.getItem('token')
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+        isAdmin.value = role === 'Admin'
+      } catch {
+        isAdmin.value = false
+      }
+    }
     
     const form = ref({
       name: '',
@@ -252,6 +270,7 @@ export default {
     })
 
     return {
+      isAdmin,
       user,
       form,
       loading,
@@ -273,6 +292,19 @@ export default {
   max-width: 600px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+.access-denied {
+  text-align: center;
+  padding: 3rem;
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 8px;
+}
+
+.access-denied h2 {
+  margin: 0 0 0.5rem 0;
 }
 
 .page-header {

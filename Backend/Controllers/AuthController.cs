@@ -175,6 +175,7 @@ namespace Backend.Controllers
             }
         }
 
+        [Authorize(Roles = "Admin")]
         [HttpPut("users/{id}")]
         public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest request)
         {
@@ -233,6 +234,7 @@ namespace Backend.Controllers
                 return BadRequest($"Update failed: {ex.Message}");
             }        }
 
+        [Authorize(Roles = "Admin")]
         [HttpPut("users/{id}/role")]
         public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleRequest request)
         {
