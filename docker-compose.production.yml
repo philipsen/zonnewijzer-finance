@@ -1,65 +1,73 @@
-services:
-  backend:
-    image: philipsen/finance-backend:latest
-    container_name: finance-backend
-    ports:
-      - "5000:5000"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
-    volumes:
-      - ./data:/app/database
-      - ./logs:/app/logs
-    networks:
-      - finance-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  frontend:
-    image: philipsen/finance-frontend:latest
-    container_name: finance-frontend
-    ports:
-      - "3000:80"
-    networks:
-      - finance-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  nginx:
-    image: nginx:alpine
-    container_name: finance-nginx
-    ports:
-      - "8080:80"
+ervices:                                                                                                                                                                                                                                          
+  backend:                                                                                                                                                                                                                                         
+    image: philipsen/finance-backend:latest                                                                                                                                                                                                        
+    container_name: finance-backend                                                                                                                                                                                                                
+    ports:                                                                                                                                                                                                                                         
+      - "5000:5000"                                                                                                                                                                                                                                
+    environment:                                                                                                                                                                                                                                   
+      - ASPNETCORE_ENVIRONMENT=Production                                                                                                                                                                                                          
+      - ASPNETCORE_URLS=http://+:5000                                                                                                                                                                                                              
+      - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db                                                                                                                                                                  
+    volumes:                                                                                                                                                                                                                                       
+      - ./data:/app/database                                                                                                                                                                                                                       
+      - ./logs:/app/logs                                                                                                                                                                                                                           
+    networks:                                                                                                                                                                                                                                      
+      - finance-network                                                                                                                                                                                                                            
+      - mailcow-ext                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                   
+    restart: unless-stopped                                                                                                                                                                                                                        
+    healthcheck:                                                                                                                                                                                                                                   
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]                                                                                                                                                                                  
+      interval: 30s                                                                                                                                                                                                                                
+      timeout: 10s                                                                                                                                                                                                                                 
+      retries: 3                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                   
+  frontend:                                                                                                                                                                                                                                        
+    image: philipsen/finance-frontend:latest                                                                                                                                                                                                       
+    container_name: finance-frontend                                                                                                                                                                                                               
+    ports:                                                                                                                                                                                                                                         
+      - "3000:80"                                                                                                                                                                                                                                  
+    networks:                                                                                                                                                                                                                                      
+      - finance-network                                                                                                                                                                                                                            
+      - mailcow-ext                                                                                                                                                                                                                                
+    restart: unless-stopped                                                                                                                                                                                                                        
+    healthcheck:                                                                                                                                                                                                                                   
+      test: ["CMD", "curl", "-f", "http://localhost:80"]                                                                                                                                                                                           
+      interval: 30s                                                                                                                                                                                                                                
+      timeout: 10s                                                                                                                                                                                                                                 
+      retries: 3                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                   
+  nginx:                                                                                                                                                                                                                                           
+    image: nginx:alpine                                                                                                                                                                                                                            
+    container_name: finance-nginx                                                                                                                                                                                                                  
+    ports:                                                                                                                                                                                                                                         
+      - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./nginx/ssl:/etc/nginx/ssl
-    networks:
-      - finance-network
-    depends_on:
-      - backend
-      - frontend
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-networks:
-  finance-network:
-    driver: bridge
-
-volumes:
-  database:
+      - /opt/mailcow-dockerized/data/assets/ssl/cert.pem:/etc/nginx/ssl/cert.pem:ro
+      - /opt/mailcow-dockerized/data/assets/ssl/key.pem:/etc/nginx/ssl/key.pem:ro
+      - backend                                                                                                                                                                                                                                    
+      - frontend                                                                                                                                                                                                                                   
+    restart: unless-stopped                                                                                                                                                                                                                        
+    healthcheck:                                                                                                                                                                                                                                   
+      test: ["CMD", "curl", "-f", "http://localhost:80"]                                                                                                                                                                                           
+      interval: 30s                                                                                                                                                                                                                                
+      timeout: 10s                                                                                                                                                                                                                                 
+      retries: 3                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                   
+networks:                                                                                                                                                                                                                                          
+  finance-network:                                                                                                                                                                                                                                 
+    driver: bridge                                                                                                                                                                                                                                 
+  mailcow-ext:                                                                                                                                                                                                                                     
+    external: true                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                   
+volumes:                                                                                                                                                                                                                                           
+  database:                                                                                                                                                                                                                                        
+    driver: local                                                                                                                                                                                                                                  
+  logs:                                                                                                                                                                                                                                            
     driver: local
-  logs:
-    driver: local
+
+
+
