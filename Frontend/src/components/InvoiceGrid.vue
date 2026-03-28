@@ -10,7 +10,7 @@
     </div>
 
     <div v-else-if="gridData" class="invoice-grid-container">
-      <!-- Invoice Grid Description -->
+      <!-- Header -->
       <div class="grid-info">
         <h2>Invoice Grid</h2>
         <p class="description">
@@ -19,15 +19,15 @@
         </p>
       </div>
 
-      <!-- Invoice Grid -->
-      <div class="grid-wrapper">
+      <!-- Desktop: table grid -->
+      <div class="grid-wrapper desktop-grid">
         <table class="invoice-grid">
           <thead>
             <tr>
               <th class="user-column">User</th>
-              <th 
-                v-for="month in months" 
-                :key="`${month.year}-${month.month}`" 
+              <th
+                v-for="month in months"
+                :key="`${month.year}-${month.month}`"
                 class="month-column"
               >
                 {{ month.name }}
@@ -42,14 +42,14 @@
                   <div class="user-email">{{ userRow.user.email }}</div>
                 </div>
               </td>
-              <td 
-                v-for="monthData in userRow.invoices" 
+              <td
+                v-for="monthData in userRow.invoices"
                 :key="`${userRow.user.id}-${monthData.year}-${monthData.month}`"
                 class="invoice-cell"
               >
                 <div class="invoice-content">
                   <template v-if="monthData.hasChargingSessions">
-                    <a 
+                    <a
                       href="#"
                       class="invoice-link"
                       @click.prevent="generatePdfInvoice(userRow.user.id, monthData.year, monthData.month)"
@@ -67,6 +67,42 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Mobile: user dropdown + vertical month list -->
+      <div class="mobile-view">
+        <div class="mobile-user-select">
+          <label for="mobile-user-dropdown" class="mobile-label">Select user</label>
+          <select
+            id="mobile-user-dropdown"
+            v-model="selectedUserId"
+            class="mobile-select"
+          >
+            <option v-for="userRow in gridData" :key="userRow.user.id" :value="userRow.user.id">
+              {{ userRow.user.name }}
+            </option>
+          </select>
+        </div>
+
+        <div v-if="selectedUserRow" class="mobile-month-list">
+          <div
+            v-for="monthData in selectedUserRow.invoices"
+            :key="`${monthData.year}-${monthData.month}`"
+            class="mobile-month-row"
+          >
+            <span class="mobile-month-name">{{ formatMonthName(monthData.year, monthData.month) }}</span>
+            <template v-if="monthData.hasChargingSessions">
+              <a
+                href="#"
+                class="mobile-invoice-link"
+                @click.prevent="generatePdfInvoice(selectedUserRow.user.id, monthData.year, monthData.month)"
+              >
+                Download PDF
+              </a>
+            </template>
+            <span v-else class="mobile-no-invoice">No sessions</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -83,6 +119,12 @@ export default {
     const months = ref([])
     const loading = ref(true)
     const error = ref('')
+    const selectedUserId = ref(null)
+
+    const selectedUserRow = computed(() => {
+      if (!gridData.value || !selectedUserId.value) return null
+      return gridData.value.find(row => row.user.id === selectedUserId.value) || null
+    })
 
     const fetchInvoicesGrid = async () => {
       try {
@@ -94,19 +136,18 @@ export default {
           return
         }
 
-        // Fetch invoices grid data
         const response = await axios.get('/api/invoices', {
           headers: { Authorization: `Bearer ${token}` }
         })
         
-        console.log('API Response:', response.data)
-        console.log('GridData:', response.data.gridData)
-        console.log('Users:', response.data.users)
-        console.log('Months:', response.data.months)
-        
         gridData.value = response.data.gridData
         users.value = response.data.users
         months.value = response.data.months
+
+        // Pre-select first user for the mobile view
+        if (response.data.gridData && response.data.gridData.length > 0) {
+          selectedUserId.value = response.data.gridData[0].user.id
+        }
         
       } catch (err) {
         console.error('Failed to fetch invoices:', err)
@@ -125,10 +166,9 @@ export default {
         const token = localStorage.getItem('token')
         const response = await axios.get(`/api/invoices/${userId}/${year}/${month}`, {
           headers: { Authorization: `Bearer ${token}` },
-          responseType: 'blob' // Important: handle response as blob for PDF
+          responseType: 'blob'
         })
         
-        // Create a blob URL and trigger download
         const blob = new Blob([response.data], { type: 'application/pdf' })
         const url = window.URL.createObjectURL(blob)
         const link = document.createElement('a')
@@ -139,12 +179,14 @@ export default {
         document.body.removeChild(link)
         window.URL.revokeObjectURL(url)
         
-        console.log(`PDF invoice generated and downloaded for User ${userId}, ${year}-${month}`)
-        
       } catch (err) {
         console.error('Failed to generate invoice:', err)
         alert(err.response?.data?.message || 'Failed to generate invoice PDF')
       }
+    }
+
+    const formatMonthName = (year, month) => {
+      return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     }
 
     onMounted(() => {
@@ -157,6 +199,9 @@ export default {
       months,
       loading,
       error,
+      selectedUserId,
+      selectedUserRow,
+      formatMonthName,
       generatePdfInvoice
     }
   }
@@ -453,6 +498,11 @@ export default {
   opacity: 0.5;
 }
 
+/* Mobile view – hidden by default, shown via media query */
+.mobile-view {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .invoice-grid-page {
     padding: 0.75rem;
@@ -467,55 +517,87 @@ export default {
     font-size: 0.9rem;
   }
 
-  .grid-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  .desktop-grid {
+    display: none;
   }
 
-  .invoice-grid {
-    min-width: 500px;
+  .mobile-view {
+    display: block;
   }
+}
 
-  .user-column {
-    width: 130px;
-  }
+.mobile-user-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+}
 
-  .month-column {
-    width: 100px;
-    font-size: 0.75rem;
-  }
+.mobile-label {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
 
-  .user-cell {
-    padding: 0.5rem;
-  }
+.mobile-select {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 1rem;
+  background-color: white;
+  width: 100%;
+}
 
-  .user-name {
-    font-size: 0.85rem;
-  }
+.mobile-select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
+}
 
-  .user-email {
-    font-size: 0.7rem;
-  }
+.mobile-month-list {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
 
-  .invoice-cell {
-    padding: 0.25rem;
-    width: 100px;
-  }
+.mobile-month-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #f1f3f4;
+}
 
-  .invoice-link {
-    font-size: 0.75rem;
-    padding: 0.25rem;
-  }
+.mobile-month-row:last-child {
+  border-bottom: none;
+}
 
-  .generate-form {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.mobile-month-name {
+  font-weight: 500;
+  color: #333;
+  font-size: 0.95rem;
+}
 
-  .form-select,
-  .form-input,
-  .btn {
-    width: 100%;
-  }
+.mobile-invoice-link {
+  color: #007bff;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid #007bff;
+  border-radius: 4px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mobile-invoice-link:hover {
+  background-color: #007bff;
+  color: white;
+}
+
+.mobile-no-invoice {
+  color: #adb5bd;
+  font-size: 0.85rem;
 }
 </style>
