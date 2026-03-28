@@ -3,23 +3,39 @@
     <nav class="navbar">
       <div class="navbar-brand">
         <img src="/assets/zonnewijzer_logo.png" alt="Zonnewijzer Logo" class="logo">
-        <h1>Zonnewijzer Finance App</h1>
+        <h1>Zonnewijzer Finance</h1>
       </div>
-      <nav v-if="user" class="main-nav">
+      <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link to="/users" class="nav-link">Users</router-link>
         <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
         <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
         <router-link to="/invoices" class="nav-link">Invoices</router-link>
-        <router-link v-if="user.role === 'Admin'" to="/event-log" class="nav-link">Event Log</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/event-log" class="nav-link">Events</router-link>
       </nav>
+
+      <!-- Hamburger dropdown shown when nav overflows -->
+      <div v-if="user && navOverflows" class="nav-dropdown-wrapper" ref="dropdownWrapper">
+        <button class="hamburger-btn" @click="dropdownOpen = !dropdownOpen" :aria-expanded="dropdownOpen">
+          <span></span><span></span><span></span>
+        </button>
+        <div v-if="dropdownOpen" class="nav-dropdown">
+          <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
+          <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
+          <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
+          <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
+        </div>
+      </div>
+
       <div class="nav-actions">
         <template v-if="!user">
           <div ref="signinButton"></div>
         </template>
         <template v-else>
           <div class="user-info">
-            <span>Welcome, {{ user.name }}</span>
+            <span>{{ user.name }}</span>
             <span v-if="user.role" :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
           </div>
           <button @click="signOut" class="sign-out-btn">Sign Out</button>
@@ -33,7 +49,7 @@
 </template>
 
 <script>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -42,6 +58,31 @@ export default {
     const user = ref(null)
     const googleClientId = '367881736099-4g29mnk5ho3a1iuosd5uo4ut284gbpql.apps.googleusercontent.com'
     const signinButton = ref(null)
+    const mainNav = ref(null)
+    const dropdownWrapper = ref(null)
+    const navOverflows = ref(false)
+    const dropdownOpen = ref(false)
+    let resizeObserver = null
+
+    const checkNavOverflow = () => {
+      nextTick(() => {
+        const navbar = document.querySelector('.navbar')
+        const nav = mainNav.value
+        if (!navbar || !nav) return
+        // Temporarily make nav visible to measure its natural width
+        const wasHidden = nav.classList.contains('nav-hidden')
+        nav.classList.remove('nav-hidden')
+        nav.style.visibility = 'hidden'
+        const navNaturalWidth = nav.scrollWidth
+        nav.style.visibility = ''
+        if (wasHidden) nav.classList.add('nav-hidden')
+
+        const brand = document.querySelector('.navbar-brand')
+        const actions = document.querySelector('.nav-actions')
+        const available = navbar.clientWidth - (brand?.offsetWidth ?? 0) - (actions?.offsetWidth ?? 0) - 48
+        navOverflows.value = navNaturalWidth > available
+      })
+    }
 
     const renderSigninButton = () => {
       nextTick(() => {
@@ -110,28 +151,44 @@ export default {
 
     onMounted(() => {
       window.handleCredentialResponse = handleCredentialResponse
-      // Called by Google when its library finishes loading
       window.onGoogleLibraryLoad = () => {
         checkAuthStatus().then(() => {
           if (!user.value) renderSigninButton()
         })
       }
-      // In case the library already loaded before this component mounted
       if (window.google) {
         checkAuthStatus().then(() => {
           if (!user.value) renderSigninButton()
         })
       }
+
+      resizeObserver = new ResizeObserver(() => checkNavOverflow())
+      resizeObserver.observe(document.body)
+
+      document.addEventListener('click', (e) => {
+        if (dropdownWrapper.value && !dropdownWrapper.value.contains(e.target)) {
+          dropdownOpen.value = false
+        }
+      })
+    })
+
+    onBeforeUnmount(() => {
+      resizeObserver?.disconnect()
     })
 
     watch(user, (val) => {
       if (!val) renderSigninButton()
+      nextTick(() => checkNavOverflow())
     })
 
     return {
       user,
       googleClientId,
       signinButton,
+      mainNav,
+      dropdownWrapper,
+      navOverflows,
+      dropdownOpen,
       signOut
     }
   }
@@ -170,6 +227,10 @@ body {
   gap: 2rem;
 }
 
+.nav-hidden {
+  display: none !important;
+}
+
 .nav-link {
   text-decoration: none;
   color: #495057;
@@ -192,6 +253,63 @@ body {
   display: flex;
   align-items: center;
   gap: 1.5rem;
+}
+
+.nav-dropdown-wrapper {
+  position: relative;
+}
+
+.hamburger-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 28px;
+  height: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hamburger-btn span {
+  display: block;
+  height: 2px;
+  background: #495057;
+  border-radius: 2px;
+  transition: background 0.2s;
+}
+
+.hamburger-btn:hover span {
+  background: #007bff;
+}
+
+.nav-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  min-width: 160px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.dropdown-link {
+  display: block;
+  padding: 0.65rem 1rem;
+  text-decoration: none;
+  color: #495057;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: background 0.15s;
+}
+
+.dropdown-link:hover,
+.dropdown-link.router-link-active {
+  background: #e3f2fd;
+  color: #007bff;
 }
 
 .sign-out-btn {
@@ -271,7 +389,7 @@ main {
   background-color: #ffffff;
   border: 1px solid #dee2e6;
   border-radius: 8px;
-  min-width: 200px;
+  width: fit-content;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 

@@ -1,17 +1,17 @@
 <template>
   <div class="event-log-page">
     <div class="page-header">
-      <h1>Event Log</h1>
+      <h1>Events</h1>
       <p class="description">Activity log of logins, uploads, and invoice downloads.</p>
     </div>
 
     <div v-if="!isAdmin" class="access-denied">
       <h2>Access Denied</h2>
-      <p>Only administrators can view the event log.</p>
+      <p>Only administrators can view events.</p>
     </div>
 
     <template v-else>
-      <div v-if="loading" class="loading">Loading event log...</div>
+      <div v-if="loading" class="loading">Loading events...</div>
       <div v-else-if="error" class="error">{{ error }}</div>
       <div v-else-if="logs.length === 0" class="empty">No events recorded yet.</div>
       <div v-else class="table-wrapper">
@@ -67,7 +67,7 @@ export default {
         })
         logs.value = response.data
       } catch (err) {
-        error.value = err.response?.status === 403 ? 'Access denied.' : 'Failed to load event log.'
+        error.value = err.response?.status === 403 ? 'Access denied.' : 'Failed to load events.'
       } finally {
         loading.value = false
       }
