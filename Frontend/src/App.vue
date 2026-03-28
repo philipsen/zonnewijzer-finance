@@ -9,7 +9,7 @@
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link to="/users" class="nav-link">Users</router-link>
         <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
-        <router-link to="/upload-sessions" class="nav-link">Upload</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
         <router-link to="/invoices" class="nav-link">Invoices</router-link>
       </nav>
       <div class="nav-actions">

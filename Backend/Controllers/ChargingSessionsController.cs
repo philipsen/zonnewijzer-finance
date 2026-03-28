@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend.Data;
@@ -25,6 +26,7 @@ namespace Backend.Controllers
             _logger = logger;
         }
 
+        [Authorize(Roles = "Admin")]
         [HttpPost("upload")]
         public async Task<IActionResult> UploadCsv(IFormFile file)
         {

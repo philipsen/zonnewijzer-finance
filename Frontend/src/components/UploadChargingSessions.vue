@@ -1,11 +1,16 @@
 <template>
   <div class="upload-page">
-    <div class="page-header">
-      <h1>Upload Charging Sessions</h1>
-      <p class="page-description">
-        Upload CSV files containing charging session data. Duplicate sessions will be automatically skipped.
-      </p>
+    <div v-if="!isAdmin" class="access-denied">
+      <h2>Access Denied</h2>
+      <p>Only administrators can upload charging sessions.</p>
     </div>
+    <template v-else>
+      <div class="page-header">
+        <h1>Upload Charging Sessions</h1>
+        <p class="page-description">
+          Upload CSV files containing charging session data. Duplicate sessions will be automatically skipped.
+        </p>
+      </div>
 
     <div class="upload-container">
       <div class="upload-form">
@@ -91,6 +96,7 @@
         <li><strong>charged_kwh:</strong> Decimal number for energy delivered</li>
       </ul>
     </div>
+    </template>
   </div>
 </template>
 
@@ -106,6 +112,19 @@ export default {
     const uploadResult = ref(null)
     const isDragOver = ref(false)
     const fileInput = ref(null)
+
+    // Decode role from JWT to guard the UI
+    const isAdmin = ref(false)
+    const token = localStorage.getItem('token')
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+        isAdmin.value = role === 'Admin'
+      } catch {
+        isAdmin.value = false
+      }
+    }
 
     const triggerFileInput = () => {
       fileInput.value.click()
@@ -188,6 +207,7 @@ export default {
     }
 
     return {
+      isAdmin,
       selectedFile,
       uploading,
       uploadResult,
@@ -211,6 +231,19 @@ export default {
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+.access-denied {
+  text-align: center;
+  padding: 3rem;
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 8px;
+}
+
+.access-denied h2 {
+  margin: 0 0 0.5rem 0;
 }
 
 .page-header {
