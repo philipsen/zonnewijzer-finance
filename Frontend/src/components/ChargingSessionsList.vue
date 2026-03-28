@@ -566,30 +566,65 @@ export default {
 
 @media (max-width: 768px) {
   .sessions-page {
-    padding: 1rem;
+    padding: 0.75rem;
   }
-  
+
   .page-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 1rem;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
   }
-  
+
+  .page-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .filters-section {
+    padding: 0.75rem;
+    gap: 0.75rem;
+  }
+
   .sessions-summary {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
   }
-  
+
+  .summary-card {
+    padding: 0.75rem 0.5rem;
+  }
+
+  .summary-number {
+    font-size: 1.5rem;
+  }
+
+  .summary-label {
+    font-size: 0.75rem;
+  }
+
   .sessions-table-container {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  
+
   .sessions-table {
-    min-width: 700px;
+    min-width: 600px;
   }
-  
+
+  .sessions-table th,
+  .session-row td {
+    padding: 0.6rem 0.5rem;
+    font-size: 0.85rem;
+  }
+
   .pagination {
-    flex-direction: column;
     gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
   }
 }
 </style>

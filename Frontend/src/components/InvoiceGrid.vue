@@ -455,14 +455,63 @@ export default {
 
 @media (max-width: 768px) {
   .invoice-grid-page {
-    padding: 1rem;
+    padding: 0.75rem;
   }
-  
+
+  .grid-info h2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .grid-info .description {
+    font-size: 0.9rem;
+  }
+
+  .grid-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .invoice-grid {
+    min-width: 500px;
+  }
+
+  .user-column {
+    width: 130px;
+  }
+
+  .month-column {
+    width: 100px;
+    font-size: 0.75rem;
+  }
+
+  .user-cell {
+    padding: 0.5rem;
+  }
+
+  .user-name {
+    font-size: 0.85rem;
+  }
+
+  .user-email {
+    font-size: 0.7rem;
+  }
+
+  .invoice-cell {
+    padding: 0.25rem;
+    width: 100px;
+  }
+
+  .invoice-link {
+    font-size: 0.75rem;
+    padding: 0.25rem;
+  }
+
   .generate-form {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .form-select,
   .form-input,
   .btn {

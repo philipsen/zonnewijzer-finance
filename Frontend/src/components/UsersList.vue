@@ -415,17 +415,36 @@ export default {
 
 @media (max-width: 768px) {
   .users-page {
-    padding: 1rem;
+    padding: 0.75rem;
   }
-  
+
   .page-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 1rem;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
   }
-  
+
+  .page-header h1 {
+    font-size: 1.4rem;
+  }
+
   .users-grid {
     grid-template-columns: 1fr;
+  }
+
+  .user-card {
+    padding: 1rem;
+  }
+
+  .date-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+  }
+
+  .role-management {
+    flex-wrap: wrap;
   }
 }
 </style>

@@ -1,6 +1,5 @@
 <template>
   <div class="edit-user-page">
-    here
     <div class="page-header">
       <div class="header-content">
         <router-link to="/users" class="back-link">
@@ -519,22 +518,33 @@ export default {
 
 @media (max-width: 768px) {
   .edit-user-page {
+    padding: 0.75rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .edit-form-container {
     padding: 1rem;
   }
-  
-  .edit-form-container {
-    padding: 1.5rem;
-  }
-  
+
   .user-preview {
     flex-direction: column;
     text-align: center;
+    padding: 1rem;
   }
-  
+
+  .metadata-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+  }
+
   .form-actions {
     flex-direction: column;
   }
-  
+
   .btn {
     width: 100%;
   }

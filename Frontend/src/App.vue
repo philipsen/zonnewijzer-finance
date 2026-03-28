@@ -180,27 +180,50 @@ main {
   .navbar {
     flex-direction: column;
     align-items: flex-start;
-    gap: 1rem;
-    padding: 1rem;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
   }
-  
+
+  .navbar-brand h1 {
+    font-size: 1rem;
+  }
+
+  .logo {
+    height: 28px;
+  }
+
   .main-nav {
-    gap: 1rem;
-  }
-  
-  .nav-actions {
-    align-self: flex-end;
+    gap: 0.25rem;
+    flex-wrap: wrap;
     width: 100%;
-    justify-content: flex-end;
   }
-  
+
+  .nav-link {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  .nav-actions {
+    align-self: stretch;
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .user-info {
-    min-width: 150px;
-    font-size: 0.9rem;
+    min-width: unset;
+    font-size: 0.85rem;
+    align-items: flex-start;
+    flex: 1;
   }
-  
+
+  .sign-out-btn {
+    white-space: nowrap;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.75rem;
+  }
+
   main {
-    padding: 1rem;
+    padding: 0.75rem;
   }
 }
 

@@ -431,19 +431,43 @@ export default {
 
 @media (max-width: 768px) {
   .upload-page {
+    padding: 0.75rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .upload-container {
     padding: 1rem;
   }
-  
-  .upload-container {
-    padding: 1.5rem;
-  }
-  
+
   .file-upload-area {
-    padding: 2rem 1rem;
+    padding: 1.5rem 1rem;
   }
-  
+
+  .upload-icon {
+    font-size: 2rem;
+  }
+
+  .upload-content h3 {
+    font-size: 1rem;
+  }
+
   .result-stats {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stat-number {
+    font-size: 1.5rem;
+  }
+
+  .format-example pre {
+    font-size: 0.75rem;
+  }
+
+  .csv-format-info {
+    padding: 1rem;
   }
 }
 </style>
