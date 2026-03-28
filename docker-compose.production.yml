@@ -37,22 +37,24 @@ services:
       timeout: 10s                                                                                                                                                                                                                                 
       retries: 3                                                                                                                                                                                                                                   
                                                                                                                                                                                                                                                    
-  nginx:                                                                                                                                                                                                                                           
-    image: nginx:alpine                                                                                                                                                                                                                            
-    container_name: finance-nginx                                                                                                                                                                                                                  
-    ports:                                                                                                                                                                                                                                         
-      - "80:80"
-      - "443:443"
+  nginx:
+    image: nginx:alpine
+    container_name: finance-nginx
+    ports:
+      - "8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - /opt/mailcow-dockerized/data/assets/ssl/cert.pem:/etc/nginx/ssl/cert.pem:ro
-      - /opt/mailcow-dockerized/data/assets/ssl/key.pem:/etc/nginx/ssl/key.pem:ro
-      - /opt/mailcow-dockerized/data/web/.well-known/acme-challenge:/var/www/acme-challenge:ro                                                                                                                                                                                                                                   
-    restart: unless-stopped                                                                                                                                                                                                                        
-    healthcheck:                                                                                                                                                                                                                                   
-      test: ["CMD", "curl", "-f", "http://localhost:80"]                                                                                                                                                                                           
-      interval: 30s                                                                                                                                                                                                                                
-      timeout: 10s                                                                                                                                                                                                                                 
+    networks:
+      - finance-network
+      - mailcow-ext
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
       retries: 3                                                                                                                                                                                                                                   
                                                                                                                                                                                                                                                    
 networks:                                                                                                                                                                                                                                          
