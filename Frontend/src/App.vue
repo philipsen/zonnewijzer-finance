@@ -63,6 +63,7 @@ export default {
         })
         user.value = result.data.user
         localStorage.setItem('token', result.data.token)
+        window.location.reload()
       } catch (error) {
         console.error('Authentication failed:', error)
       }

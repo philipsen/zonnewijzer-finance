@@ -378,6 +378,7 @@ export default {
 
 .grid-wrapper {
   overflow-x: auto;
+  display: inline-block;
   background: white;
   border: 1px solid #dee2e6;
   border-radius: 8px;
@@ -385,9 +386,8 @@ export default {
 }
 
 .invoice-grid {
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
-  min-width: 800px;
 }
 
 .invoice-grid th,
@@ -408,7 +408,7 @@ export default {
 }
 
 .user-column {
-  width: 200px;
+  width: 100px;
   text-align: left;
   position: sticky;
   left: 0;
