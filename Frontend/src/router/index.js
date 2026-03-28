@@ -5,6 +5,7 @@ import EditUser from '../components/EditUser.vue'
 import UploadChargingSessions from '../components/UploadChargingSessions.vue'
 import ChargingSessionsList from '../components/ChargingSessionsList.vue'
 import InvoiceGrid from '../components/InvoiceGrid.vue'
+import EventLog from '../components/EventLog.vue'
 
 const routes = [
   {
@@ -36,6 +37,11 @@ const routes = [
     path: '/invoices',
     name: 'InvoiceGrid',
     component: InvoiceGrid
+  },
+  {
+    path: '/event-log',
+    name: 'EventLog',
+    component: EventLog
   }
 ]
 

@@ -111,6 +111,14 @@ namespace Backend.Controllers
                 _logger.LogInformation("CSV upload completed. Added: {Added}, Skipped: {Skipped}, Errors: {Errors}", 
                     newSessions.Count, skippedCount, errorCount);
 
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = User.Identity?.Name ?? "Unknown",
+                    Action = $"Upload '{file.FileName}': {newSessions.Count} added, {skippedCount} skipped"
+                });
+                await _context.SaveChangesAsync();
+
                 return Ok(new
                 {
                     message = "Upload completed",

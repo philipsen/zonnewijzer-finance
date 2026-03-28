@@ -70,6 +70,13 @@ namespace Backend.Controllers
                     _logger.LogInformation("Existing user login: {Email} (ID: {UserId})", user.Email, user.Id);
                 }
 
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = user.Name,
+                    Action = "Login"
+                });
+
                 await _context.SaveChangesAsync();
 
                 var token = _jwtService.GenerateToken(user);
@@ -94,6 +101,30 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "Authentication failed for Google credential");
                 return BadRequest($"Authentication failed: {ex.Message}");
             }
+        }
+
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+            var userIdString = _jwtService.ValidateToken(token);
+
+            if (userIdString != null && int.TryParse(userIdString, out int userId))
+            {
+                var user = await _context.Users.FindAsync(userId);
+                if (user != null)
+                {
+                    _context.EventLogs.Add(new EventLog
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        UserName = user.Name,
+                        Action = "Logout"
+                    });
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            return Ok();
         }
 
         [HttpGet("user")]
@@ -196,25 +227,43 @@ namespace Backend.Controllers
                     return NotFound("User not found");
                 }
 
+                var editor = await _context.Users.FindAsync(currentUserId);
+                var editorName = editor?.Name ?? $"User {currentUserId}";
+
+                var changes = new List<string>();
+
                 // Update user fields
-                if (!string.IsNullOrWhiteSpace(request.Name))
+                if (!string.IsNullOrWhiteSpace(request.Name) && request.Name.Trim() != user.Name)
                 {
+                    changes.Add($"Name: '{user.Name}' → '{request.Name.Trim()}'");
                     user.Name = request.Name.Trim();
                 }
                 
-                if (!string.IsNullOrWhiteSpace(request.Email))
+                if (!string.IsNullOrWhiteSpace(request.Email) && request.Email.Trim() != user.Email)
                 {
+                    changes.Add($"Email: '{user.Email}' → '{request.Email.Trim()}'");
                     user.Email = request.Email.Trim();
                 }
 
                 // Allow role changes for any authenticated user
                 if (!string.IsNullOrWhiteSpace(request.Role))
                 {
-                    if (Enum.TryParse<UserRole>(request.Role, true, out var newRole))
+                    if (Enum.TryParse<UserRole>(request.Role, true, out var newRole) && newRole != user.Role)
                     {
+                        changes.Add($"Role: '{user.Role}' → '{newRole}'");
                         user.Role = newRole;
                         _logger.LogInformation("User {CurrentUserId} changed role of user {UserId} to {Role}", currentUserId, id, newRole);
                     }
+                }
+
+                if (changes.Any())
+                {
+                    _context.EventLogs.Add(new EventLog
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        UserName = editorName,
+                        Action = $"Edited user '{user.Name}': {string.Join(", ", changes)}"
+                    });
                 }
 
                 await _context.SaveChangesAsync();
@@ -261,7 +310,19 @@ namespace Backend.Controllers
                     return BadRequest("Invalid role. Valid roles are: Base, Admin");
                 }
 
+                var editor = await _context.Users.FindAsync(currentUserId);
+                var editorName = editor?.Name ?? $"User {currentUserId}";
+                var oldRole = user.Role;
+
                 user.Role = newRole;
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = editorName,
+                    Action = $"Changed role of '{user.Name}': '{oldRole}' → '{newRole}'"
+                });
+
                 await _context.SaveChangesAsync();
 
                 _logger.LogInformation("User {UserId} changed role of user {TargetUserId} to {Role}", currentUserId, id, newRole);

@@ -50,6 +50,28 @@ namespace Backend.Migrations
                     b.ToTable("ChargingSessions");
                 });
 
+            modelBuilder.Entity("Backend.Models.EventLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("EventLogs");
+                });
+
             modelBuilder.Entity("Backend.Models.Invoice", b =>
                 {
                     b.Property<int>("Id")

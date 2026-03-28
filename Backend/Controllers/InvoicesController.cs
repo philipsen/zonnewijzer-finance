@@ -99,7 +99,7 @@ namespace Backend.Controllers
                 var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
                 var userIdString = _jwtService.ValidateToken(token);
                 
-                if (userIdString == null)
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
                 {
                     return Unauthorized();
                 }
@@ -148,6 +148,15 @@ namespace Backend.Controllers
                 // Generate PDF
                 var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
                 var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{userId}_{year}_{month:D2}.pdf";
+
+                var requester = await _context.Users.FindAsync(currentUserId);
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requester?.Name ?? $"User {currentUserId}",
+                    Action = $"Invoice download for user {userId} – {invoiceData.MonthName}"
+                });
+                await _context.SaveChangesAsync();
 
                 return File(pdfBytes, "application/pdf", fileName);
             }

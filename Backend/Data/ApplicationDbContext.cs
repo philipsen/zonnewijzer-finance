@@ -13,6 +13,7 @@ namespace Backend.Data
         public DbSet<User> Users { get; set; }
         public DbSet<ChargingSession> ChargingSessions { get; set; }
         public DbSet<Invoice> Invoices { get; set; }
+        public DbSet<EventLog> EventLogs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

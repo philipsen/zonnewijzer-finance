@@ -11,24 +11,11 @@
         <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
         <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
         <router-link to="/invoices" class="nav-link">Invoices</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/event-log" class="nav-link">Event Log</router-link>
       </nav>
       <div class="nav-actions">
         <template v-if="!user">
-          <div id="g_id_onload"
-               :data-client_id="googleClientId"
-               data-context="signin"
-               data-ux_mode="popup"
-               data-callback="handleCredentialResponse"
-               data-auto_prompt="false">
-          </div>
-          <div class="g_id_signin"
-               data-type="standard"
-               data-shape="rectangular"
-               data-theme="outline"
-               data-text="signin_with"
-               data-size="large"
-               data-logo_alignment="left">
-          </div>
+          <div ref="signinButton"></div>
         </template>
         <template v-else>
           <div class="user-info">
@@ -46,14 +33,34 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import axios from 'axios'
 
 export default {
   name: 'App',
   setup() {
     const user = ref(null)
-    const googleClientId = '367881736099-4g29mnk5ho3a1iuosd5uo4ut284gbpql.apps.googleusercontent.com' 
+    const googleClientId = '367881736099-4g29mnk5ho3a1iuosd5uo4ut284gbpql.apps.googleusercontent.com'
+    const signinButton = ref(null)
+
+    const renderSigninButton = () => {
+      nextTick(() => {
+        if (signinButton.value && window.google) {
+          google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleCredentialResponse
+          })
+          google.accounts.id.renderButton(signinButton.value, {
+            type: 'standard',
+            shape: 'rectangular',
+            theme: 'outline',
+            text: 'signin_with',
+            size: 'large',
+            logo_alignment: 'left'
+          })
+        }
+      })
+    } 
 
     const handleCredentialResponse = async (response) => {
       console.log('Google credential response:', response)
@@ -69,10 +76,21 @@ export default {
       }
     }
 
-    const signOut = () => {
+    const signOut = async () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (token) {
+          await axios.post('/api/auth/logout', {}, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        }
+      } catch {
+        // ignore errors, proceed with local sign-out
+      }
       user.value = null
       localStorage.removeItem('token')
       google.accounts.id.disableAutoSelect()
+      window.location.href = '/'
     }
 
     const checkAuthStatus = async () => {
@@ -91,13 +109,29 @@ export default {
     }
 
     onMounted(() => {
-      checkAuthStatus()
       window.handleCredentialResponse = handleCredentialResponse
+      // Called by Google when its library finishes loading
+      window.onGoogleLibraryLoad = () => {
+        checkAuthStatus().then(() => {
+          if (!user.value) renderSigninButton()
+        })
+      }
+      // In case the library already loaded before this component mounted
+      if (window.google) {
+        checkAuthStatus().then(() => {
+          if (!user.value) renderSigninButton()
+        })
+      }
+    })
+
+    watch(user, (val) => {
+      if (!val) renderSigninButton()
     })
 
     return {
       user,
       googleClientId,
+      signinButton,
       signOut
     }
   }
