@@ -27,6 +27,58 @@ namespace Backend.Controllers
         }
 
         [Authorize(Roles = "Admin")]
+        [HttpPost]
+        public async Task<IActionResult> AddSession([FromBody] AddSessionRequest request)
+        {
+            try
+            {
+                if (request.End <= request.Start)
+                    return BadRequest("End time must be after start time");
+
+                if (request.ChargedKwh < 0)
+                    return BadRequest("ChargedKwh must be non-negative");
+
+                var session = new ChargingSession
+                {
+                    Start = request.Start,
+                    End = request.End,
+                    UserId = request.UserId,
+                    StationId = request.StationId,
+                    ChargedKwh = request.ChargedKwh
+                };
+
+                _context.ChargingSessions.Add(session);
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = User.Identity?.Name ?? "Unknown",
+                    Action = $"Manually added charging session: User {session.UserId}, Station {session.StationId}, {session.ChargedKwh} kWh"
+                });
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Admin manually added charging session {SessionId}", session.Id);
+
+                return Ok(new
+                {
+                    id = session.Id,
+                    start = session.Start,
+                    end = session.End,
+                    userId = session.UserId,
+                    stationId = session.StationId,
+                    chargedKwh = session.ChargedKwh,
+                    duration = (int)(session.End - session.Start).TotalMinutes
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error adding charging session manually");
+                return BadRequest($"Failed to add session: {ex.Message}");
+            }
+        }
+
+        [Authorize(Roles = "Admin")]
         [HttpPost("upload")]
         public async Task<IActionResult> UploadCsv(IFormFile file)
         {
@@ -258,6 +310,15 @@ namespace Backend.Controllers
                 return BadRequest($"Failed to retrieve sessions: {ex.Message}");
             }
         }
+    }
+
+    public class AddSessionRequest
+    {
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public int UserId { get; set; }
+        public int StationId { get; set; }
+        public decimal ChargedKwh { get; set; }
     }
 
     public class ChargingSessionCsvRecord

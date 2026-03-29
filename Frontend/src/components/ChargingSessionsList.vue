@@ -3,6 +3,9 @@
     <div class="page-header">
       <h1>Charging Sessions</h1>
       <div class="header-actions">
+        <button v-if="isAdmin" @click="openAddModal" class="btn btn-success">
+          + Add Session
+        </button>
         <router-link to="/upload-sessions" class="btn btn-primary">
           Upload CSV
         </router-link>
@@ -116,6 +119,45 @@
       </div>
     </div>
   </div>
+
+  <!-- Add Session Modal -->
+  <div v-if="showAddModal" class="modal-overlay" @click.self="closeAddModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Charging Session</h2>
+        <button class="modal-close" @click="closeAddModal">✕</button>
+      </div>
+      <form @submit.prevent="submitAddSession" class="modal-body">
+        <div class="form-group">
+          <label>Start Time</label>
+          <input type="datetime-local" v-model="newSession.start" required class="form-input" @change="onStartChange" />
+        </div>
+        <div class="form-group">
+          <label>End Time</label>
+          <input type="datetime-local" v-model="newSession.end" required class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>User ID</label>
+          <input type="number" v-model.number="newSession.userId" required min="1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Station ID</label>
+          <input type="number" v-model.number="newSession.stationId" required min="1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Charged (kWh)</label>
+          <input type="number" v-model.number="newSession.chargedKwh" required min="0" step="0.001" class="form-input" />
+        </div>
+        <div v-if="addError" class="add-error">{{ addError }}</div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" @click="closeAddModal">Cancel</button>
+          <button type="submit" class="btn btn-success" :disabled="addLoading">
+            {{ addLoading ? 'Saving...' : 'Add Session' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -137,6 +179,61 @@ export default {
     const selectedMonth = ref('')
     const availableMonths = ref([])
     const loadingMonths = ref(true)
+    const isAdmin = ref(false)
+    const showAddModal = ref(false)
+    const addLoading = ref(false)
+    const addError = ref('')
+    const newSession = ref({ start: '', end: '', userId: '', stationId: '', chargedKwh: '' })
+
+    const checkAdminRole = () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+        isAdmin.value = role === 'Admin'
+      } catch {
+        isAdmin.value = false
+      }
+    }
+
+    const openAddModal = () => {
+      newSession.value = { start: '', end: '', userId: '', stationId: '', chargedKwh: '' }
+      addError.value = ''
+      showAddModal.value = true
+    }
+
+    const closeAddModal = () => {
+      showAddModal.value = false
+    }
+
+    const onStartChange = () => {
+      if (!newSession.value.end) newSession.value.end = newSession.value.start
+    }
+
+    const submitAddSession = async () => {
+      try {
+        addLoading.value = true
+        addError.value = ''
+        const token = localStorage.getItem('token')
+        await axios.post('/api/chargingsessions', {
+          start: new Date(newSession.value.start).toISOString(),
+          end: new Date(newSession.value.end).toISOString(),
+          userId: newSession.value.userId,
+          stationId: newSession.value.stationId,
+          chargedKwh: newSession.value.chargedKwh
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        closeAddModal()
+        fetchSessions(pagination.value.page)
+        fetchAvailableMonths()
+      } catch (err) {
+        addError.value = err.response?.data || 'Failed to add session. Please try again.'
+      } finally {
+        addLoading.value = false
+      }
+    }
 
     const fetchAvailableMonths = async () => {
       try {
@@ -265,6 +362,7 @@ export default {
     }
 
     onMounted(() => {
+      checkAdminRole()
       fetchAvailableMonths()
       fetchSessions()
     })
@@ -280,6 +378,15 @@ export default {
       loadingMonths,
       totalEnergyDelivered,
       averageSessionDuration,
+      isAdmin,
+      showAddModal,
+      addLoading,
+      addError,
+      newSession,
+      openAddModal,
+      closeAddModal,
+      submitAddSession,
+      onStartChange,
       changePage,
       applyFilter,
       clearFilter,
@@ -562,6 +669,109 @@ export default {
 
 .btn-secondary:hover:not(:disabled) {
   background-color: #545b62;
+}
+
+.btn-success {
+  background-color: #28a745;
+  color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: #1e7e34;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: white;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #333;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #666;
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #333;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
+}
+
+.add-error {
+  background-color: #f8d7da;
+  color: #721c24;
+  padding: 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  border: 1px solid #f5c6cb;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
 }
 
 @media (max-width: 768px) {
