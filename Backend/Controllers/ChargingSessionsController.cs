@@ -310,9 +310,101 @@ namespace Backend.Controllers
                 return BadRequest($"Failed to retrieve sessions: {ex.Message}");
             }
         }
+
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateSession(int id, [FromBody] UpdateSessionRequest request)
+        {
+            try
+            {
+                if (request.End <= request.Start)
+                    return BadRequest("End time must be after start time");
+
+                if (request.ChargedKwh < 0)
+                    return BadRequest("ChargedKwh must be non-negative");
+
+                var session = await _context.ChargingSessions.FindAsync(id);
+                if (session == null)
+                    return NotFound($"Session {id} not found");
+
+                session.Start = request.Start;
+                session.End = request.End;
+                session.UserId = request.UserId;
+                session.StationId = request.StationId;
+                session.ChargedKwh = request.ChargedKwh;
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = User.Identity?.Name ?? "Unknown",
+                    Action = $"Updated charging session {id}: User {session.UserId}, Station {session.StationId}, {session.ChargedKwh} kWh"
+                });
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Admin updated charging session {SessionId}", id);
+
+                return Ok(new
+                {
+                    id = session.Id,
+                    start = session.Start,
+                    end = session.End,
+                    userId = session.UserId,
+                    stationId = session.StationId,
+                    chargedKwh = session.ChargedKwh,
+                    duration = (int)(session.End - session.Start).TotalMinutes
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating charging session {SessionId}", id);
+                return BadRequest($"Failed to update session: {ex.Message}");
+            }
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteSession(int id)
+        {
+            try
+            {
+                var session = await _context.ChargingSessions.FindAsync(id);
+                if (session == null)
+                    return NotFound($"Session {id} not found");
+
+                _context.ChargingSessions.Remove(session);
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = User.Identity?.Name ?? "Unknown",
+                    Action = $"Deleted charging session {id}: User {session.UserId}, Station {session.StationId}, {session.ChargedKwh} kWh"
+                });
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Admin deleted charging session {SessionId}", id);
+
+                return Ok(new { message = $"Session {id} deleted" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting charging session {SessionId}", id);
+                return BadRequest($"Failed to delete session: {ex.Message}");
+            }
+        }
     }
 
     public class AddSessionRequest
+    {
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public int UserId { get; set; }
+        public int StationId { get; set; }
+        public decimal ChargedKwh { get; set; }
+    }
+
+    public class UpdateSessionRequest
     {
         public DateTime Start { get; set; }
         public DateTime End { get; set; }

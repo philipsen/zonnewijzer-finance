@@ -68,6 +68,7 @@
               <th>User</th>
               <th>Station</th>
               <th>Energy (kWh)</th>
+              <th v-if="isAdmin">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -82,6 +83,10 @@
                 <span class="station-badge">Station {{ session.stationId }}</span>
               </td>
               <td class="energy-cell">{{ session.chargedKwh }} kWh</td>
+              <td v-if="isAdmin" class="actions-cell">
+                <button class="btn-icon btn-edit" @click="openEditModal(session)" title="Edit">✏️</button>
+                <button class="btn-icon btn-delete" @click="openDeleteConfirm(session)" title="Delete">🗑️</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -116,6 +121,66 @@
         <router-link to="/upload-sessions" class="btn btn-primary">
           Upload Sessions
         </router-link>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Session Modal -->
+  <div v-if="showEditModal" class="modal-overlay" @click.self="closeEditModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Edit Charging Session</h2>
+        <button class="modal-close" @click="closeEditModal">✕</button>
+      </div>
+      <form @submit.prevent="submitEditSession" class="modal-body">
+        <div class="form-group">
+          <label>Start Time</label>
+          <input type="datetime-local" v-model="editSession.start" required class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>End Time</label>
+          <input type="datetime-local" v-model="editSession.end" required class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>User ID</label>
+          <input type="number" v-model.number="editSession.userId" required min="1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Station ID</label>
+          <input type="number" v-model.number="editSession.stationId" required min="1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Charged (kWh)</label>
+          <input type="number" v-model.number="editSession.chargedKwh" required min="0" step="0.001" class="form-input" />
+        </div>
+        <div v-if="editError" class="add-error">{{ editError }}</div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" @click="closeEditModal">Cancel</button>
+          <button type="submit" class="btn btn-success" :disabled="editLoading">
+            {{ editLoading ? 'Saving...' : 'Save Changes' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div v-if="showDeleteConfirm" class="modal-overlay" @click.self="closeDeleteConfirm">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Delete Session</h2>
+        <button class="modal-close" @click="closeDeleteConfirm">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete this session?</p>
+        <p class="delete-detail">User {{ sessionToDelete?.userId }} · Station {{ sessionToDelete?.stationId }} · {{ sessionToDelete?.chargedKwh }} kWh</p>
+        <div v-if="deleteError" class="add-error">{{ deleteError }}</div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="closeDeleteConfirm">Cancel</button>
+          <button class="btn btn-danger" @click="submitDelete" :disabled="deleteLoading">
+            {{ deleteLoading ? 'Deleting...' : 'Delete' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -184,6 +249,86 @@ export default {
     const addLoading = ref(false)
     const addError = ref('')
     const newSession = ref({ start: '', end: '', userId: '', stationId: '', chargedKwh: '' })
+
+    const showEditModal = ref(false)
+    const editLoading = ref(false)
+    const editError = ref('')
+    const editSession = ref({ id: null, start: '', end: '', userId: '', stationId: '', chargedKwh: '' })
+
+    const showDeleteConfirm = ref(false)
+    const deleteLoading = ref(false)
+    const deleteError = ref('')
+    const sessionToDelete = ref(null)
+
+    const toLocalDatetimeInput = (isoString) => {
+      const d = new Date(isoString)
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+
+    const openEditModal = (session) => {
+      editSession.value = {
+        id: session.id,
+        start: toLocalDatetimeInput(session.start),
+        end: toLocalDatetimeInput(session.end),
+        userId: session.userId,
+        stationId: session.stationId,
+        chargedKwh: session.chargedKwh
+      }
+      editError.value = ''
+      showEditModal.value = true
+    }
+
+    const closeEditModal = () => { showEditModal.value = false }
+
+    const submitEditSession = async () => {
+      try {
+        editLoading.value = true
+        editError.value = ''
+        const token = localStorage.getItem('token')
+        await axios.put(`/api/chargingsessions/${editSession.value.id}`, {
+          start: new Date(editSession.value.start).toISOString(),
+          end: new Date(editSession.value.end).toISOString(),
+          userId: editSession.value.userId,
+          stationId: editSession.value.stationId,
+          chargedKwh: editSession.value.chargedKwh
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        closeEditModal()
+        fetchSessions(pagination.value.page)
+      } catch (err) {
+        editError.value = err.response?.data || 'Failed to save changes. Please try again.'
+      } finally {
+        editLoading.value = false
+      }
+    }
+
+    const openDeleteConfirm = (session) => {
+      sessionToDelete.value = session
+      deleteError.value = ''
+      showDeleteConfirm.value = true
+    }
+
+    const closeDeleteConfirm = () => { showDeleteConfirm.value = false }
+
+    const submitDelete = async () => {
+      try {
+        deleteLoading.value = true
+        deleteError.value = ''
+        const token = localStorage.getItem('token')
+        await axios.delete(`/api/chargingsessions/${sessionToDelete.value.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        closeDeleteConfirm()
+        fetchSessions(pagination.value.page)
+        fetchAvailableMonths()
+      } catch (err) {
+        deleteError.value = err.response?.data || 'Failed to delete session. Please try again.'
+      } finally {
+        deleteLoading.value = false
+      }
+    }
 
     const checkAdminRole = () => {
       try {
@@ -387,6 +532,20 @@ export default {
       closeAddModal,
       submitAddSession,
       onStartChange,
+      showEditModal,
+      editLoading,
+      editError,
+      editSession,
+      openEditModal,
+      closeEditModal,
+      submitEditSession,
+      showDeleteConfirm,
+      deleteLoading,
+      deleteError,
+      sessionToDelete,
+      openDeleteConfirm,
+      closeDeleteConfirm,
+      submitDelete,
       changePage,
       applyFilter,
       clearFilter,
@@ -678,6 +837,44 @@ export default {
 
 .btn-success:hover:not(:disabled) {
   background-color: #1e7e34;
+}
+
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #b02a37;
+}
+
+.actions-cell {
+  white-space: nowrap;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  font-size: 1rem;
+  line-height: 1;
+  transition: background-color 0.15s;
+}
+
+.btn-icon:hover {
+  background-color: #e9ecef;
+}
+
+.modal-sm {
+  max-width: 360px;
+}
+
+.delete-detail {
+  color: #555;
+  font-size: 0.9rem;
+  margin-top: -0.5rem;
 }
 
 .modal-overlay {
