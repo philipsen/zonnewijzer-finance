@@ -32,8 +32,8 @@ namespace Backend.Controllers
         {
             try
             {
-                if (request.End <= request.Start)
-                    return BadRequest("End time must be after start time");
+                if (request.End < request.Start)
+                    return BadRequest("End time cannot be before start time");
 
                 if (request.ChargedKwh < 0)
                     return BadRequest("ChargedKwh must be non-negative");
@@ -317,8 +317,8 @@ namespace Backend.Controllers
         {
             try
             {
-                if (request.End <= request.Start)
-                    return BadRequest("End time must be after start time");
+                if (request.End < request.Start)
+                    return BadRequest("End time cannot be before start time");
 
                 if (request.ChargedKwh < 0)
                     return BadRequest("ChargedKwh must be non-negative");
