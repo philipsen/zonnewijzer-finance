@@ -50,6 +50,62 @@ namespace Backend.Migrations
                     b.ToTable("ChargingSessions");
                 });
 
+            modelBuilder.Entity("Backend.Models.ChargingUserProfile", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HouseNumber")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlaceName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PostalCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Street")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ChargingUserProfiles");
+                });
+
+            modelBuilder.Entity("Backend.Models.EnergyPrice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Month")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("PricePerKwh")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Year", "Month")
+                        .IsUnique();
+
+                    b.ToTable("EnergyPrices");
+                });
+
             modelBuilder.Entity("Backend.Models.EventLog", b =>
                 {
                     b.Property<int>("Id")
@@ -123,6 +179,9 @@ namespace Backend.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ChargingUserId")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAt")

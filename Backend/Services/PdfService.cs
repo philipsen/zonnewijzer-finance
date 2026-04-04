@@ -49,13 +49,25 @@ namespace Backend.Services
                                 row.RelativeItem().Column(col =>
                                 {
                                     col.Item().Text($"Invoice Number: {invoiceData.InvoiceNumber}").Bold();
-                                    col.Item().Text($"User: {invoiceData.UserName}");
                                     col.Item().Text($"Period: {invoiceData.MonthName}");
                                 });
 
                                 row.RelativeItem().Column(col =>
                                 {
-                                    col.Item().AlignRight().Text($"Generated: {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
+                                    col.Item().AlignRight().Text(invoiceData.UserName).Bold();
+                                    if (!string.IsNullOrWhiteSpace(invoiceData.Street))
+                                    {
+                                        var streetLine = invoiceData.Street;
+                                        if (!string.IsNullOrWhiteSpace(invoiceData.HouseNumber))
+                                            streetLine += $" {invoiceData.HouseNumber}";
+                                        col.Item().AlignRight().Text(streetLine);
+                                    }
+                                    if (!string.IsNullOrWhiteSpace(invoiceData.PostalCode) || !string.IsNullOrWhiteSpace(invoiceData.PlaceName))
+                                    {
+                                        var cityLine = $"{invoiceData.PostalCode} {invoiceData.PlaceName}".Trim();
+                                        col.Item().AlignRight().Text(cityLine);
+                                    }
+                                    col.Item().PaddingTop(5).AlignRight().Text($"Generated: {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
                                     col.Item().AlignRight().Text($"Rate: €{invoiceData.RatePerKwh:F2} per kWh").Bold();
                                 });
                             });

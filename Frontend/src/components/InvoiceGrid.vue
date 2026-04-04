@@ -15,7 +15,6 @@
         <h2>Invoice Grid</h2>
         <p class="description">
           Click on any link to generate and download an invoice PDF based on charging session data.
-          Rate: €0.22 per kWh
         </p>
       </div>
 
@@ -30,7 +29,8 @@
                 :key="`${month.year}-${month.month}`"
                 class="month-column"
               >
-                {{ month.name }}
+                <div>{{ month.name }}</div>
+                <div class="month-rate">€{{ month.ratePerKwh.toFixed(2) }}/kWh</div>
               </th>
             </tr>
           </thead>
@@ -54,8 +54,8 @@
                       class="invoice-link"
                       @click.prevent="generatePdfInvoice(userRow.user.id, monthData.year, monthData.month)"
                     >
-                      <div class="invoice-label">Download PDF</div>
-                      <div class="invoice-rate">@€0.22/kWh</div>
+                      <div class="invoice-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</div>
+                      <div class="invoice-amount">€{{ monthData.totalAmount.toFixed(2) }}</div>
                     </a>
                   </template>
                   <template v-else>
@@ -96,7 +96,8 @@
                 class="mobile-invoice-link"
                 @click.prevent="generatePdfInvoice(selectedUserRow.user.id, monthData.year, monthData.month)"
               >
-                Download PDF
+                <span class="mobile-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</span>
+                <span class="mobile-amount">€{{ monthData.totalAmount.toFixed(2) }}</span>
               </a>
             </template>
             <span v-else class="mobile-no-invoice">No sessions</span>
@@ -421,6 +422,13 @@ export default {
   font-size: 0.85rem;
 }
 
+.month-rate {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
 .user-row:nth-child(even) {
   background-color: #f8f9fa;
 }
@@ -481,15 +489,15 @@ export default {
   text-decoration: none;
 }
 
-.invoice-number {
-  font-size: 0.8rem;
-  font-weight: 600;
+.invoice-kwh {
+  font-size: 0.75rem;
+  color: #6b7280;
 }
 
 .invoice-amount {
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   color: #28a745;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .no-invoice {

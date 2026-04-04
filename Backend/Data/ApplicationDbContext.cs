@@ -14,6 +14,8 @@ namespace Backend.Data
         public DbSet<ChargingSession> ChargingSessions { get; set; }
         public DbSet<Invoice> Invoices { get; set; }
         public DbSet<EventLog> EventLogs { get; set; }
+        public DbSet<EnergyPrice> EnergyPrices { get; set; }
+        public DbSet<ChargingUserProfile> ChargingUserProfiles { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -58,6 +60,24 @@ namespace Backend.Data
                 
                 // Unique constraint for user + year + month to prevent duplicate invoices
                 entity.HasIndex(e => new { e.UserId, e.Year, e.Month }).IsUnique();
+            });
+
+            modelBuilder.Entity<EnergyPrice>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Year).IsRequired();
+                entity.Property(e => e.Month).IsRequired();
+                entity.Property(e => e.PricePerKwh).HasPrecision(8, 4).IsRequired();
+
+                // Unique constraint: one price per year+month
+                entity.HasIndex(e => new { e.Year, e.Month }).IsUnique();
+            });
+
+            modelBuilder.Entity<ChargingUserProfile>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).ValueGeneratedNever();
+                entity.Property(e => e.DisplayName).HasMaxLength(255);
             });
         }
     }

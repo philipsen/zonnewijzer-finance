@@ -11,6 +11,10 @@ namespace Backend.Services
     {
         public int UserId { get; set; }
         public string UserName { get; set; } = string.Empty;
+        public string? Street { get; set; }
+        public string? HouseNumber { get; set; }
+        public string? PostalCode { get; set; }
+        public string? PlaceName { get; set; }
         public int Year { get; set; }
         public int Month { get; set; }
         public string MonthName { get; set; } = string.Empty;

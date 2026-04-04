@@ -137,7 +137,6 @@ export default {
     const saving = ref(false)
     const error = ref('')
     const currentUserRole = ref('')
-
     // Decode role from JWT to guard the UI
     const isAdmin = ref(false)
     const token = localStorage.getItem('token')
@@ -444,6 +443,12 @@ export default {
   outline: none;
   border-color: #007bff;
   box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.form-hint {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: #6c757d;
 }
 
 .role-display {

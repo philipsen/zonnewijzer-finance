@@ -8,9 +8,11 @@
       <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link to="/users" class="nav-link">Users</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/charging-users" class="nav-link">Charging Users</router-link>
         <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
         <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
         <router-link to="/invoices" class="nav-link">Invoices</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/energy-prices" class="nav-link">Prices</router-link>
         <router-link v-if="user.role === 'Admin'" to="/event-log" class="nav-link">Events</router-link>
       </nav>
 
@@ -22,9 +24,11 @@
         <div v-if="dropdownOpen" class="nav-dropdown">
           <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
           <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
           <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
           <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
           <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/energy-prices" class="dropdown-link" @click="dropdownOpen = false">Prices</router-link>
           <router-link v-if="user.role === 'Admin'" to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
         </div>
       </div>

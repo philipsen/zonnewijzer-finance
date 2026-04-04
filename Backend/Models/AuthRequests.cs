@@ -16,4 +16,15 @@ namespace Backend.Controllers
     {
         public string Role { get; set; } = string.Empty;
     }
+
+    public class UpdateChargingUserRequest
+    {
+        public string? DisplayName { get; set; }
+        public int? LinkedUserId { get; set; }
+        public bool UnlinkUser { get; set; } = false;
+        public string? Street { get; set; }
+        public string? HouseNumber { get; set; }
+        public string? PostalCode { get; set; }
+        public string? PlaceName { get; set; }
+    }
 }

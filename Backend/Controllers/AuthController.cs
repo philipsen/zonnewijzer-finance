@@ -275,6 +275,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
+                    chargingUserId = user.ChargingUserId,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -345,6 +346,181 @@ namespace Backend.Controllers
             }
         }
 
+        [HttpGet("charging-users")]
+        public async Task<IActionResult> GetChargingUsers()
+        {
+            var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+            if (_jwtService.ValidateToken(token) == null)
+                return Unauthorized();
+
+            var ids = await _context.ChargingSessions
+                .Select(cs => cs.UserId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToListAsync();
+
+            var linkedMap = await _context.Users
+                .Where(u => u.ChargingUserId != null)
+                .Select(u => new { u.ChargingUserId, u.Name, UserId = u.Id })
+                .ToListAsync();
+
+            var profiles = await _context.ChargingUserProfiles
+                .Where(p => ids.Contains(p.Id))
+                .ToListAsync();
+
+            var result = ids.Select(id =>
+            {
+                var linked = linkedMap.FirstOrDefault(l => l.ChargingUserId == id);
+                var profile = profiles.FirstOrDefault(p => p.Id == id);
+                return new
+                {
+                    id,
+                    displayName = profile?.DisplayName,
+                    linkedUserId = linked?.UserId,
+                    linkedUserName = linked?.Name
+                };
+            });
+
+            return Ok(result);
+        }
+
+        [HttpGet("charging-users/{id}")]
+        public async Task<IActionResult> GetChargingUserById(int id)
+        {
+            var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+            if (_jwtService.ValidateToken(token) == null)
+                return Unauthorized();
+
+            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.UserId == id);
+            if (!sessionExists)
+                return NotFound("Charging user not found");
+
+            var profile = await _context.ChargingUserProfiles.FindAsync(id);
+            var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+
+            return Ok(new
+            {
+                id,
+                displayName = profile?.DisplayName,
+                street = profile?.Street,
+                houseNumber = profile?.HouseNumber,
+                postalCode = profile?.PostalCode,
+                placeName = profile?.PlaceName,
+                linkedUserId = linkedUser?.Id,
+                linkedUserName = linkedUser?.Name
+            });
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpPut("charging-users/{id}")]
+        public async Task<IActionResult> UpdateChargingUser(int id, [FromBody] UpdateChargingUserRequest request)
+        {
+            var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+            var editorIdString = _jwtService.ValidateToken(token);
+            if (editorIdString == null || !int.TryParse(editorIdString, out int editorId))
+                return Unauthorized();
+
+            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.UserId == id);
+            if (!sessionExists)
+                return NotFound("Charging user not found");
+
+            var editor = await _context.Users.FindAsync(editorId);
+            var editorName = editor?.Name ?? $"User {editorId}";
+            var changes = new List<string>();
+
+            // Update or create display name
+            var profile = await _context.ChargingUserProfiles.FindAsync(id);
+            var oldDisplayName = profile?.DisplayName;
+            if (request.DisplayName != oldDisplayName)
+            {
+                if (profile == null)
+                {
+                    profile = new Backend.Models.ChargingUserProfile { Id = id };
+                    _context.ChargingUserProfiles.Add(profile);
+                }
+                profile.DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
+                changes.Add($"DisplayName: '{oldDisplayName ?? "none"}' → '{profile.DisplayName ?? "none"}'");
+            }
+
+            // Update address fields
+            var newStreet = string.IsNullOrWhiteSpace(request.Street) ? null : request.Street.Trim();
+            var newHouseNumber = string.IsNullOrWhiteSpace(request.HouseNumber) ? null : request.HouseNumber.Trim();
+            var newPostalCode = string.IsNullOrWhiteSpace(request.PostalCode) ? null : request.PostalCode.Trim().ToUpper().Replace(" ", "");
+            var newPlaceName = string.IsNullOrWhiteSpace(request.PlaceName) ? null : request.PlaceName.Trim();
+
+            if (newStreet != profile?.Street || newHouseNumber != profile?.HouseNumber ||
+                newPostalCode != profile?.PostalCode || newPlaceName != profile?.PlaceName)
+            {
+                if (profile == null)
+                {
+                    profile = new Backend.Models.ChargingUserProfile { Id = id };
+                    _context.ChargingUserProfiles.Add(profile);
+                }
+                profile.Street = newStreet;
+                profile.HouseNumber = newHouseNumber;
+                profile.PostalCode = newPostalCode;
+                profile.PlaceName = newPlaceName;
+                changes.Add($"Address updated");
+            }
+
+            // Handle user linking
+            if (request.UnlinkUser)
+            {
+                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+                if (currentlyLinked != null)
+                {
+                    changes.Add($"Unlinked user '{currentlyLinked.Name}'");
+                    currentlyLinked.ChargingUserId = null;
+                }
+            }
+            else if (request.LinkedUserId.HasValue)
+            {
+                // Unlink anyone currently linked to this charging user
+                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+                if (currentlyLinked != null && currentlyLinked.Id != request.LinkedUserId.Value)
+                {
+                    currentlyLinked.ChargingUserId = null;
+                }
+
+                var newLinkedUser = await _context.Users.FindAsync(request.LinkedUserId.Value);
+                if (newLinkedUser == null)
+                    return NotFound("Linked user not found");
+
+                if (newLinkedUser.ChargingUserId != id)
+                {
+                    changes.Add($"Linked user: '{newLinkedUser.Name}'");
+                    newLinkedUser.ChargingUserId = id;
+                }
+            }
+
+            if (changes.Any())
+            {
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = editorName,
+                    Action = $"Edited charging user {id}: {string.Join(", ", changes)}"
+                });
+            }
+
+            await _context.SaveChangesAsync();
+
+            var linkedUserAfter = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+            var profileAfter = await _context.ChargingUserProfiles.FindAsync(id);
+
+            return Ok(new
+            {
+                id,
+                displayName = profileAfter?.DisplayName,
+                street = profileAfter?.Street,
+                houseNumber = profileAfter?.HouseNumber,
+                postalCode = profileAfter?.PostalCode,
+                placeName = profileAfter?.PlaceName,
+                linkedUserId = linkedUserAfter?.Id,
+                linkedUserName = linkedUserAfter?.Name
+            });
+        }
+
         [HttpGet("users/{id}")]
         public async Task<IActionResult> GetUserById(int id)
         {
@@ -371,6 +547,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
+                    chargingUserId = user.ChargingUserId,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
