@@ -191,6 +191,7 @@ namespace Backend.Controllers
                         name = u.Name,
                         picture = u.PictureUrl,
                         role = u.Role.ToString(),
+                        chargingUserId = u.ChargingUserId,
                         createdAt = u.CreatedAt,
                         lastLoginAt = u.LastLoginAt
                     })
