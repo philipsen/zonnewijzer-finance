@@ -4,11 +4,13 @@ import UsersList from '../components/UsersList.vue'
 import EditUser from '../components/EditUser.vue'
 import UploadChargingSessions from '../components/UploadChargingSessions.vue'
 import ChargingSessionsList from '../components/ChargingSessionsList.vue'
+import MyChargingSessions from '../components/MyChargingSessions.vue'
 import ChargingUsersList from '../components/ChargingUsersList.vue'
 import EditChargingUser from '../components/EditChargingUser.vue'
 import InvoiceGrid from '../components/InvoiceGrid.vue'
 import MyInvoices from '../components/MyInvoices.vue'
 import PaymentsList from '../components/PaymentsList.vue'
+import PaymentReturn from '../components/PaymentReturn.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 
@@ -39,6 +41,11 @@ const routes = [
     component: ChargingSessionsList
   },
   {
+    path: '/my-sessions',
+    name: 'MyChargingSessions',
+    component: MyChargingSessions
+  },
+  {
     path: '/charging-users',
     name: 'ChargingUsersList',
     component: ChargingUsersList
@@ -51,7 +58,18 @@ const routes = [
   {
     path: '/invoices',
     name: 'InvoiceGrid',
-    component: InvoiceGrid
+    component: InvoiceGrid,
+    beforeEnter: () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return '/'
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+        if (role !== 'Admin') return '/'
+      } catch {
+        return '/'
+      }
+    }
   },
   {
     path: '/my-invoices',
@@ -62,6 +80,11 @@ const routes = [
     path: '/payments',
     name: 'PaymentsList',
     component: PaymentsList
+  },
+  {
+    path: '/payment-return',
+    name: 'PaymentReturn',
+    component: PaymentReturn
   },
   {
     path: '/event-log',

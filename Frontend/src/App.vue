@@ -9,7 +9,8 @@
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link v-if="user.role === 'Admin'" to="/users" class="nav-link">Users</router-link>
         <router-link v-if="user.role === 'Admin'" to="/charging-users" class="nav-link">Charging Users</router-link>
-        <router-link v-if="user.role === 'Admin' || user.chargingUserId" to="/charging-sessions" class="nav-link">Sessions</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/charging-sessions" class="nav-link">Sessions</router-link>
+        <router-link v-else-if="user.chargingUserId" to="/my-sessions" class="nav-link">My Sessions</router-link>
         <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
         <router-link v-if="user.role === 'Admin'" to="/invoices" class="nav-link">Invoices</router-link>
         <router-link v-else-if="user.chargingUserId" to="/my-invoices" class="nav-link">My Invoices</router-link>
@@ -27,7 +28,8 @@
           <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
           <router-link v-if="user.role === 'Admin'" to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
           <router-link v-if="user.role === 'Admin'" to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
-          <router-link v-if="user.role === 'Admin' || user.chargingUserId" to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
+          <router-link v-else-if="user.chargingUserId" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
           <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
           <router-link v-if="user.role === 'Admin'" to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
           <router-link v-else-if="user.chargingUserId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>

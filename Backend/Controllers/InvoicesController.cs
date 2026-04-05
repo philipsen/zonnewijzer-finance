@@ -41,6 +41,10 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
+                var requestingUser = await _context.Users.FindAsync(currentUserId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
                 _logger.LogInformation("User {UserId} requesting invoices grid", currentUserId);
 
                 // Get unique users from charging sessions instead of registered users
@@ -429,8 +433,12 @@ namespace Backend.Controllers
                 var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
                 var userIdString = _jwtService.ValidateToken(token);
 
-                if (userIdString == null || !int.TryParse(userIdString, out _))
+                if (userIdString == null || !int.TryParse(userIdString, out int requestingUserId))
                     return Unauthorized();
+
+                var requestingUser = await _context.Users.FindAsync(requestingUserId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
 
                 var payments = await _context.MolliePayments
                     .OrderByDescending(p => p.CreatedAt)

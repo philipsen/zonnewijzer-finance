@@ -43,10 +43,9 @@
               <td class="pay-cell">
                 <a
                   v-if="!m.isPaid && m.checkoutUrl"
-                  :href="m.checkoutUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href="#"
                   class="get-link-btn"
+                  @click.prevent="openPayment(m.checkoutUrl)"
                 >Pay</a>
                 <span v-else-if="m.isPaid" class="paid-text">✓ Paid</span>
                 <button
@@ -65,7 +64,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -143,7 +142,7 @@ export default {
         month.checkoutUrl = response.data.checkoutUrl
         month.paymentStatus = response.data.status
         month.isPaid = response.data.status === 'paid'
-        window.open(response.data.checkoutUrl, '_blank', 'noopener,noreferrer')
+        window.open(response.data.checkoutUrl, '_blank')
       } catch (err) {
         console.error('Failed to create payment link:', err)
         alert(err.response?.data || 'Failed to create payment link')
@@ -152,9 +151,27 @@ export default {
       }
     }
 
-    onMounted(fetchMyInvoices)
+    const openPayment = (url) => {
+      window.open(url, '_blank')
+    }
 
-    return { loading, error, userName, months, hasChargingAccount, createPaymentLink, downloadInvoice }
+    const onPaymentMessage = (event) => {
+      if (event.origin !== window.location.origin) return
+      if (event.data?.type === 'payment-return') {
+        fetchMyInvoices()
+      }
+    }
+
+    onMounted(() => {
+      fetchMyInvoices()
+      window.addEventListener('message', onPaymentMessage)
+    })
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('message', onPaymentMessage)
+    })
+
+    return { loading, error, userName, months, hasChargingAccount, createPaymentLink, downloadInvoice, openPayment }
   }
 }
 </script>

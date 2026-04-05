@@ -23,13 +23,13 @@
       <p>Dashboard content will go here.</p>
       <div class="features">
         <div class="feature-card">
-          <router-link to="/charging-sessions" class="card-link">
+          <router-link :to="appUser?.role === 'Admin' ? '/charging-sessions' : '/my-sessions'" class="card-link">
             <h3>Charging Sessions</h3>
             <p>View and manage charging sessions</p>
           </router-link>
         </div>
         <div class="feature-card">
-          <router-link to="/invoices" class="card-link">
+          <router-link :to="appUser?.role === 'Admin' ? '/invoices' : '/my-invoices'" class="card-link">
             <h3>Invoices</h3>
             <p>Generate and download invoices</p>
           </router-link>
