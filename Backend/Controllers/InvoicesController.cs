@@ -444,6 +444,13 @@ namespace Backend.Controllers
                     .OrderByDescending(p => p.CreatedAt)
                     .ToListAsync();
 
+                // Resolve display names (loaded early so the refresh loop can use them)
+                var profiles = await _context.ChargingUserProfiles.ToListAsync();
+                var linkedUsers = await _context.Users
+                    .Where(u => u.ChargingUserId != null)
+                    .Select(u => new { u.ChargingUserId, u.Name })
+                    .ToListAsync();
+
                 // Refresh open/pending statuses from Mollie
                 var stalePayments = payments.Where(p => p.Status == "open" || p.Status == "pending").ToList();
                 foreach (var p in stalePayments)
@@ -453,8 +460,21 @@ namespace Backend.Controllers
                         var latest = await _mollieService.GetPaymentStatusAsync(p.MolliePaymentId);
                         if (latest != p.Status)
                         {
+                            var previousStatus = p.Status;
                             p.Status = latest;
                             p.UpdatedAt = DateTime.UtcNow;
+
+                            var linked = linkedUsers.FirstOrDefault(u => u.ChargingUserId == p.ChargingUserId);
+                            var profile = profiles.FirstOrDefault(pr => pr.Id == p.ChargingUserId);
+                            var name = linked?.Name ?? profile?.DisplayName ?? $"Charging User {p.ChargingUserId}";
+                            var monthName = new DateTime(p.Year, p.Month, 1).ToString("MMMM yyyy");
+
+                            _context.EventLogs.Add(new EventLog
+                            {
+                                Timestamp = DateTime.UtcNow,
+                                UserName = "Admin refresh",
+                                Action = $"Payment status changed: {name} – {monthName} – {previousStatus} → {latest}"
+                            });
                         }
                     }
                     catch (Exception ex)
@@ -464,13 +484,6 @@ namespace Backend.Controllers
                 }
                 if (stalePayments.Any(p => p.UpdatedAt.HasValue))
                     await _context.SaveChangesAsync();
-
-                // Resolve display names
-                var profiles = await _context.ChargingUserProfiles.ToListAsync();
-                var linkedUsers = await _context.Users
-                    .Where(u => u.ChargingUserId != null)
-                    .Select(u => new { u.ChargingUserId, u.Name })
-                    .ToListAsync();
 
                 var result = payments.Select(p =>
                 {
@@ -521,8 +534,22 @@ namespace Backend.Controllers
                 var latestStatus = await _mollieService.GetPaymentStatusAsync(molliePaymentId);
                 if (latestStatus != payment.Status)
                 {
+                    var previousStatus = payment.Status;
                     payment.Status = latestStatus;
                     payment.UpdatedAt = DateTime.UtcNow;
+
+                    var profile = await _context.ChargingUserProfiles.FirstOrDefaultAsync(p => p.Id == payment.ChargingUserId);
+                    var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == payment.ChargingUserId);
+                    var userName = linkedUser?.Name ?? profile?.DisplayName ?? $"Charging User {payment.ChargingUserId}";
+                    var monthName = new DateTime(payment.Year, payment.Month, 1).ToString("MMMM yyyy");
+
+                    _context.EventLogs.Add(new EventLog
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        UserName = "Mollie",
+                        Action = $"Payment status changed: {userName} – {monthName} – {previousStatus} → {latestStatus}"
+                    });
+
                     await _context.SaveChangesAsync();
                     _logger.LogInformation("Mollie webhook: payment {PaymentId} status updated to {Status}", molliePaymentId, latestStatus);
                 }
