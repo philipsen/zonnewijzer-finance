@@ -7,6 +7,7 @@ import ChargingSessionsList from '../components/ChargingSessionsList.vue'
 import ChargingUsersList from '../components/ChargingUsersList.vue'
 import EditChargingUser from '../components/EditChargingUser.vue'
 import InvoiceGrid from '../components/InvoiceGrid.vue'
+import MyInvoices from '../components/MyInvoices.vue'
 import PaymentsList from '../components/PaymentsList.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
@@ -51,6 +52,11 @@ const routes = [
     path: '/invoices',
     name: 'InvoiceGrid',
     component: InvoiceGrid
+  },
+  {
+    path: '/my-invoices',
+    name: 'MyInvoices',
+    component: MyInvoices
   },
   {
     path: '/payments',

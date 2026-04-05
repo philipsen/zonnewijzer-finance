@@ -239,8 +239,10 @@ namespace Backend.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("GitHubId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("GoogleId")
-                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("LastLoginAt")
@@ -259,9 +261,6 @@ namespace Backend.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
-                        .IsUnique();
-
-                    b.HasIndex("GoogleId")
                         .IsUnique();
 
                     b.ToTable("Users");

@@ -92,7 +92,8 @@ namespace Backend.Controllers
                         email = user.Email,
                         name = user.Name,
                         picture = user.PictureUrl,
-                        role = user.Role.ToString()
+                        role = user.Role.ToString(),
+                        chargingUserId = user.ChargingUserId
                     }
                 });
             }
@@ -156,7 +157,8 @@ namespace Backend.Controllers
                     email = user.Email,
                     name = user.Name,
                     picture = user.PictureUrl,
-                    role = user.Role.ToString()
+                    role = user.Role.ToString(),
+                    chargingUserId = user.ChargingUserId
                 });
             }
             catch (Exception ex)
@@ -180,7 +182,14 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
-                _logger.LogInformation("User {UserId} requesting all users list", userId);
+                var requestingUser = await _context.Users.FindAsync(userId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                {
+                    _logger.LogWarning("Non-admin user {UserId} attempted to access users list", userId);
+                    return Forbid();
+                }
+
+                _logger.LogInformation("Admin {UserId} requesting all users list", userId);
 
                 var users = await _context.Users
                     .OrderByDescending(u => u.CreatedAt)
@@ -556,6 +565,132 @@ namespace Backend.Controllers
             catch
             {
                 return Unauthorized();
+            }
+        }
+
+        [HttpGet("github")]
+        public IActionResult GitHubLogin()
+        {
+            var clientId = _configuration["GitHub:ClientId"]
+                ?? throw new InvalidOperationException("GitHub ClientId not configured");
+            var callbackUrl = _configuration["GitHub:CallbackUrl"]
+                ?? throw new InvalidOperationException("GitHub CallbackUrl not configured");
+
+            var url = $"https://github.com/login/oauth/authorize?client_id={clientId}&redirect_uri={Uri.EscapeDataString(callbackUrl)}&scope=user:email";
+            return Redirect(url);
+        }
+
+        [HttpGet("github/callback")]
+        public async Task<IActionResult> GitHubCallback([FromQuery] string? code, [FromQuery] string? error)
+        {
+            var frontendUrl = _configuration["GitHub:FrontendUrl"] ?? "http://localhost:3000";
+
+            if (!string.IsNullOrEmpty(error) || string.IsNullOrEmpty(code))
+            {
+                _logger.LogWarning("GitHub OAuth error: {Error}", error);
+                return Redirect($"{frontendUrl}?auth_error=github_denied");
+            }
+
+            try
+            {
+                var clientId = _configuration["GitHub:ClientId"]!;
+                var clientSecret = _configuration["GitHub:ClientSecret"]!;
+
+                // Exchange code for access token
+                using var http = new HttpClient();
+                http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("ZonnewijzerFinance/1.0");
+
+                var tokenResponse = await http.PostAsync(
+                    "https://github.com/login/oauth/access_token",
+                    new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        ["client_id"] = clientId,
+                        ["client_secret"] = clientSecret,
+                        ["code"] = code
+                    }));
+
+                var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
+                using var tokenDoc = System.Text.Json.JsonDocument.Parse(tokenJson);
+                var accessToken = tokenDoc.RootElement.GetProperty("access_token").GetString();
+
+                if (string.IsNullOrEmpty(accessToken))
+                {
+                    _logger.LogError("GitHub OAuth: no access token in response: {Body}", tokenJson);
+                    return Redirect($"{frontendUrl}?auth_error=github_token_failed");
+                }
+
+                // Fetch user info
+                http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+                var userResponse = await http.GetAsync("https://api.github.com/user");
+                var userJson = await userResponse.Content.ReadAsStringAsync();
+                using var userDoc = System.Text.Json.JsonDocument.Parse(userJson);
+                var root = userDoc.RootElement;
+
+                var githubId = root.GetProperty("id").GetInt64().ToString();
+                var githubName = root.TryGetProperty("name", out var nameProp) && nameProp.ValueKind != System.Text.Json.JsonValueKind.Null
+                    ? nameProp.GetString() ?? root.GetProperty("login").GetString()!
+                    : root.GetProperty("login").GetString()!;
+                var githubAvatar = root.TryGetProperty("avatar_url", out var avProp) ? avProp.GetString() : null;
+
+                // Fetch primary verified email
+                var emailResponse = await http.GetAsync("https://api.github.com/user/emails");
+                var emailJson = await emailResponse.Content.ReadAsStringAsync();
+                using var emailDoc = System.Text.Json.JsonDocument.Parse(emailJson);
+                var email = emailDoc.RootElement.EnumerateArray()
+                    .Where(e => e.TryGetProperty("primary", out var p) && p.GetBoolean() &&
+                                e.TryGetProperty("verified", out var v) && v.GetBoolean())
+                    .Select(e => e.GetProperty("email").GetString())
+                    .FirstOrDefault();
+
+                if (string.IsNullOrEmpty(email))
+                {
+                    _logger.LogError("GitHub OAuth: no verified primary email for user {GithubId}", githubId);
+                    return Redirect($"{frontendUrl}?auth_error=github_no_email");
+                }
+
+                // Find existing user by GitHubId or email
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.GitHubId == githubId)
+                        ?? await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+
+                if (user == null)
+                {
+                    user = new User
+                    {
+                        GoogleId = null,
+                        GitHubId = githubId,
+                        Email = email,
+                        Name = githubName,
+                        PictureUrl = githubAvatar,
+                        CreatedAt = DateTime.UtcNow,
+                        LastLoginAt = DateTime.UtcNow
+                    };
+                    _context.Users.Add(user);
+                    _logger.LogInformation("New user created via GitHub: {Email}", email);
+                }
+                else
+                {
+                    user.GitHubId = githubId;
+                    user.LastLoginAt = DateTime.UtcNow;
+                    if (string.IsNullOrEmpty(user.PictureUrl)) user.PictureUrl = githubAvatar;
+                }
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = user.Name,
+                    Action = "Login (GitHub)"
+                });
+
+                await _context.SaveChangesAsync();
+
+                var jwt = _jwtService.GenerateToken(user);
+                return Redirect($"{frontendUrl}?github_token={Uri.EscapeDataString(jwt)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GitHub OAuth callback failed");
+                return Redirect($"{frontendUrl}?auth_error=github_error");
             }
         }
     }

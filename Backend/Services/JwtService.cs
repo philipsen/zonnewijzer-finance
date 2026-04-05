@@ -26,7 +26,7 @@ namespace Backend.Services
                 new Claim(JwtRegisteredClaimNames.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.Name),
                 new Claim(ClaimTypes.Role, user.Role.ToString()),
-                new Claim("google_id", user.GoogleId),
+                new Claim("google_id", user.GoogleId ?? string.Empty),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 

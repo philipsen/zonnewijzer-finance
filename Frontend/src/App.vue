@@ -7,11 +7,12 @@
       </div>
       <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
-        <router-link to="/users" class="nav-link">Users</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/users" class="nav-link">Users</router-link>
         <router-link v-if="user.role === 'Admin'" to="/charging-users" class="nav-link">Charging Users</router-link>
-        <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
+        <router-link v-if="user.role === 'Admin' || user.chargingUserId" to="/charging-sessions" class="nav-link">Sessions</router-link>
         <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="nav-link">Upload</router-link>
-        <router-link to="/invoices" class="nav-link">Invoices</router-link>
+        <router-link v-if="user.role === 'Admin'" to="/invoices" class="nav-link">Invoices</router-link>
+        <router-link v-else-if="user.chargingUserId" to="/my-invoices" class="nav-link">My Invoices</router-link>
         <router-link v-if="user.role === 'Admin'" to="/payments" class="nav-link">Payments</router-link>
         <router-link v-if="user.role === 'Admin'" to="/energy-prices" class="nav-link">Prices</router-link>
         <router-link v-if="user.role === 'Admin'" to="/event-log" class="nav-link">Events</router-link>
@@ -24,11 +25,12 @@
         </button>
         <div v-if="dropdownOpen" class="nav-dropdown">
           <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
-          <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
           <router-link v-if="user.role === 'Admin'" to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
-          <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
+          <router-link v-if="user.role === 'Admin' || user.chargingUserId" to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
           <router-link v-if="user.role === 'Admin'" to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
-          <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
+          <router-link v-if="user.role === 'Admin'" to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
+          <router-link v-else-if="user.chargingUserId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
           <router-link v-if="user.role === 'Admin'" to="/payments" class="dropdown-link" @click="dropdownOpen = false">Payments</router-link>
           <router-link v-if="user.role === 'Admin'" to="/energy-prices" class="dropdown-link" @click="dropdownOpen = false">Prices</router-link>
           <router-link v-if="user.role === 'Admin'" to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
@@ -37,7 +39,7 @@
 
       <div class="nav-actions">
         <template v-if="!user">
-          <div ref="signinButton"></div>
+          <!-- sign-in button is rendered on the Home page -->
         </template>
         <template v-else>
           <div class="user-info">
@@ -55,7 +57,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, provide } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -63,7 +65,6 @@ export default {
   setup() {
     const user = ref(null)
     const googleClientId = '367881736099-4g29mnk5ho3a1iuosd5uo4ut284gbpql.apps.googleusercontent.com'
-    const signinButton = ref(null)
     const mainNav = ref(null)
     const dropdownWrapper = ref(null)
     const navOverflows = ref(false)
@@ -90,14 +91,15 @@ export default {
       })
     }
 
-    const renderSigninButton = () => {
+    const renderSigninButton = (el) => {
       nextTick(() => {
-        if (signinButton.value && window.google) {
+        const target = el || signinButton.value
+        if (target && window.google) {
           google.accounts.id.initialize({
             client_id: googleClientId,
             callback: handleCredentialResponse
           })
-          google.accounts.id.renderButton(signinButton.value, {
+          google.accounts.id.renderButton(target, {
             type: 'standard',
             shape: 'rectangular',
             theme: 'outline',
@@ -107,7 +109,10 @@ export default {
           })
         }
       })
-    } 
+    }
+
+    provide('renderSigninButton', renderSigninButton)
+    provide('appUser', user)
 
     const handleCredentialResponse = async (response) => {
       console.log('Google credential response:', response)
@@ -159,12 +164,12 @@ export default {
       window.handleCredentialResponse = handleCredentialResponse
       window.onGoogleLibraryLoad = () => {
         checkAuthStatus().then(() => {
-          if (!user.value) renderSigninButton()
+          if (!user.value) renderSigninButton(null)
         })
       }
       if (window.google) {
         checkAuthStatus().then(() => {
-          if (!user.value) renderSigninButton()
+          if (!user.value) renderSigninButton(null)
         })
       }
 
@@ -183,14 +188,13 @@ export default {
     })
 
     watch(user, (val) => {
-      if (!val) renderSigninButton()
+      if (!val) renderSigninButton(null)
       nextTick(() => checkNavOverflow())
     })
 
     return {
       user,
       googleClientId,
-      signinButton,
       mainNav,
       dropdownWrapper,
       navOverflows,

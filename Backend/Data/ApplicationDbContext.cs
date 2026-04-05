@@ -23,9 +23,7 @@ namespace Backend.Data
             modelBuilder.Entity<User>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.HasIndex(e => e.GoogleId).IsUnique();
                 entity.HasIndex(e => e.Email).IsUnique();
-                entity.Property(e => e.GoogleId).IsRequired();
                 entity.Property(e => e.Email).IsRequired();
                 entity.Property(e => e.Name).IsRequired();
             });
