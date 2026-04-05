@@ -12,6 +12,10 @@ services:
       - GitHub__ClientId=${GITHUB_CLIENT_ID}
       - GitHub__ClientSecret=${GITHUB_CLIENT_SECRET}
       - Mollie__ApiKey=${MOLLIE_API_KEY}
+      - Mollie__BaseUrl=https://zonnewijzer.zonneklaar-consulting.com
+      - Mollie__RedirectUrl=https://zonnewijzer.zonneklaar-consulting.com/payment-return
+      - GitHub__CallbackUrl=https://zonnewijzer.zonneklaar-consulting.com/api/auth/github/callback
+      - GitHub__FrontendUrl=https://zonnewijzer.zonneklaar-consulting.com
     volumes:                                                                                                                                                                                                                                       
       - ./data:/app/database                                                                                                                                                                                                                       
       - ./logs:/app/logs                                                                                                                                                                                                                           
