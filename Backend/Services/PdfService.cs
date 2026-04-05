@@ -151,8 +151,23 @@ namespace Backend.Services
                             column.Item().PaddingTop(30).Column(col =>
                             {
                                 col.Item().Text("Payment Instructions").Bold().FontSize(14);
-                                col.Item().PaddingTop(5).Text("Please remit payment within 30 days of invoice date.");
-                                col.Item().Text("For questions regarding this invoice, please contact the billing department.");
+                                if (invoiceData.IsPaid)
+                                {
+                                    col.Item().PaddingTop(8).Background(Colors.Green.Lighten4).Padding(8)
+                                        .Text("✓ This invoice has been paid. No further action required.")
+                                        .Bold().FontColor(Colors.Green.Darken2);
+                                }
+                                else
+                                {
+                                    col.Item().PaddingTop(5).Text("Please remit payment within 30 days of invoice date.");
+                                    if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
+                                    {
+                                        col.Item().PaddingTop(10).Text("Pay online:").Bold();
+                                        col.Item().PaddingTop(3).Text(invoiceData.PaymentUrl)
+                                            .FontColor(Colors.Blue.Medium).FontSize(10);
+                                    }
+                                }
+                                col.Item().PaddingTop(5).Text("For questions regarding this invoice, please contact the billing department.");
                             });
                         });
 

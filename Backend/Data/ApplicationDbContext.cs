@@ -16,6 +16,7 @@ namespace Backend.Data
         public DbSet<EventLog> EventLogs { get; set; }
         public DbSet<EnergyPrice> EnergyPrices { get; set; }
         public DbSet<ChargingUserProfile> ChargingUserProfiles { get; set; }
+        public DbSet<MolliePayment> MolliePayments { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -78,6 +79,21 @@ namespace Backend.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedNever();
                 entity.Property(e => e.DisplayName).HasMaxLength(255);
+            });
+
+            modelBuilder.Entity<MolliePayment>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ChargingUserId).IsRequired();
+                entity.Property(e => e.Year).IsRequired();
+                entity.Property(e => e.Month).IsRequired();
+                entity.Property(e => e.MolliePaymentId).HasMaxLength(100).IsRequired();
+                entity.Property(e => e.CheckoutUrl).HasMaxLength(500).IsRequired();
+                entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
+                entity.Property(e => e.Status).HasMaxLength(50).IsRequired();
+
+                // Unique constraint: one payment per charging user + year + month
+                entity.HasIndex(e => new { e.ChargingUserId, e.Year, e.Month }).IsUnique();
             });
         }
     }

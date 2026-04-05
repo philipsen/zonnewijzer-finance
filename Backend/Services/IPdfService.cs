@@ -24,6 +24,8 @@ namespace Backend.Services
         public decimal TotalAmount { get; set; }
         public List<SessionData> Sessions { get; set; } = new();
         public DateTime GeneratedAt { get; set; }
+        public string? PaymentUrl { get; set; }
+        public bool IsPaid { get; set; }
     }
 
     public class SessionData

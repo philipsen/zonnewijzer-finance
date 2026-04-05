@@ -101,6 +101,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 // Add custom services
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
+builder.Services.AddHttpClient("Mollie");
+builder.Services.AddScoped<IMollieService, MollieService>();
 
 var app = builder.Build();
 

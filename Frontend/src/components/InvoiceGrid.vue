@@ -57,6 +57,23 @@
                       <div class="invoice-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</div>
                       <div class="invoice-amount">€{{ monthData.totalAmount.toFixed(2) }}</div>
                     </a>
+                    <div class="payment-link-area">
+                      <template v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month)">
+                        <span :class="['payment-status-badge', getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status }}</span>
+                        <a
+                          v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status !== 'paid'"
+                          :href="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).checkoutUrl"
+                          target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                      </template>
+                      <button
+                        v-else
+                        class="btn-payment-link"
+                        :disabled="isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month)"
+                        @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
+                      >
+                        {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Payment link' }}
+                      </button>
+                    </div>
                   </template>
                   <template v-else>
                     <div class="no-invoice">—</div>
@@ -99,6 +116,23 @@
                 <span class="mobile-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</span>
                 <span class="mobile-amount">€{{ monthData.totalAmount.toFixed(2) }}</span>
               </a>
+              <div class="mobile-payment-link-area">
+                <template v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month)">
+                  <span :class="['payment-status-badge', getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status }}</span>
+                  <a
+                    v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status !== 'paid'"
+                    :href="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).checkoutUrl"
+                    target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                </template>
+                <button
+                  v-else
+                  class="btn-payment-link"
+                  :disabled="isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  @click="handlePaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
+                >
+                  {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Pay' }}
+                </button>
+              </div>
             </template>
             <span v-else class="mobile-no-invoice">No sessions</span>
           </div>
@@ -190,8 +224,60 @@ export default {
       return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     }
 
+    // Payment links state: keyed by `${userId}_${year}_${month}`
+    const paymentLinks = ref({})
+    const paymentLinksLoading = ref({})
+
+    const paymentLinkKey = (userId, year, month) => `${userId}_${year}_${month}`
+
+    const getPaymentLinkState = (userId, year, month) =>
+      paymentLinks.value[paymentLinkKey(userId, year, month)] || null
+
+    const isPaymentLinkLoading = (userId, year, month) =>
+      !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
+
+    const handlePaymentLink = async (userId, year, month) => {
+      const key = paymentLinkKey(userId, year, month)
+      paymentLinksLoading.value = { ...paymentLinksLoading.value, [key]: true }
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.post(`/api/invoices/${userId}/${year}/${month}/payment-link`, null, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        paymentLinks.value = { ...paymentLinks.value, [key]: response.data }
+        window.open(response.data.checkoutUrl, '_blank', 'noopener,noreferrer')
+      } catch (err) {
+        console.error('Failed to create payment link:', err)
+        alert(err.response?.data || 'Failed to create payment link')
+      } finally {
+        paymentLinksLoading.value = { ...paymentLinksLoading.value, [key]: false }
+      }
+    }
+
+    const fetchExistingPayments = async () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+        const response = await axios.get('/api/invoices/payments', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        const map = {}
+        for (const p of response.data) {
+          map[paymentLinkKey(p.chargingUserId, p.year, p.month)] = {
+            checkoutUrl: p.checkoutUrl,
+            paymentId: p.molliePaymentId,
+            status: p.status
+          }
+        }
+        paymentLinks.value = map
+      } catch (err) {
+        console.error('Failed to load existing payments:', err)
+      }
+    }
+
     onMounted(() => {
       fetchInvoicesGrid()
+      fetchExistingPayments()
     })
 
     return {
@@ -203,7 +289,11 @@ export default {
       selectedUserId,
       selectedUserRow,
       formatMonthName,
-      generatePdfInvoice
+      generatePdfInvoice,
+      paymentLinks,
+      getPaymentLinkState,
+      isPaymentLinkLoading,
+      handlePaymentLink
     }
   }
 }
@@ -607,5 +697,80 @@ export default {
 .mobile-no-invoice {
   color: #adb5bd;
   font-size: 0.85rem;
+}
+
+.payment-link-area {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 0.25rem;
+}
+
+.mobile-payment-link-area {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.btn-payment-link {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid #6c757d;
+  border-radius: 4px;
+  background: white;
+  color: #495057;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-payment-link:hover:not(:disabled) {
+  background-color: #495057;
+  color: white;
+}
+
+.btn-payment-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.payment-status-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+}
+
+.payment-status-badge.paid {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.payment-status-badge.open,
+.payment-status-badge.pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.payment-status-badge.failed,
+.payment-status-badge.canceled,
+.payment-status-badge.expired {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.payment-open-link {
+  font-size: 0.7rem;
+  color: #007bff;
+  text-decoration: none;
+}
+
+.payment-open-link:hover {
+  text-decoration: underline;
 }
 </style>
