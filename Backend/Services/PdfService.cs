@@ -10,11 +10,14 @@ namespace Backend.Services
     {
         public byte[] GenerateInvoicePdf(InvoiceData invoiceData)
         {
-            // Configure QuestPDF for commercial use (for development only)
             QuestPDF.Settings.License = LicenseType.Community;
+
+            var logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "zonnewijzer_logo.png");
+            var hasLogo = File.Exists(logoPath);
 
             var document = Document.Create(container =>
             {
+                // ── Page 1: Invoice summary ───────────────────────────────────────
                 container.Page(page =>
                 {
                     page.Size(PageSizes.A4);
@@ -26,14 +29,9 @@ namespace Backend.Services
                         .PaddingBottom(20)
                         .Column(column =>
                         {
-                            // Logo at top center
-                            var logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "zonnewijzer_logo.png");
-                            if (File.Exists(logoPath))
-                            {
+                            if (hasLogo)
                                 column.Item().AlignCenter().Height(60).Image(logoPath);
-                            }
-                            
-                            // Invoice title below logo
+
                             column.Item().PaddingTop(10).AlignCenter()
                                 .Text("Charging Sessions Invoice")
                                 .Bold().FontSize(24).FontColor(Colors.Blue.Medium);
@@ -43,13 +41,14 @@ namespace Backend.Services
                         .PaddingVertical(1, Unit.Centimetre)
                         .Column(column =>
                         {
-                            // Invoice Header Information
+                            // Invoice number + period  /  Customer address
                             column.Item().Row(row =>
                             {
                                 row.RelativeItem().Column(col =>
                                 {
                                     col.Item().Text($"Invoice Number: {invoiceData.InvoiceNumber}").Bold();
                                     col.Item().Text($"Period: {invoiceData.MonthName}");
+                                    col.Item().PaddingTop(5).Text($"Generated: {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
                                 });
 
                                 row.RelativeItem().Column(col =>
@@ -67,99 +66,51 @@ namespace Backend.Services
                                         var cityLine = $"{invoiceData.PostalCode} {invoiceData.PlaceName}".Trim();
                                         col.Item().AlignRight().Text(cityLine);
                                     }
-                                    col.Item().PaddingTop(5).AlignRight().Text($"Generated: {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
-                                    col.Item().AlignRight().Text($"Rate: €{invoiceData.RatePerKwh:F2} per kWh").Bold();
                                 });
                             });
 
                             column.Item().PaddingTop(20).LineHorizontal(1);
 
-                            // Sessions Table
-                            column.Item().PaddingTop(20).Text("Charging Sessions").Bold().FontSize(16);
-
-                            if (invoiceData.Sessions.Any())
+                            // Summary totals
+                            column.Item().PaddingTop(30).Row(row =>
                             {
-                                column.Item().PaddingTop(10).Table(table =>
-                                {
-                                    // Define columns
-                                    table.ColumnsDefinition(columns =>
-                                    {
-                                        columns.RelativeColumn(2); // Start
-                                        columns.RelativeColumn(2); // End
-                                        columns.RelativeColumn(1); // Station
-                                        columns.RelativeColumn(1.5f); // kWh
-                                        columns.RelativeColumn(1.5f); // Amount
-                                    });
-
-                                    // Header
-                                    table.Header(header =>
-                                    {
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("Start").Bold().AlignCenter();
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("End").Bold().AlignCenter();
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("Station").Bold().AlignCenter();
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("kWh").Bold().AlignCenter();
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("Amount").Bold().AlignCenter();
-                                    });
-
-                                    // Data rows
-                                    foreach (var session in invoiceData.Sessions)
-                                    {
-                                        table.Cell().Border(1).Padding(5).Text($"{session.Start:MM/dd HH:mm}");
-                                        table.Cell().Border(1).Padding(5).Text($"{session.End:MM/dd HH:mm}");
-                                        table.Cell().Border(1).Padding(5).Text($"{session.StationId}").AlignCenter();
-                                        table.Cell().Border(1).Padding(5).Text($"{session.ChargedKwh:F2}").AlignRight();
-                                        table.Cell().Border(1).Padding(5).Text($"€{session.Amount:F2}").AlignRight();
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                column.Item().PaddingTop(10).Text("No charging sessions found for this period.").Italic();
-                            }
-
-                            // Summary
-                            column.Item().PaddingTop(20).LineHorizontal(1);
-                            
-                            column.Item().PaddingTop(10).Row(row =>
-                            {
-                                row.RelativeItem().Text("");
+                                row.RelativeItem();
                                 row.RelativeItem().Column(col =>
                                 {
                                     col.Item().Row(r =>
                                     {
                                         r.RelativeItem().Text("Total kWh:").FontSize(14);
-                                        r.ConstantItem(100).AlignRight().Text($"{invoiceData.TotalKwh:F2}").FontSize(14);
+                                        r.ConstantItem(120).AlignRight().Text($"{invoiceData.TotalKwh:F2} kWh").FontSize(14);
                                     });
-                                    
-                                    col.Item().Row(r =>
+                                    col.Item().PaddingTop(6).Row(r =>
                                     {
                                         r.RelativeItem().Text("Rate per kWh:").FontSize(14);
-                                        r.ConstantItem(100).AlignRight().Text($"€{invoiceData.RatePerKwh:F2}").FontSize(14);
+                                        r.ConstantItem(120).AlignRight().Text($"€{invoiceData.RatePerKwh:F4}").FontSize(14);
                                     });
-                                    
-                                    col.Item().PaddingTop(5).LineHorizontal(1);
-                                    
-                                    col.Item().PaddingTop(5).Row(r =>
+                                    col.Item().PaddingTop(10).LineHorizontal(1);
+                                    col.Item().PaddingTop(8).Row(r =>
                                     {
-                                        r.RelativeItem().Text("Total Amount:").Bold().FontSize(16);
-                                        r.ConstantItem(100).AlignRight().Text($"€{invoiceData.TotalAmount:F2}").Bold().FontSize(16).FontColor(Colors.Blue.Medium);
+                                        r.RelativeItem().Text("Total Amount:").Bold().FontSize(18);
+                                        r.ConstantItem(120).AlignRight().Text($"€{invoiceData.TotalAmount:F2}").Bold().FontSize(18).FontColor(Colors.Blue.Medium);
                                     });
                                 });
                             });
 
-                            // Payment Instructions
-                            column.Item().PaddingTop(30).Column(col =>
+                            // Payment section
+                            column.Item().PaddingTop(40).Column(col =>
                             {
-                                col.Item().Text("Payment Instructions").Bold().FontSize(14);
+                                col.Item().Text("Payment").Bold().FontSize(14);
+                                col.Item().PaddingTop(5).LineHorizontal(1);
+
                                 if (invoiceData.IsPaid)
                                 {
-                                    col.Item().PaddingTop(8).Background(Colors.Green.Lighten4).Padding(8)
+                                    col.Item().PaddingTop(12).Background(Colors.Green.Lighten4).Padding(10)
                                         .Text("✓ This invoice has been paid. No further action required.")
                                         .Bold().FontColor(Colors.Green.Darken2);
                                 }
                                 else
                                 {
-                                    col.Item().PaddingTop(5).Text("Please remit payment within 30 days of invoice date.");
+                                    col.Item().PaddingTop(8).Text("Please remit payment within 30 days of invoice date.");
                                     if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
                                     {
                                         col.Item().PaddingTop(10).Text("Pay online:").Bold();
@@ -167,15 +118,106 @@ namespace Backend.Services
                                             .FontColor(Colors.Blue.Medium).FontSize(10);
                                     }
                                 }
-                                col.Item().PaddingTop(5).Text("For questions regarding this invoice, please contact the billing department.");
+                                col.Item().PaddingTop(10).Text("For questions regarding this invoice, please contact the billing department.")
+                                    .FontSize(10).FontColor(Colors.Grey.Medium);
                             });
                         });
 
                     page.Footer()
                         .AlignCenter()
-                        .Text($"Generated on {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
-                        .FontSize(10).FontColor(Colors.Grey.Medium);
+                        .Text(x =>
+                        {
+                            x.Span("Page ").FontSize(9).FontColor(Colors.Grey.Medium);
+                            x.CurrentPageNumber().FontSize(9).FontColor(Colors.Grey.Medium);
+                            x.Span(" of ").FontSize(9).FontColor(Colors.Grey.Medium);
+                            x.TotalPages().FontSize(9).FontColor(Colors.Grey.Medium);
+                        });
                 });
+
+                // ── Page 2+: Sessions detail ───────────────────────────────────────
+                if (invoiceData.Sessions.Any())
+                {
+                    container.Page(page =>
+                    {
+                        page.Size(PageSizes.A4);
+                        page.Margin(1.5f, Unit.Centimetre);
+                        page.PageColor(Colors.White);
+                        page.DefaultTextStyle(x => x.FontSize(10));
+
+                        page.Header()
+                            .PaddingBottom(10)
+                            .Row(row =>
+                            {
+                                if (hasLogo)
+                                    row.ConstantItem(80).Height(30).Image(logoPath);
+
+                                row.RelativeItem().AlignMiddle().Column(col =>
+                                {
+                                    col.Item().Text($"Charging Sessions – {invoiceData.MonthName}")
+                                        .Bold().FontSize(13).FontColor(Colors.Blue.Medium);
+                                    col.Item().Text($"{invoiceData.InvoiceNumber}  ·  {invoiceData.UserName}")
+                                        .FontSize(9).FontColor(Colors.Grey.Medium);
+                                });
+                            });
+
+                        page.Content()
+                            .PaddingTop(5)
+                            .Table(table =>
+                            {
+                                table.ColumnsDefinition(columns =>
+                                {
+                                    columns.RelativeColumn(2.2f); // Start
+                                    columns.RelativeColumn(2.2f); // End
+                                    columns.RelativeColumn(1f);   // Station
+                                    columns.RelativeColumn(1.3f); // kWh
+                                    columns.RelativeColumn(1.3f); // Amount
+                                });
+
+                                table.Header(header =>
+                                {
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Start").Bold().FontSize(9);
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("End").Bold().FontSize(9);
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Station").Bold().FontSize(9).AlignCenter();
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("kWh").Bold().FontSize(9).AlignRight();
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Amount").Bold().FontSize(9).AlignRight();
+                                });
+
+                                var rowIndex = 0;
+                                foreach (var session in invoiceData.Sessions)
+                                {
+                                    var bg = rowIndex++ % 2 == 0 ? Colors.White : Colors.Grey.Lighten4;
+                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text($"{session.Start:dd/MM HH:mm}").FontSize(9);
+                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text($"{session.End:dd/MM HH:mm}").FontSize(9);
+                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text($"{session.StationId}").FontSize(9).AlignCenter();
+                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text($"{session.ChargedKwh:F2}").FontSize(9).AlignRight();
+                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text($"€{session.Amount:F2}").FontSize(9).AlignRight();
+                                }
+
+                                // Totals row
+                                table.Cell().ColumnSpan(3).Background(Colors.Grey.Lighten2).Padding(4)
+                                    .Text("Total").Bold().FontSize(9);
+                                table.Cell().Background(Colors.Grey.Lighten2).Padding(4)
+                                    .Text($"{invoiceData.TotalKwh:F2}").Bold().FontSize(9).AlignRight();
+                                table.Cell().Background(Colors.Grey.Lighten2).Padding(4)
+                                    .Text($"€{invoiceData.TotalAmount:F2}").Bold().FontSize(9).AlignRight().FontColor(Colors.Blue.Medium);
+                            });
+
+                        page.Footer()
+                            .AlignCenter()
+                            .Text(x =>
+                            {
+                                x.Span("Page ").FontSize(9).FontColor(Colors.Grey.Medium);
+                                x.CurrentPageNumber().FontSize(9).FontColor(Colors.Grey.Medium);
+                                x.Span(" of ").FontSize(9).FontColor(Colors.Grey.Medium);
+                                x.TotalPages().FontSize(9).FontColor(Colors.Grey.Medium);
+                            });
+                    });
+                }
             });
 
             return document.GeneratePdf();
