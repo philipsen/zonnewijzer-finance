@@ -19,8 +19,8 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-# Create logs directory
-RUN mkdir -p /app/logs
+# Install curl for health checks and create logs directory
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && mkdir -p /app/logs
 
 # Set environment variables
 ENV ASPNETCORE_ENVIRONMENT=Production
