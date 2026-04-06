@@ -185,16 +185,16 @@ namespace Backend.Services
                                 var rowIndex = 0;
                                 foreach (var session in invoiceData.Sessions)
                                 {
-                                    var bg = rowIndex++ % 2 == 0 ? Colors.White : Colors.Grey.Lighten4;
-                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                    var rowBackground = rowIndex++ % 2 == 0 ? Colors.White : Colors.Grey.Lighten4;
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.Start:dd/MM HH:mm}").FontSize(9);
-                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.End:dd/MM HH:mm}").FontSize(9);
-                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.StationId}").FontSize(9).AlignCenter();
-                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.ChargedKwh:F2}").FontSize(9).AlignRight();
-                                    table.Cell().Background(bg).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"€{session.Amount:F2}").FontSize(9).AlignRight();
                                 }
 
