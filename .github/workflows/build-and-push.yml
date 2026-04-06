@@ -48,5 +48,5 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd zonnewijzer-finance
+            cd compose/zonnewijzer-finance
             ./update-and-restart.sh
