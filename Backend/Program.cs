@@ -32,15 +32,7 @@ try
             .ReadFrom.Services(services)
             .Enrich.FromLogContext();
         
-        // Use normal console format in development, compact JSON in production
-        if (context.HostingEnvironment.IsDevelopment())
-        {
-            loggerConfig.WriteTo.Console();
-        }
-        else
-        {
-            loggerConfig.WriteTo.Console(new CompactJsonFormatter());
-        }
+        loggerConfig.WriteTo.Console();
         
         // Always use compact JSON for file logging
         loggerConfig.WriteTo.File(
