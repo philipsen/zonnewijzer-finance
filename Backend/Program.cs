@@ -90,6 +90,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+// Add health checks
+builder.Services.AddHealthChecks();
+
 // Add custom services
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
@@ -119,6 +122,7 @@ var app = builder.Build();
         // app.UseSwaggerUI();
     }
 
+    app.MapHealthChecks("/health");
     app.UseCors("AllowVueApp");
     app.UseAuthentication();
     app.UseAuthorization();
