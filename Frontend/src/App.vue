@@ -52,8 +52,8 @@
           <!-- sign-in button is rendered on the Home page -->
         </template>
         <template v-else>
-          <button v-if="user.role === 'Admin'" @click="togglePreviewMode" :class="['preview-toggle-btn', { active: previewMode }]" :title="previewMode ? 'Switch to Admin view' : 'Preview as base user'">
-            {{ previewMode ? '👁 Admin view' : '👤 User view' }}
+          <button v-if="user.role === 'Admin'" @click="togglePreviewMode" :class="['preview-toggle-btn', { active: previewMode }]">
+            {{ previewMode ? 'Admin view' : 'User view' }}
           </button>
           <div class="user-info">
             <span>{{ user.name }}</span>
@@ -447,27 +447,30 @@ main {
 }
 
 .preview-toggle-btn {
-  padding: 0.4rem 0.85rem;
-  border: 1.5px solid #6c757d;
-  background-color: white;
-  color: #6c757d;
+  padding: 0.5rem 1rem;
+  border: 1px solid #6c757d;
+  background-color: #6c757d;
+  color: white;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: inherit;
   font-weight: 500;
   transition: all 0.2s ease;
   white-space: nowrap;
 }
 
 .preview-toggle-btn:hover {
-  background-color: #f8f9fa;
-  border-color: #495057;
-  color: #495057;
+  background-color: #545b62;
+  border-color: #545b62;
 }
 
 .preview-toggle-btn.active {
-  background-color: #e3f2fd;
+  background-color: #1565c0;
   border-color: #1565c0;
-  color: #1565c0;
+  color: white;
+}
+.preview-toggle-btn.active:hover {
+  background-color: #0d47a1;
+  border-color: #0d47a1;
 }
 </style>
