@@ -27,21 +27,10 @@ try
 
     // Replace default logging with Serilog
     builder.Host.UseSerilog((context, services, configuration) => {
-        var loggerConfig = configuration
+        configuration
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext();
-        
-        loggerConfig.WriteTo.Console();
-        
-        // Always use compact JSON for file logging
-        loggerConfig.WriteTo.File(
-            new CompactJsonFormatter(),
-            "logs/log-.txt",
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 7,
-            shared: true,
-            flushToDiskInterval: TimeSpan.FromSeconds(1));
     });
 
     // Add services to the container.
