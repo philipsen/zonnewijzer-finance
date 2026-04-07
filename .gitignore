@@ -206,7 +206,6 @@ $RECYCLE.BIN/
 *.zip
 
 # Application specific
-appsettings.Production.json
 connectionstring.json
 .fake
 Backend/finance.db-shm
