@@ -67,24 +67,70 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetAllUsers_ReturnsAllUsers()
     {
-        await AddUser(1, "Alice");
-        await AddUser(2, "Bob");
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Alice");
+        await AddUser(3, "Bob");
         var result = await BuildController().GetAllUsers();
         var ok = Assert.IsType<OkObjectResult>(result);
         var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
-        Assert.Equal(2, list.Count);
+        Assert.Equal(3, list.Count);
     }
 
     [Fact]
     public async Task GetAllUsers_IncludesChargingUserId()
     {
-        await AddUser(1, "Alice", chargingUserId: 42);
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Alice", chargingUserId: 42);
         var result = await BuildController().GetAllUsers();
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         var doc = System.Text.Json.JsonDocument.Parse(json);
-        var first = doc.RootElement.EnumerateArray().First();
-        Assert.Equal(42, first.GetProperty("chargingUserId").GetInt32());
+        var alice = doc.RootElement.EnumerateArray().First(e => e.GetProperty("id").GetInt32() == 2);
+        Assert.Equal(42, alice.GetProperty("chargingUserId").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetAllUsers_NonAdmin_ReturnsForbid()
+    {
+        await AddUser(1, "Regular", UserRole.Base);
+        await AddUser(2, "Other");
+        var result = await BuildController().GetAllUsers();
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    // ── GetUser ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetUser_WithInvalidToken_ReturnsUnauthorized()
+    {
+        var result = await BuildController(validUserId: null).GetUser();
+        Assert.IsType<UnauthorizedResult>(result);
+    }
+
+    [Fact]
+    public async Task GetUser_WhenUserMissing_ReturnsNotFound()
+    {
+        _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("42");
+        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer valid-token";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var result = await controller.GetUser();
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task GetUser_WhenFound_ReturnsProfile()
+    {
+        await AddUser(1, "Pat", UserRole.Admin, chargingUserId: 7);
+        var result = await BuildController().GetUser();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("Pat", doc.RootElement.GetProperty("name").GetString());
+        Assert.Equal("Admin", doc.RootElement.GetProperty("role").GetString());
+        Assert.Equal(7, doc.RootElement.GetProperty("chargingUserId").GetInt32());
     }
 
     // ── GetUserById ────────────────────────────────────────────────────────────

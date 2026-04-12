@@ -1,0 +1,315 @@
+using Backend.Controllers;
+using Backend.Data;
+using Backend.Models;
+using Backend.Services;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Primitives;
+using Moq;
+
+namespace Backend.Tests.Controllers;
+
+public class InvoicesControllerTests : IDisposable
+{
+    private readonly ApplicationDbContext _db;
+    private readonly Mock<IJwtService> _jwtMock;
+    private readonly Mock<IPdfService> _pdfMock;
+    private readonly Mock<IMollieService> _mollieMock;
+    private readonly Mock<IConfiguration> _configMock;
+
+    public InvoicesControllerTests()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        _db = new ApplicationDbContext(options);
+        _jwtMock = new Mock<IJwtService>();
+        _pdfMock = new Mock<IPdfService>();
+        _mollieMock = new Mock<IMollieService>();
+        _configMock = new Mock<IConfiguration>();
+    }
+
+    public void Dispose() => _db.Dispose();
+
+    private InvoicesController BuildController(string? userId = "1", HttpContext? httpContext = null)
+    {
+        _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(userId);
+        var ctx = httpContext ?? new DefaultHttpContext();
+        ctx.Request.Headers.Authorization = "Bearer t";
+        ctx.Request.Scheme = "http";
+        ctx.Request.Host = new HostString("localhost", 5293);
+
+        var controller = new InvoicesController(
+            _db,
+            _jwtMock.Object,
+            _pdfMock.Object,
+            _mollieMock.Object,
+            _configMock.Object,
+            NullLogger<InvoicesController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = ctx }
+        };
+        return controller;
+    }
+
+    private async Task SeedAdminAsync()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task GetInvoicesGrid_InvalidToken_ReturnsUnauthorized()
+    {
+        var result = await BuildController(userId: null).GetInvoicesGrid();
+        Assert.IsType<UnauthorizedResult>(result);
+    }
+
+    [Fact]
+    public async Task GetInvoicesGrid_NonAdmin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        var regular = new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base };
+        _db.Users.Add(regular);
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").GetInvoicesGrid();
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task GetInvoicesGrid_Admin_ReturnsOkWithGrid()
+    {
+        await SeedAdminAsync();
+        var t = new DateTime(2024, 2, 5, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 7, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 12 });
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 2, PricePerKwh = 0.3m });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetInvoicesGrid();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.TryGetProperty("GridData", out _));
+        Assert.True(doc.RootElement.TryGetProperty("Months", out _));
+    }
+
+    [Fact]
+    public async Task GenerateInvoicePdf_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().GenerateInvoicePdf(99, 2024, 1);
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Contains("No charging sessions", notFound.Value!.ToString());
+    }
+
+    [Fact]
+    public async Task GenerateInvoicePdf_WithSessions_ReturnsPdfFile()
+    {
+        await SeedAdminAsync();
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 3, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 8 });
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 3,
+            Year = 2024,
+            Month = 4,
+            MolliePaymentId = "tr_existing",
+            CheckoutUrl = "https://checkout",
+            Amount = 2,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().GenerateInvoicePdf(3, 2024, 4);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("application/pdf", file.ContentType);
+        Assert.NotEmpty(file.FileContents);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_WhenExists_ReturnsExistingWithoutMollieCreate()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 5,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "tr_old",
+            CheckoutUrl = "https://old",
+            Amount = 10,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().CreatePaymentLink(5, 2024, 3);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("tr_old", doc.RootElement.GetProperty("paymentId").GetString());
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().CreatePaymentLink(5, 2024, 3);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_New_CallsMollieAndPersists()
+    {
+        await SeedAdminAsync();
+        var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 5, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 4 });
+        await _db.SaveChangesAsync();
+
+        _configMock.Setup(c => c["Mollie:RedirectUrl"]).Returns((string?)null);
+        _configMock.Setup(c => c["Mollie:BaseUrl"]).Returns((string?)null);
+
+        _mollieMock
+            .Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new MolliePaymentResult("tr_new", "https://new", "open"));
+
+        var result = await BuildController().CreatePaymentLink(5, 2024, 3);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.MolliePayments.CountAsync());
+        var p = await _db.MolliePayments.FirstAsync();
+        Assert.Equal("tr_new", p.MolliePaymentId);
+    }
+
+    [Fact]
+    public async Task GetPaymentLink_NotFound_WhenMissing()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().GetPaymentLink(1, 2024, 1);
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task GetPaymentLink_RefreshesOpenStatus()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 8,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr_open",
+            CheckoutUrl = "https://c",
+            Amount = 5,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_open")).ReturnsAsync("paid");
+
+        var result = await BuildController().GetPaymentLink(8, 2024, 1);
+        Assert.IsType<OkObjectResult>(result);
+
+        var p = await _db.MolliePayments.FirstAsync();
+        Assert.Equal("paid", p.Status);
+    }
+
+    [Fact]
+    public async Task GetAllPayments_NonAdmin_ReturnsForbid()
+    {
+        _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").GetAllPayments();
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task GetAllPayments_Admin_ReturnsPayments()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 1,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr_p",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetAllPayments();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
+        Assert.Single(list);
+    }
+
+    [Fact]
+    public async Task MollieWebhook_MissingId_ReturnsBadRequest()
+    {
+        var form = new FormCollection(new Dictionary<string, StringValues>());
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IFormFeature>(new FormFeature(form));
+
+        var result = await BuildController(httpContext: ctx).MollieWebhook();
+        Assert.IsType<BadRequestResult>(result);
+    }
+
+    [Fact]
+    public async Task MollieWebhook_UnknownPayment_ReturnsOk()
+    {
+        var form = new FormCollection(new Dictionary<string, StringValues> { { "id", "tr_unknown" } });
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IFormFeature>(new FormFeature(form));
+
+        var result = await BuildController(httpContext: ctx).MollieWebhook();
+        Assert.IsType<OkResult>(result);
+        _mollieMock.Verify(m => m.GetPaymentStatusAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MollieWebhook_UpdatesPaymentStatus()
+    {
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 2,
+            Year = 2024,
+            Month = 6,
+            MolliePaymentId = "tr_wh",
+            CheckoutUrl = "https://c",
+            Amount = 3,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_wh")).ReturnsAsync("paid");
+
+        var form = new FormCollection(new Dictionary<string, StringValues> { { "id", "tr_wh" } });
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IFormFeature>(new FormFeature(form));
+
+        var result = await BuildController(httpContext: ctx).MollieWebhook();
+        Assert.IsType<OkResult>(result);
+
+        var p = await _db.MolliePayments.FirstAsync();
+        Assert.Equal("paid", p.Status);
+    }
+}

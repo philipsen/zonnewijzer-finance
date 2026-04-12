@@ -1,3 +1,4 @@
+using System.Text;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -268,5 +269,72 @@ public class ChargingSessionsControllerTests : IDisposable
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
+    }
+
+    // ── UploadCsv ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UploadCsv_NullFile_ReturnsBadRequest()
+    {
+        var result = await BuildController().UploadCsv(null!);
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("No file uploaded", bad.Value);
+    }
+
+    [Fact]
+    public async Task UploadCsv_NonCsvExtension_ReturnsBadRequest()
+    {
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("x"));
+        var file = new FormFile(stream, 0, stream.Length, "file", "readme.txt");
+
+        var result = await BuildController().UploadCsv(file);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("File must be a CSV", bad.Value);
+    }
+
+    [Fact]
+    public async Task UploadCsv_ValidCsv_InsertsRows()
+    {
+        var start = DateTime.UtcNow.AddHours(-3);
+        var end = start.AddHours(1);
+        var csv =
+            "start,end,userid,stationid,charged_kwh\n" +
+            $"{start:o},{end:o},55,9,4.25";
+        var bytes = Encoding.UTF8.GetBytes(csv);
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "sessions.csv");
+
+        var result = await BuildController().UploadCsv(file);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
+        var session = await _db.ChargingSessions.FirstAsync();
+        Assert.Equal(55, session.UserId);
+        Assert.Equal(9, session.StationId);
+    }
+
+    [Fact]
+    public async Task UploadCsv_DuplicateRows_SkipsDuplicates()
+    {
+        var start = DateTime.UtcNow.AddHours(-5);
+        var end = start.AddHours(1);
+        var line = $"{start:o},{end:o},60,3,2";
+        var csv = "start,end,userid,stationid,charged_kwh\n" + line;
+        var bytes = Encoding.UTF8.GetBytes(csv);
+        using var stream1 = new MemoryStream(bytes);
+        var file1 = new FormFile(stream1, 0, bytes.Length, "file", "a.csv");
+        await BuildController().UploadCsv(file1);
+
+        using var stream2 = new MemoryStream(bytes);
+        var file2 = new FormFile(stream2, 0, bytes.Length, "file", "b.csv");
+        var result = await BuildController().UploadCsv(file2);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(0, doc.RootElement.GetProperty("added").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("skipped").GetInt32());
     }
 }
