@@ -214,3 +214,4 @@ database/finance.db-shm
 database/finance.db-wal
 data/finance.db-shm
 data/finance.db-wal
+TestResults/*/coverage.cobertura.xml
