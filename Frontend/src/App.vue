@@ -1,10 +1,10 @@
 <template>
   <div id="app">
     <nav class="navbar">
-      <div class="navbar-brand">
+      <router-link to="/" class="navbar-brand">
         <img src="/assets/zonnewijzer_logo.png" alt="Zonnewijzer Logo" class="logo">
         <h1>Zonnewijzer Finance</h1>
-      </div>
+      </router-link>
       <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
         <template v-if="user.role === 'Admin' && !previewMode">
@@ -256,6 +256,8 @@ body {
   display: flex;
   align-items: center;
   gap: 1rem;
+  text-decoration: none;
+  color: inherit;
 }
 
 .logo {
