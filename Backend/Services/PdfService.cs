@@ -166,18 +166,20 @@ namespace Backend.Services
                             {
                                 table.ColumnsDefinition(columns =>
                                 {
-                                    columns.RelativeColumn(2.2f); // Start
-                                    columns.RelativeColumn(2.2f); // End
-                                    columns.RelativeColumn(1f);   // Station
-                                    columns.RelativeColumn(1.3f); // kWh
-                                    columns.RelativeColumn(1.3f); // Amount
+                                    columns.RelativeColumn(2f); // Start
+                                    columns.RelativeColumn(2f); // End
+                                    columns.RelativeColumn(2.2f); // Station name + serial
+                                    columns.RelativeColumn(0.65f); // Connector
+                                    columns.RelativeColumn(1.15f); // kWh
+                                    columns.RelativeColumn(1.15f); // Amount
                                 });
 
                                 table.Header(header =>
                                 {
                                     header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Start").Bold().FontSize(9);
                                     header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("End").Bold().FontSize(9);
-                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Station").Bold().FontSize(9).AlignCenter();
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Station").Bold().FontSize(9);
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Conn.").Bold().FontSize(9).AlignCenter();
                                     header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("kWh").Bold().FontSize(9).AlignRight();
                                     header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Amount").Bold().FontSize(9).AlignRight();
                                 });
@@ -189,9 +191,19 @@ namespace Backend.Services
                                     table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.Start:dd/MM HH:mm}").FontSize(9);
                                     table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
-                                        .Text($"{session.End:dd/MM HH:mm}").FontSize(9);
+                                        .Text(session.End.HasValue ? $"{session.End.Value:dd/MM HH:mm}" : "Ongoing").FontSize(9);
                                     table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
-                                        .Text($"{session.StationId}").FontSize(9).AlignCenter();
+                                        .Column(col =>
+                                        {
+                                            var title = string.IsNullOrWhiteSpace(session.ChargingStationName)
+                                                ? $"#{session.StationId}"
+                                                : session.ChargingStationName;
+                                            col.Item().Text(title).FontSize(9);
+                                            if (!string.IsNullOrWhiteSpace(session.StationSerialNumber))
+                                                col.Item().Text($"S/N {session.StationSerialNumber}").FontSize(8).FontColor(Colors.Grey.Darken1);
+                                        });
+                                    table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
+                                        .Text(string.IsNullOrWhiteSpace(session.Connector) ? "—" : session.Connector).FontSize(9).AlignCenter();
                                     table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{session.ChargedKwh:F2}").FontSize(9).AlignRight();
                                     table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
@@ -199,7 +211,7 @@ namespace Backend.Services
                                 }
 
                                 // Totals row
-                                table.Cell().ColumnSpan(3).Background(Colors.Grey.Lighten2).Padding(4)
+                                table.Cell().ColumnSpan(4).Background(Colors.Grey.Lighten2).Padding(4)
                                     .Text("Total").Bold().FontSize(9);
                                 table.Cell().Background(Colors.Grey.Lighten2).Padding(4)
                                     .Text($"{invoiceData.TotalKwh:F2}").Bold().FontSize(9).AlignRight();

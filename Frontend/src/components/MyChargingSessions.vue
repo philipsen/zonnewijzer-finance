@@ -57,18 +57,33 @@
               <th>Start Time</th>
               <th>End Time</th>
               <th>Duration</th>
+              <th>Charging user</th>
               <th>Station</th>
+              <th>Serial</th>
               <th>Energy (kWh)</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="session in sessions" :key="session.id" class="session-row">
               <td>{{ formatDateTime(session.start) }}</td>
-              <td>{{ formatDateTime(session.end) }}</td>
-              <td>{{ formatDuration(session.duration) }}</td>
               <td>
-                <span class="station-badge">Station {{ session.stationId }}</span>
+                <span v-if="session.end" class="mono-cell">{{ formatDateTime(session.end) }}</span>
+                <span v-else class="ongoing-label">Ongoing</span>
               </td>
+              <td>
+                <span v-if="session.duration != null">{{ formatDuration(session.duration) }}</span>
+                <span v-else class="ongoing-label">Ongoing</span>
+              </td>
+              <td>
+                <span class="user-badge">
+                  <template v-if="session.chargingUserDisplayName">{{ session.chargingUserDisplayName }}</template>
+                  <template v-else>—</template>
+                </span>
+              </td>
+              <td class="station-cell">
+                <span class="station-name">{{ formatStationNameAndConnector(session) }}</span>
+              </td>
+              <td class="mono-cell">{{ session.stationSerialNumber || '—' }}</td>
               <td class="energy-cell">{{ session.chargedKwh }} kWh</td>
             </tr>
           </tbody>
@@ -131,9 +146,10 @@ export default {
     })
 
     const averageSessionDuration = computed(() => {
-      if (sessions.value.length === 0) return '0m'
-      const totalMinutes = sessions.value.reduce((total, session) => total + session.duration, 0)
-      const avgMinutes = Math.round(totalMinutes / sessions.value.length)
+      const completed = sessions.value.filter((s) => s.duration != null)
+      if (completed.length === 0) return sessions.value.length > 0 ? '—' : '0m'
+      const totalMinutes = completed.reduce((total, session) => total + session.duration, 0)
+      const avgMinutes = Math.round(totalMinutes / completed.length)
       return formatDuration(avgMinutes)
     })
 
@@ -214,6 +230,7 @@ export default {
     }
 
     const formatDateTime = (dateString) => {
+      if (dateString == null || dateString === '') return ''
       return new Date(dateString).toLocaleString('en-US', {
         year: 'numeric',
         month: 'short',
@@ -224,10 +241,23 @@ export default {
     }
 
     const formatDuration = (minutes) => {
+      if (minutes == null) return ''
       if (minutes < 60) return `${minutes}m`
       const hours = Math.floor(minutes / 60)
       const remainingMinutes = minutes % 60
       return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+    }
+
+    const formatStationNameAndConnector = (session) => {
+      const name = (session.chargingStationName || '').trim()
+      const conn =
+        session.connector != null && String(session.connector).trim() !== ''
+          ? String(session.connector).trim()
+          : ''
+      if (!name && !conn) return '—'
+      if (!name) return `—, ${conn}`
+      if (!conn) return `${name}, —`
+      return `${name}, ${conn}`
     }
 
     onMounted(() => {
@@ -250,7 +280,8 @@ export default {
       getFilterLabel,
       changePage,
       formatDateTime,
-      formatDuration
+      formatDuration,
+      formatStationNameAndConnector
     }
   }
 }
@@ -433,14 +464,31 @@ export default {
   border-bottom: 1px solid #e9ecef;
 }
 
-.station-badge {
+.user-badge {
   display: inline-block;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
   font-size: 0.85rem;
   font-weight: 600;
-  background-color: #f3e5f5;
-  color: #7b1fa2;
+  background-color: #e3f2fd;
+  color: #1565c0;
+}
+
+.station-cell .station-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.mono-cell {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.ongoing-label {
+  font-weight: 600;
+  color: #1565c0;
+  font-size: 0.9rem;
 }
 
 .energy-cell {

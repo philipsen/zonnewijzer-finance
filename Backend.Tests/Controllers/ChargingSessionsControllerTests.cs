@@ -1,4 +1,5 @@
 using System.Text;
+using Backend;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -91,6 +92,61 @@ public class ChargingSessionsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task AddSession_WhenEndNull_Ongoing_ReturnsOk()
+    {
+        var controller = BuildController();
+        var start = DateTime.UtcNow.AddHours(-1);
+        var request = new AddSessionRequest
+        {
+            Start = start,
+            End = null,
+            UserId = 1,
+            StationId = 5,
+            ChargedKwh = 2.5m
+        };
+
+        var result = await controller.AddSession(request);
+
+        Assert.IsType<OkObjectResult>(result);
+        var row = await _db.ChargingSessions.SingleAsync();
+        Assert.Null(row.End);
+        Assert.Equal(start, row.Start);
+    }
+
+    [Fact]
+    public async Task AddSession_WhenSameStartUserStation_ReplacesExistingRow()
+    {
+        var controller = BuildController();
+        var start = new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc);
+        var first = new AddSessionRequest
+        {
+            Start = start,
+            End = start.AddHours(1),
+            UserId = 7,
+            StationId = 11,
+            ChargedKwh = 1m
+        };
+        Assert.IsType<OkObjectResult>(await controller.AddSession(first));
+        var id = (await _db.ChargingSessions.SingleAsync()).Id;
+
+        var second = new AddSessionRequest
+        {
+            Start = start,
+            End = start.AddHours(2),
+            UserId = 7,
+            StationId = 11,
+            ChargedKwh = 99m
+        };
+        Assert.IsType<OkObjectResult>(await controller.AddSession(second));
+
+        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
+        var row = await _db.ChargingSessions.SingleAsync();
+        Assert.Equal(id, row.Id);
+        Assert.Equal(99m, row.ChargedKwh);
+        Assert.Equal(start.AddHours(2), row.End);
+    }
+
+    [Fact]
     public async Task AddSession_WithNegativeKwh_ReturnsBadRequest()
     {
         var controller = BuildController();
@@ -106,6 +162,32 @@ public class ChargingSessionsControllerTests : IDisposable
         var result = await controller.AddSession(request);
 
         Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task AddSession_WithSerialAndConnector_DerivesStationId()
+    {
+        var controller = BuildController();
+        var request = new AddSessionRequest
+        {
+            Start = DateTime.UtcNow.AddHours(-2),
+            End = DateTime.UtcNow.AddHours(-1),
+            UserId = 1,
+            StationId = 999,
+            StationSerialNumber = "6531001272",
+            Connector = "2",
+            ChargingStationName = "Paal test",
+            ChargedKwh = 3m
+        };
+
+        var result = await controller.AddSession(request);
+
+        Assert.IsType<OkObjectResult>(result);
+        var session = await _db.ChargingSessions.FirstAsync();
+        Assert.Equal(ChargingPointIds.ChargingPointIdFromSerialAndConnector("6531001272", "2"), session.StationId);
+        Assert.Equal("6531001272", session.StationSerialNumber);
+        Assert.Equal("2", session.Connector);
+        Assert.Equal("Paal test", session.ChargingStationName);
     }
 
     // ── GetAllSessions ─────────────────────────────────────────────────────────
@@ -294,14 +376,13 @@ public class ChargingSessionsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task UploadCsv_ValidCsv_InsertsRows()
+    public async Task UploadCsv_ValidExport_InsertsRow()
     {
-        var start = DateTime.UtcNow.AddHours(-3);
-        var end = start.AddHours(1);
-        var csv =
-            "start,end,userid,stationid,charged_kwh\n" +
-            $"{start:o},{end:o},55,9,4.25";
-        var bytes = Encoding.UTF8.GetBytes(csv);
+        var csv = """
+Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token
+6531001272,Paal 2,2026-05-10 12:00:00,2026-05-10 13:00:00,01:00,"4,25",1,047D9322B62290 (Test User)
+""";
+        var bytes = Encoding.UTF8.GetBytes(csv.Trim());
         using var stream = new MemoryStream(bytes);
         var file = new FormFile(stream, 0, bytes.Length, "file", "sessions.csv");
 
@@ -310,31 +391,142 @@ public class ChargingSessionsControllerTests : IDisposable
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         var session = await _db.ChargingSessions.FirstAsync();
-        Assert.Equal(55, session.UserId);
-        Assert.Equal(9, session.StationId);
+        var expectedUserId = ChargingImportIds.ChargingUserIdFromTokenKey(
+            ChargingImportIds.NormalizeTokenKey("047D9322B62290 (Test User)"));
+        Assert.Equal(expectedUserId, session.UserId);
+        Assert.Equal(4.25m, session.ChargedKwh);
+        Assert.Equal("6531001272", session.StationSerialNumber);
+        Assert.Equal("1", session.Connector);
+        Assert.Equal("Paal 2", session.ChargingStationName);
+        var expectedPointId = ChargingPointIds.ChargingPointIdFromSerialAndConnector("6531001272", "1");
+        Assert.Equal(expectedPointId, session.StationId);
+
+        var profile = await _db.ChargingUserProfiles.FirstOrDefaultAsync(p => p.Id == session.UserId);
+        Assert.NotNull(profile);
+        Assert.Equal("047D9322B62290", profile!.RfidTokenKey);
+        Assert.Equal("Test User", profile.DisplayName);
     }
 
     [Fact]
-    public async Task UploadCsv_DuplicateRows_SkipsDuplicates()
+    public async Task UploadCsv_WrongHeader_ReturnsBadRequest()
     {
-        var start = DateTime.UtcNow.AddHours(-5);
-        var end = start.AddHours(1);
-        var line = $"{start:o},{end:o},60,3,2";
-        var csv = "start,end,userid,stationid,charged_kwh\n" + line;
+        var csv = "a,b,c\n1,2,3";
         var bytes = Encoding.UTF8.GetBytes(csv);
-        using var stream1 = new MemoryStream(bytes);
-        var file1 = new FormFile(stream1, 0, bytes.Length, "file", "a.csv");
-        await BuildController().UploadCsv(file1);
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "bad.csv");
 
-        using var stream2 = new MemoryStream(bytes);
-        var file2 = new FormFile(stream2, 0, bytes.Length, "file", "b.csv");
-        var result = await BuildController().UploadCsv(file2);
+        var result = await BuildController().UploadCsv(file);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("Station serial number", bad.Value!.ToString());
+    }
+
+    [Fact]
+    public async Task UploadCsv_ExportFormat_MapsTokensToUserIdsAndInserts()
+    {
+        var csv = """
+Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token
+6531001272,Paal 2,2026-04-13 16:14:07,2026-04-13 16:17:38,00:04,"0,388",1,047D9322B62290 (Cock van Bruggen)
+6531001273,Paal 1,2026-04-14 10:00:00,2026-04-14 10:30:00,00:30,"5,500",2,048E8433C73391 (Jan de Vries)
+6531001272,Paal 2,2026-04-15 08:00:00,2026-04-15 08:15:00,00:15,"1,200",1,047D9322B62290 (Cock van Bruggen)
+""";
+        var bytes = Encoding.UTF8.GetBytes(csv.Trim());
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "export.csv");
+
+        var result = await BuildController().UploadCsv(file);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(3, await _db.ChargingSessions.CountAsync());
+        var id1 = ChargingImportIds.ChargingUserIdFromTokenKey(ChargingImportIds.NormalizeTokenKey("047D9322B62290 (Cock van Bruggen)"));
+        var id2 = ChargingImportIds.ChargingUserIdFromTokenKey(ChargingImportIds.NormalizeTokenKey("048E8433C73391 (Jan de Vries)"));
+        var userIds = await _db.ChargingSessions.Select(s => s.UserId).Distinct().OrderBy(x => x).ToListAsync();
+        Assert.Equal(2, userIds.Count);
+        Assert.Contains(id1, userIds);
+        Assert.Contains(id2, userIds);
+        Assert.Equal(0.388m, await _db.ChargingSessions.Where(s => s.ChargedKwh < 1).Select(s => s.ChargedKwh).FirstAsync());
+    }
+
+    [Fact]
+    public async Task UploadCsv_SameSerialDifferentConnectors_DifferentChargingPointIds()
+    {
+        var csv = """
+Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token
+6531001272,Paal 2,2026-07-01 10:00:00,2026-07-01 11:00:00,01:00,"1,0",1,047D9322B62290 (Test User)
+6531001272,Paal 2,2026-07-02 10:00:00,2026-07-02 11:00:00,01:00,"1,0",2,047D9322B62290 (Test User)
+""";
+        var bytes = Encoding.UTF8.GetBytes(csv.Trim());
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "two-connectors.csv");
+
+        var result = await BuildController().UploadCsv(file);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(2, await _db.ChargingSessions.CountAsync());
+        var ids = await _db.ChargingSessions.Select(s => s.StationId).Distinct().OrderBy(x => x).ToListAsync();
+        Assert.Equal(2, ids.Count);
+    }
+
+    [Fact]
+    public async Task UploadCsv_DuplicateLinesInSameFile_SkipsSecond()
+    {
+        var line =
+            "6531001272,Paal 2,2026-06-01 08:00:00,2026-06-01 08:45:00,00:45,\"3,50\",1,047D9322B62290 (Test User)";
+        var csv =
+            "Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token\n" +
+            line + "\n" +
+            line;
+        var bytes = Encoding.UTF8.GetBytes(csv);
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "dup.csv");
+
+        var result = await BuildController().UploadCsv(file);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         using var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal(0, doc.RootElement.GetProperty("added").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("added").GetInt32());
+        Assert.Equal(0, doc.RootElement.GetProperty("updated").GetInt32());
         Assert.Equal(1, doc.RootElement.GetProperty("skipped").GetInt32());
+    }
+
+    [Fact]
+    public async Task UploadCsv_SameKeyAsExistingRow_UpdatesInPlace()
+    {
+        var line =
+            "6531001272,Paal 2,2026-08-01 09:00:00,2026-08-01 10:00:00,01:00,\"2,00\",1,047D9322B62290 (Test User)";
+        var csv =
+            "Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token\n" +
+            line;
+        var bytes = Encoding.UTF8.GetBytes(csv);
+        using var stream = new MemoryStream(bytes);
+        var file = new FormFile(stream, 0, bytes.Length, "file", "first.csv");
+
+        var controller = BuildController();
+        Assert.IsType<OkObjectResult>(await controller.UploadCsv(file));
+        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
+        Assert.Equal(2.00m, (await _db.ChargingSessions.FirstAsync()).ChargedKwh);
+
+        var lineUpdated =
+            "6531001272,Paal 2 Renamed,2026-08-01 09:00:00,2026-08-01 11:00:00,02:00,\"9,75\",1,047D9322B62290 (Test User)";
+        var csv2 =
+            "Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token\n" +
+            lineUpdated;
+        var bytes2 = Encoding.UTF8.GetBytes(csv2);
+        using var stream2 = new MemoryStream(bytes2);
+        var file2 = new FormFile(stream2, 0, bytes2.Length, "file", "second.csv");
+
+        var result2 = await controller.UploadCsv(file2);
+        var ok2 = Assert.IsType<OkObjectResult>(result2);
+        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
+        var row = await _db.ChargingSessions.FirstAsync();
+        Assert.Equal(9.75m, row.ChargedKwh);
+        Assert.Equal("Paal 2 Renamed", row.ChargingStationName);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(ok2.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(0, doc.RootElement.GetProperty("added").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("updated").GetInt32());
     }
 }

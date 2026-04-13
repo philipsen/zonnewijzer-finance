@@ -31,8 +31,11 @@ namespace Backend.Services
     public class SessionData
     {
         public DateTime Start { get; set; }
-        public DateTime End { get; set; }
+        public DateTime? End { get; set; }
         public int StationId { get; set; }
+        public string? StationSerialNumber { get; set; }
+        public string? Connector { get; set; }
+        public string? ChargingStationName { get; set; }
         public decimal ChargedKwh { get; set; }
         public decimal Amount { get; set; }
     }

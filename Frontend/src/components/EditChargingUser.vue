@@ -6,6 +6,9 @@
           ← Back to Charging Users
         </router-link>
         <h1>Edit Charging User {{ chargingUserId }}</h1>
+        <p v-if="chargingUser?.rfidTokenKey" class="rfid-line">
+          RFID key: <code>{{ chargingUser.rfidTokenKey }}</code>
+        </p>
       </div>
     </div>
 
@@ -31,7 +34,7 @@
             placeholder="e.g. John Doe"
             class="form-input"
           >
-          <p class="form-hint">Optional friendly name shown instead of the numeric ID on invoices and lists.</p>
+          <p class="form-hint">Shown on invoices and lists. After a CSV import, this is filled from the name in parentheses in the token column.</p>
         </div>
 
         <div class="form-group">
@@ -272,6 +275,19 @@ export default {
 
 .page-header {
   margin-bottom: 2rem;
+}
+
+.rfid-line {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.95rem;
+  color: #555;
+}
+
+.rfid-line code {
+  font-size: 0.9rem;
+  background: #f4f4f4;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
 }
 
 .header-content {

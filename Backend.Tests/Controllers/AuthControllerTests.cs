@@ -394,15 +394,15 @@ public class AuthControllerTests : IDisposable
     public async Task WipeDatabase_InvalidToken_ReturnsUnauthorized()
     {
         var result = await BuildController(validUserId: null).WipeDatabase(
-            new WipeDatabaseRequest { Confirmation = AuthController.WipeDatabaseConfirmationPhrase });
+            new WipeDatabaseRequest { Confirm = true });
         Assert.IsType<UnauthorizedResult>(result);
     }
 
     [Fact]
-    public async Task WipeDatabase_WrongPhrase_ReturnsBadRequest()
+    public async Task WipeDatabase_WithoutConfirm_ReturnsBadRequest()
     {
         await AddUser(1, "Admin", UserRole.Admin);
-        var result = await BuildController().WipeDatabase(new WipeDatabaseRequest { Confirmation = "wrong" });
+        var result = await BuildController().WipeDatabase(new WipeDatabaseRequest());
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
@@ -411,7 +411,7 @@ public class AuthControllerTests : IDisposable
     {
         await AddUser(1, "Regular", UserRole.Base);
         var result = await BuildController().WipeDatabase(
-            new WipeDatabaseRequest { Confirmation = AuthController.WipeDatabaseConfirmationPhrase });
+            new WipeDatabaseRequest { Confirm = true });
         Assert.IsType<ForbidResult>(result);
     }
 
@@ -448,7 +448,7 @@ public class AuthControllerTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await BuildController().WipeDatabase(
-            new WipeDatabaseRequest { Confirmation = AuthController.WipeDatabaseConfirmationPhrase });
+            new WipeDatabaseRequest { Confirm = true });
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(2, await _db.Users.CountAsync());
@@ -456,5 +456,54 @@ public class AuthControllerTests : IDisposable
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
         Assert.Equal(0, await _db.EventLogs.CountAsync());
         Assert.Equal(0, await _db.Invoices.CountAsync());
+    }
+
+    // ── ClearChargingData ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ClearChargingData_WrongPhrase_ReturnsBadRequest()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var result = await BuildController().ClearChargingData(new WipeDatabaseRequest { Confirmation = "wrong" });
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task ClearChargingData_NonAdmin_ReturnsForbid()
+    {
+        await AddUser(1, "Regular", UserRole.Base);
+        var result = await BuildController().ClearChargingData(
+            new WipeDatabaseRequest { Confirmation = AuthController.ClearChargingDataConfirmationPhrase });
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task ClearChargingData_Admin_ClearsSessionsProfilesUnlinksAndKeepsInvoices()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Bob", UserRole.Base, chargingUserId: 10);
+        var t = DateTime.UtcNow;
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 2 });
+        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 10, DisplayName = "Profile" });
+        _db.Invoices.Add(new Invoice
+        {
+            UserId = 2,
+            Year = 2024,
+            Month = 3,
+            InvoiceNumber = "INV-X",
+            UserName = "Bob",
+            TotalAmount = 5,
+            PdfPath = null
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().ClearChargingData(
+            new WipeDatabaseRequest { Confirmation = AuthController.ClearChargingDataConfirmationPhrase });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(0, await _db.ChargingSessions.CountAsync());
+        Assert.Equal(0, await _db.ChargingUserProfiles.CountAsync());
+        Assert.Null((await _db.Users.FindAsync(2))!.ChargingUserId);
+        Assert.Equal(1, await _db.Invoices.CountAsync());
     }
 }
