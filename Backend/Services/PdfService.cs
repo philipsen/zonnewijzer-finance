@@ -13,6 +13,7 @@ namespace Backend.Services
 
         private const string SupplierKvK = "50323342";
         private const string SupplierBtwId = "NL003422577B06";
+        private const string CustomerPortalUrl = "https://zonnewijzer.zonneklaar-consulting.com/";
 
         private static (decimal ExclVat, decimal VatAmount) SplitVatInclusive(decimal totalInclVat)
         {
@@ -173,6 +174,12 @@ namespace Backend.Services
                                 }
                                 col.Item().PaddingTop(10).Text("For questions regarding this invoice, please contact the billing department.")
                                     .FontSize(10).FontColor(Colors.Grey.Medium);
+                                col.Item().PaddingTop(6).Text(text =>
+                                {
+                                    text.Span("View invoices and payment status online: ").FontSize(10).FontColor(Colors.Grey.Medium);
+                                    text.Hyperlink(CustomerPortalUrl, CustomerPortalUrl.TrimEnd('/'))
+                                        .FontSize(10).FontColor(Colors.Blue.Medium);
+                                });
                             });
                         });
 
