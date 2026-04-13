@@ -217,6 +217,109 @@ namespace Backend.Controllers
             }
         }
 
+        public const string WipeDatabaseConfirmationPhrase = "DELETE ALL FINANCE DATA";
+
+        /// <summary>
+        /// Permanently removes charging sessions, invoices, Mollie payments, energy prices, charging user profiles, and event logs.
+        /// User accounts are preserved; each user's charging profile link is cleared.
+        /// Requires an authenticated admin and an exact confirmation phrase in the JSON body.
+        /// </summary>
+        [HttpPost("admin/wipe-database")]
+        public async Task<IActionResult> WipeDatabase([FromBody] WipeDatabaseRequest? request)
+        {
+            try
+            {
+                if (request == null || request.Confirmation != WipeDatabaseConfirmationPhrase)
+                {
+                    return BadRequest(new
+                    {
+                        message = $"Type the confirmation phrase exactly: {WipeDatabaseConfirmationPhrase}"
+                    });
+                }
+
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int userId))
+                {
+                    _logger.LogWarning("Unauthorized attempt to wipe database");
+                    return Unauthorized();
+                }
+
+                var requestingUser = await _context.Users.FindAsync(userId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                {
+                    _logger.LogWarning("Non-admin user {UserId} attempted database wipe", userId);
+                    return Forbid();
+                }
+
+                _logger.LogWarning(
+                    "Application data wipe (users preserved) executed by admin {AdminId} ({Email})",
+                    userId,
+                    requestingUser.Email);
+
+                // RemoveRange (not ExecuteDelete) so SQLite and InMemory test providers behave consistently.
+                var deletedInvoices = await _context.Invoices.CountAsync();
+                var deletedMollie = await _context.MolliePayments.CountAsync();
+                var deletedEvents = await _context.EventLogs.CountAsync();
+                var deletedSessions = await _context.ChargingSessions.CountAsync();
+                var deletedPrices = await _context.EnergyPrices.CountAsync();
+                var deletedProfiles = await _context.ChargingUserProfiles.CountAsync();
+                var usersPreserved = await _context.Users.CountAsync();
+
+                foreach (var u in await _context.Users.ToListAsync())
+                    u.ChargingUserId = null;
+
+                _context.Invoices.RemoveRange(await _context.Invoices.ToListAsync());
+                _context.MolliePayments.RemoveRange(await _context.MolliePayments.ToListAsync());
+                _context.EventLogs.RemoveRange(await _context.EventLogs.ToListAsync());
+                _context.ChargingSessions.RemoveRange(await _context.ChargingSessions.ToListAsync());
+                _context.EnergyPrices.RemoveRange(await _context.EnergyPrices.ToListAsync());
+                _context.ChargingUserProfiles.RemoveRange(await _context.ChargingUserProfiles.ToListAsync());
+
+                // InMemory (used in tests) does not support explicit transactions the same way as SQLite.
+                var useTransaction = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite";
+                if (useTransaction)
+                {
+                    await using var transaction = await _context.Database.BeginTransactionAsync();
+                    try
+                    {
+                        await _context.SaveChangesAsync();
+                        await transaction.CommitAsync();
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync();
+                        throw;
+                    }
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
+
+                return Ok(new WipeDatabaseResult
+                {
+                    Message = "Financial and operational records have been removed. User accounts were preserved.",
+                    UsersPreserved = usersPreserved,
+                    Deleted = new WipeDatabaseDeletedCounts
+                    {
+                        ChargingSessions = deletedSessions,
+                        Invoices = deletedInvoices,
+                        EventLogs = deletedEvents,
+                        EnergyPrices = deletedPrices,
+                        ChargingUserProfiles = deletedProfiles,
+                        MolliePayments = deletedMollie
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during database wipe");
+                return BadRequest(new { message = $"Database wipe failed: {ex.Message}" });
+            }
+        }
+
         [Authorize(Roles = "Admin")]
         [HttpPut("users/{id}")]
         public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest request)
