@@ -27,4 +27,9 @@ namespace Backend.Controllers
         public string? PostalCode { get; set; }
         public string? PlaceName { get; set; }
     }
+
+    public class WipeDatabaseRequest
+    {
+        public string Confirmation { get; set; } = string.Empty;
+    }
 }
