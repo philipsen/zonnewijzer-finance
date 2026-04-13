@@ -109,27 +109,43 @@ export default {
       })
     }
 
+    let googleGsiInitialized = false
+    const lastGoogleRenderError = ref('')
+
     const renderSigninButton = (el) => {
-      nextTick(() => {
-        const target = el || signinButton.value
-        if (target && window.google) {
-          google.accounts.id.initialize({
+      lastGoogleRenderError.value = ''
+      const target = el
+      const id = window.google?.accounts?.id
+      if (!target || !id) return
+
+      try {
+        if (!googleGsiInitialized) {
+          id.initialize({
             client_id: googleClientId,
             callback: handleCredentialResponse
           })
-          google.accounts.id.renderButton(target, {
-            type: 'standard',
-            shape: 'rectangular',
-            theme: 'outline',
-            text: 'signin_with',
-            size: 'large',
-            logo_alignment: 'left'
-          })
+          googleGsiInitialized = true
         }
-      })
+
+        target.innerHTML = ''
+        id.renderButton(target, {
+          type: 'standard',
+          shape: 'rectangular',
+          theme: 'outline',
+          text: 'signin_with',
+          size: 'large',
+          logo_alignment: 'left',
+          width: 280
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        lastGoogleRenderError.value = msg
+        console.error('Google Sign-In renderButton failed:', err)
+      }
     }
 
     provide('renderSigninButton', renderSigninButton)
+    provide('lastGoogleRenderError', lastGoogleRenderError)
     provide('appUser', user)
     provide('previewMode', previewMode)
 
@@ -160,7 +176,7 @@ export default {
       }
       user.value = null
       localStorage.removeItem('token')
-      google.accounts.id.disableAutoSelect()
+      window.google?.accounts?.id?.disableAutoSelect()
       window.location.href = '/'
     }
 
@@ -181,16 +197,7 @@ export default {
 
     onMounted(() => {
       window.handleCredentialResponse = handleCredentialResponse
-      window.onGoogleLibraryLoad = () => {
-        checkAuthStatus().then(() => {
-          if (!user.value) renderSigninButton(null)
-        })
-      }
-      if (window.google) {
-        checkAuthStatus().then(() => {
-          if (!user.value) renderSigninButton(null)
-        })
-      }
+      checkAuthStatus()
 
       resizeObserver = new ResizeObserver(() => checkNavOverflow())
       resizeObserver.observe(document.body)
@@ -206,8 +213,7 @@ export default {
       resizeObserver?.disconnect()
     })
 
-    watch(user, (val) => {
-      if (!val) renderSigninButton(null)
+    watch(user, () => {
       nextTick(() => checkNavOverflow())
     })
 

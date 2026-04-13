@@ -4,6 +4,9 @@
     <div v-if="!isAuthenticated" class="auth-prompt">
       <p>Please sign in to access your financial data.</p>
       <div ref="signinButtonEl" class="signin-btn-wrapper"></div>
+      <p v-if="lastGoogleRenderError" class="gsi-render-error" role="alert">
+        Google button error: {{ lastGoogleRenderError }}
+      </p>
       <div class="divider"><span>or</span></div>
       <a href="/api/auth/github" class="github-btn">
         <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -80,7 +83,7 @@
 </template>
 
 <script>
-import { computed, ref, onMounted, inject } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, inject, nextTick, watch } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -99,6 +102,7 @@ export default {
 
     const signinButtonEl = ref(null)
     const renderSigninButton = inject('renderSigninButton', null)
+    const lastGoogleRenderError = inject('lastGoogleRenderError', ref(''))
     const authError = ref('')
 
     const wipeModalOpen = ref(false)
@@ -143,6 +147,41 @@ export default {
       }
     }
 
+    const googleButtonPresent = () => {
+      const el = signinButtonEl.value
+      return !!el && (el.childElementCount > 0 || (el.textContent || '').trim().length > 2)
+    }
+
+    const tryRenderGoogle = () => {
+      nextTick(() => {
+        if (isAuthenticated.value || !renderSigninButton || !signinButtonEl.value) return
+        if (!window.google?.accounts?.id) return
+        renderSigninButton(signinButtonEl.value)
+      })
+    }
+
+    let googlePollTimer = null
+
+    const startGoogleReadyPoll = () => {
+      if (googlePollTimer) return
+      let attempts = 0
+      const maxAttempts = 80
+      googlePollTimer = setInterval(() => {
+        attempts++
+        if (isAuthenticated.value || attempts > maxAttempts) {
+          clearInterval(googlePollTimer)
+          googlePollTimer = null
+          return
+        }
+        if (googleButtonPresent()) {
+          clearInterval(googlePollTimer)
+          googlePollTimer = null
+          return
+        }
+        tryRenderGoogle()
+      }, 200)
+    }
+
     onMounted(async () => {
       // Handle GitHub OAuth callback token
       const params = new URLSearchParams(window.location.search)
@@ -158,11 +197,11 @@ export default {
           localStorage.setItem('token', githubToken)
           window.history.replaceState({}, '', '/')
           window.location.reload()
+          return
         } catch {
           authError.value = 'GitHub sign-in failed. Please try again.'
           window.history.replaceState({}, '', '/')
         }
-        return
       }
 
       if (errorParam) {
@@ -175,10 +214,30 @@ export default {
         window.history.replaceState({}, '', '/')
       }
 
-      if (!isAuthenticated.value && renderSigninButton && signinButtonEl.value) {
-        renderSigninButton(signinButtonEl.value)
+      tryRenderGoogle()
+      window.addEventListener('google-gsi-ready', tryRenderGoogle)
+
+      if (window.__googleGsiReady || window.google?.accounts?.id) {
+        queueMicrotask(() => tryRenderGoogle())
+      }
+
+      requestAnimationFrame(() => tryRenderGoogle())
+      startGoogleReadyPoll()
+    })
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('google-gsi-ready', tryRenderGoogle)
+      if (googlePollTimer) {
+        clearInterval(googlePollTimer)
+        googlePollTimer = null
       }
     })
+
+    watch(
+      () => [isAuthenticated.value, signinButtonEl.value],
+      () => tryRenderGoogle(),
+      { flush: 'post', immediate: true }
+    )
 
     return {
       isAuthenticated,
@@ -187,6 +246,7 @@ export default {
       previewMode,
       signinButtonEl,
       authError,
+      lastGoogleRenderError,
       wipeModalOpen,
       wipeLoading,
       wipeError,
@@ -215,7 +275,23 @@ export default {
 .signin-btn-wrapper {
   display: flex;
   justify-content: center;
+  align-items: center;
   margin-top: 1.5rem;
+  min-height: 48px;
+  min-width: 200px;
+  width: 100%;
+  max-width: 320px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.gsi-render-error {
+  margin-top: 0.75rem;
+  color: #b00020;
+  font-size: 0.9rem;
+  max-width: 36rem;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .divider {
