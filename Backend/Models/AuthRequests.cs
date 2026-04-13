@@ -30,6 +30,10 @@ namespace Backend.Controllers
 
     public class WipeDatabaseRequest
     {
-        public string Confirmation { get; set; } = string.Empty;
+        /// <summary>When true, authorizes POST <c>admin/wipe-database</c> (admin JWT required).</summary>
+        public bool Confirm { get; set; }
+
+        /// <summary>Exact phrase for POST <c>admin/clear-charging-data</c>.</summary>
+        public string? Confirmation { get; set; }
     }
 }

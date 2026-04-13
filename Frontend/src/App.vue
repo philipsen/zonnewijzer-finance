@@ -11,6 +11,7 @@
           <router-link to="/users" class="nav-link">Users</router-link>
           <router-link to="/charging-users" class="nav-link">Charging Users</router-link>
           <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
+          <router-link to="/charging-stations" class="nav-link">Stations</router-link>
           <router-link to="/upload-sessions" class="nav-link">Upload</router-link>
           <router-link to="/invoices" class="nav-link">Invoices</router-link>
           <router-link to="/payments" class="nav-link">Payments</router-link>
@@ -34,6 +35,7 @@
             <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
             <router-link to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
             <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
+            <router-link to="/charging-stations" class="dropdown-link" @click="dropdownOpen = false">Stations</router-link>
             <router-link to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
             <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
             <router-link to="/payments" class="dropdown-link" @click="dropdownOpen = false">Payments</router-link>

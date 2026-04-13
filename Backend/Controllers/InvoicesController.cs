@@ -260,6 +260,9 @@ namespace Backend.Controllers
                         Start = cs.Start,
                         End = cs.End,
                         StationId = cs.StationId,
+                        StationSerialNumber = cs.StationSerialNumber,
+                        Connector = cs.Connector,
+                        ChargingStationName = cs.ChargingStationName,
                         ChargedKwh = Math.Round(cs.ChargedKwh, 2),
                         Amount = Math.Round(cs.ChargedKwh * ratePerKwh, 2)
                     }).ToList(),

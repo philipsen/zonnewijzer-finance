@@ -2,7 +2,7 @@
   <div class="charging-users-page">
     <div class="page-header">
       <h1>Charging Users</h1>
-      <p class="subtitle">Charging station user IDs found in session data. Link them to app accounts or give them a display name.</p>
+      <p class="subtitle">Users appear from session imports. RFID keys come from the token column; names in parentheses become display names after import.</p>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
@@ -13,7 +13,7 @@
         <table v-if="chargingUsers.length" class="charging-users-table">
           <thead>
             <tr>
-              <th>User ID</th>
+              <th>RFID key</th>
               <th>Display Name</th>
               <th>Linked App User</th>
               <th v-if="isAdmin">Actions</th>
@@ -21,7 +21,7 @@
           </thead>
           <tbody>
             <tr v-for="cu in chargingUsers" :key="cu.id">
-              <td>{{ cu.id }}</td>
+              <td class="mono-cell">{{ cu.rfidTokenKey || '—' }}</td>
               <td>{{ cu.displayName || '—' }}</td>
               <td>
                 <span v-if="cu.linkedUserName" class="linked-badge">{{ cu.linkedUserName }}</span>
@@ -88,6 +88,12 @@ export default {
 </script>
 
 <style scoped>
+.mono-cell {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #444;
+}
+
 .charging-users-page {
   max-width: 900px;
   margin: 0 auto;

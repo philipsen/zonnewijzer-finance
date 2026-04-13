@@ -98,15 +98,28 @@ namespace Backend.Controllers
                     .Take(pageSize)
                     .ToListAsync();
 
+                var chargingUserId = currentUser.ChargingUserId.Value;
+                var profile = await _context.ChargingUserProfiles.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == chargingUserId);
+                var linkedUser = await _context.Users.AsNoTracking()
+                    .FirstOrDefaultAsync(u => u.ChargingUserId == chargingUserId);
+                var chargingUserDisplayName =
+                    !string.IsNullOrWhiteSpace(profile?.DisplayName) ? profile!.DisplayName!.Trim()
+                    : (!string.IsNullOrWhiteSpace(linkedUser?.Name) ? linkedUser!.Name : null);
+
                 var sessionData = sessions.Select(s => new
                 {
                     id = s.Id,
                     start = s.Start,
                     end = s.End,
                     userId = s.UserId,
+                    chargingUserDisplayName,
                     stationId = s.StationId,
+                    stationSerialNumber = s.StationSerialNumber,
+                    connector = s.Connector,
+                    chargingStationName = s.ChargingStationName,
                     chargedKwh = s.ChargedKwh,
-                    duration = (int)(s.End - s.Start).TotalMinutes,
+                    duration = s.End.HasValue ? (int?)(int)(s.End.Value - s.Start).TotalMinutes : null,
                     createdAt = s.CreatedAt
                 }).ToList();
 

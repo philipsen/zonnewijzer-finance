@@ -16,4 +16,12 @@ namespace Backend.Models
         public int UsersPreserved { get; set; }
         public WipeDatabaseDeletedCounts Deleted { get; set; } = new();
     }
+
+    public class ClearChargingDataResult
+    {
+        public string Message { get; set; } = string.Empty;
+        public int ChargingSessionsRemoved { get; set; }
+        public int ChargingUserProfilesRemoved { get; set; }
+        public int AppUsersUnlinked { get; set; }
+    }
 }

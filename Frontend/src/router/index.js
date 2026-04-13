@@ -13,6 +13,7 @@ import PaymentsList from '../components/PaymentsList.vue'
 import PaymentReturn from '../components/PaymentReturn.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
+import ChargingStationsPage from '../components/ChargingStationsPage.vue'
 
 const routes = [
   {
@@ -39,6 +40,22 @@ const routes = [
     path: '/charging-sessions',
     name: 'ChargingSessionsList',
     component: ChargingSessionsList
+  },
+  {
+    path: '/charging-stations',
+    name: 'ChargingStations',
+    component: ChargingStationsPage,
+    beforeEnter: () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return '/'
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+        if (role !== 'Admin') return '/'
+      } catch {
+        return '/'
+      }
+    }
   },
   {
     path: '/my-sessions',

@@ -32,11 +32,13 @@ namespace Backend.Data
             {
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Start).IsRequired();
-                entity.Property(e => e.End).IsRequired();
                 entity.Property(e => e.UserId).IsRequired();
                 entity.Property(e => e.StationId).IsRequired();
                 entity.Property(e => e.ChargedKwh).HasPrecision(8, 2).IsRequired();
-                
+                entity.Property(e => e.StationSerialNumber).HasMaxLength(64);
+                entity.Property(e => e.Connector).HasMaxLength(32);
+                entity.Property(e => e.ChargingStationName).HasMaxLength(255);
+
                 // Create unique index to prevent duplicates
                 entity.HasIndex(e => new { e.Start, e.UserId, e.StationId }).IsUnique();
             });
@@ -76,6 +78,7 @@ namespace Backend.Data
             {
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedNever();
+                entity.Property(e => e.RfidTokenKey).HasMaxLength(64);
                 entity.Property(e => e.DisplayName).HasMaxLength(255);
             });
 

@@ -20,7 +20,7 @@
     </div>
 
     <div v-else class="dashboard">
-      <div v-if="appUser?.role === 'Admin'" class="admin-tools">
+      <div v-if="appUser?.role === 'Admin' && !previewMode" class="admin-tools">
         <p class="admin-tools-label">Administration</p>
         <button type="button" class="btn-wipe" @click="openWipeModal">
           Wipe all data…
@@ -45,25 +45,20 @@
 
     <Teleport to="body">
       <div v-if="wipeModalOpen" class="modal-backdrop" @click.self="closeWipeModal">
-        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="wipe-modal-title">
+        <div
+          class="modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="wipe-modal-title"
+          tabindex="-1"
+          @keydown.esc="closeWipeModal"
+        >
           <h2 id="wipe-modal-title" class="modal-title">Wipe operational data?</h2>
           <p class="modal-warning">
             This permanently deletes charging sessions, invoices, Mollie payments, energy prices, charging user profiles,
             and event logs. <strong>User accounts are kept</strong> (login remains possible); links from users to charging profiles are cleared.
             This cannot be undone.
           </p>
-          <p class="modal-instructions">
-            Type the following phrase exactly (case-sensitive) to confirm:
-          </p>
-          <code class="modal-phrase">{{ wipeConfirmationPhrase }}</code>
-          <input
-            v-model="wipeConfirmInput"
-            type="text"
-            class="modal-input"
-            autocomplete="off"
-            placeholder="Confirmation phrase"
-            @keydown.esc="closeWipeModal"
-          >
           <p v-if="wipeError" class="modal-error">{{ wipeError }}</p>
           <div class="modal-actions">
             <button type="button" class="btn-cancel" :disabled="wipeLoading" @click="closeWipeModal">
@@ -72,7 +67,7 @@
             <button
               type="button"
               class="btn-confirm-wipe"
-              :disabled="wipeLoading || wipeConfirmInput !== wipeConfirmationPhrase"
+              :disabled="wipeLoading"
               @click="executeWipe"
             >
               {{ wipeLoading ? 'Wiping…' : 'Wipe database' }}
@@ -87,9 +82,6 @@
 <script>
 import { computed, ref, onMounted, inject } from 'vue'
 import axios from 'axios'
-
-/** Must match Backend AuthController.WipeDatabaseConfirmationPhrase. */
-const WIPE_CONFIRMATION_PHRASE = 'DELETE ALL FINANCE DATA'
 
 export default {
   name: 'Home',
@@ -110,33 +102,28 @@ export default {
     const authError = ref('')
 
     const wipeModalOpen = ref(false)
-    const wipeConfirmInput = ref('')
     const wipeLoading = ref(false)
     const wipeError = ref('')
-    const wipeConfirmationPhrase = WIPE_CONFIRMATION_PHRASE
 
     const openWipeModal = () => {
       wipeError.value = ''
-      wipeConfirmInput.value = ''
       wipeModalOpen.value = true
     }
 
     const closeWipeModal = () => {
       if (wipeLoading.value) return
       wipeModalOpen.value = false
-      wipeConfirmInput.value = ''
       wipeError.value = ''
     }
 
     const executeWipe = async () => {
-      if (wipeConfirmInput.value !== WIPE_CONFIRMATION_PHRASE) return
       wipeError.value = ''
       wipeLoading.value = true
       try {
         const token = localStorage.getItem('token')
         await axios.post(
           '/api/auth/admin/wipe-database',
-          { confirmation: WIPE_CONFIRMATION_PHRASE },
+          { confirm: true },
           { headers: { Authorization: `Bearer ${token}` } }
         )
         wipeLoading.value = false
@@ -201,10 +188,8 @@ export default {
       signinButtonEl,
       authError,
       wipeModalOpen,
-      wipeConfirmInput,
       wipeLoading,
       wipeError,
-      wipeConfirmationPhrase,
       openWipeModal,
       closeWipeModal,
       executeWipe
@@ -407,37 +392,6 @@ export default {
   color: #333;
   line-height: 1.5;
   font-size: 0.95rem;
-}
-
-.modal-instructions {
-  margin: 0 0 0.35rem 0;
-  font-size: 0.9rem;
-  color: #555;
-}
-
-.modal-phrase {
-  display: block;
-  background: #f8f9fa;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  margin-bottom: 0.75rem;
-  word-break: break-all;
-}
-
-.modal-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid #ced4da;
-  border-radius: 6px;
-  font-size: 1rem;
-}
-
-.modal-input:focus {
-  outline: none;
-  border-color: #842029;
-  box-shadow: 0 0 0 2px rgba(132, 32, 41, 0.15);
 }
 
 .modal-error {
