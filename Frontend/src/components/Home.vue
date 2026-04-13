@@ -4,6 +4,9 @@
     <div v-if="!isAuthenticated" class="auth-prompt">
       <p>Please sign in to access your financial data.</p>
       <div ref="signinButtonEl" class="signin-btn-wrapper"></div>
+      <p v-if="lastGoogleRenderError" class="gsi-render-error" role="alert">
+        Google button error: {{ lastGoogleRenderError }}
+      </p>
       <div class="divider"><span>or</span></div>
       <a href="/api/auth/github" class="github-btn">
         <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -20,6 +23,12 @@
     </div>
 
     <div v-else class="dashboard">
+      <div v-if="appUser?.role === 'Admin' && !previewMode" class="admin-tools">
+        <p class="admin-tools-label">Administration</p>
+        <button type="button" class="btn-wipe" @click="openWipeModal">
+          Wipe all data…
+        </button>
+      </div>
       <p>Dashboard content will go here.</p>
       <div class="features">
         <div class="feature-card">
@@ -36,11 +45,45 @@
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="wipeModalOpen" class="modal-backdrop" @click.self="closeWipeModal">
+        <div
+          class="modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="wipe-modal-title"
+          tabindex="-1"
+          @keydown.esc="closeWipeModal"
+        >
+          <h2 id="wipe-modal-title" class="modal-title">Wipe operational data?</h2>
+          <p class="modal-warning">
+            This permanently deletes charging sessions, invoices, Mollie payments, energy prices, charging user profiles,
+            and event logs. <strong>User accounts are kept</strong> (login remains possible); links from users to charging profiles are cleared.
+            This cannot be undone.
+          </p>
+          <p v-if="wipeError" class="modal-error">{{ wipeError }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" :disabled="wipeLoading" @click="closeWipeModal">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn-confirm-wipe"
+              :disabled="wipeLoading"
+              @click="executeWipe"
+            >
+              {{ wipeLoading ? 'Wiping…' : 'Wipe database' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script>
-import { computed, ref, onMounted, inject } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, inject, nextTick, watch } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -59,7 +102,85 @@ export default {
 
     const signinButtonEl = ref(null)
     const renderSigninButton = inject('renderSigninButton', null)
+    const lastGoogleRenderError = inject('lastGoogleRenderError', ref(''))
     const authError = ref('')
+
+    const wipeModalOpen = ref(false)
+    const wipeLoading = ref(false)
+    const wipeError = ref('')
+
+    const openWipeModal = () => {
+      wipeError.value = ''
+      wipeModalOpen.value = true
+    }
+
+    const closeWipeModal = () => {
+      if (wipeLoading.value) return
+      wipeModalOpen.value = false
+      wipeError.value = ''
+    }
+
+    const executeWipe = async () => {
+      wipeError.value = ''
+      wipeLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        await axios.post(
+          '/api/auth/admin/wipe-database',
+          { confirm: true },
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        wipeLoading.value = false
+        closeWipeModal()
+        window.location.reload()
+      } catch (err) {
+        console.error('Wipe failed:', err)
+        if (err.response?.status === 403) {
+          wipeError.value = 'Only administrators can wipe the database.'
+        } else if (err.response?.data?.message) {
+          wipeError.value = err.response.data.message
+        } else {
+          wipeError.value = 'Wipe failed. Please try again or check the server logs.'
+        }
+      } finally {
+        wipeLoading.value = false
+      }
+    }
+
+    const googleButtonPresent = () => {
+      const el = signinButtonEl.value
+      return !!el && (el.childElementCount > 0 || (el.textContent || '').trim().length > 2)
+    }
+
+    const tryRenderGoogle = () => {
+      nextTick(() => {
+        if (isAuthenticated.value || !renderSigninButton || !signinButtonEl.value) return
+        if (!window.google?.accounts?.id) return
+        renderSigninButton(signinButtonEl.value)
+      })
+    }
+
+    let googlePollTimer = null
+
+    const startGoogleReadyPoll = () => {
+      if (googlePollTimer) return
+      let attempts = 0
+      const maxAttempts = 80
+      googlePollTimer = setInterval(() => {
+        attempts++
+        if (isAuthenticated.value || attempts > maxAttempts) {
+          clearInterval(googlePollTimer)
+          googlePollTimer = null
+          return
+        }
+        if (googleButtonPresent()) {
+          clearInterval(googlePollTimer)
+          googlePollTimer = null
+          return
+        }
+        tryRenderGoogle()
+      }, 200)
+    }
 
     onMounted(async () => {
       // Handle GitHub OAuth callback token
@@ -76,11 +197,11 @@ export default {
           localStorage.setItem('token', githubToken)
           window.history.replaceState({}, '', '/')
           window.location.reload()
+          return
         } catch {
           authError.value = 'GitHub sign-in failed. Please try again.'
           window.history.replaceState({}, '', '/')
         }
-        return
       }
 
       if (errorParam) {
@@ -93,10 +214,30 @@ export default {
         window.history.replaceState({}, '', '/')
       }
 
-      if (!isAuthenticated.value && renderSigninButton && signinButtonEl.value) {
-        renderSigninButton(signinButtonEl.value)
+      tryRenderGoogle()
+      window.addEventListener('google-gsi-ready', tryRenderGoogle)
+
+      if (window.__googleGsiReady || window.google?.accounts?.id) {
+        queueMicrotask(() => tryRenderGoogle())
+      }
+
+      requestAnimationFrame(() => tryRenderGoogle())
+      startGoogleReadyPoll()
+    })
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('google-gsi-ready', tryRenderGoogle)
+      if (googlePollTimer) {
+        clearInterval(googlePollTimer)
+        googlePollTimer = null
       }
     })
+
+    watch(
+      () => [isAuthenticated.value, signinButtonEl.value],
+      () => tryRenderGoogle(),
+      { flush: 'post', immediate: true }
+    )
 
     return {
       isAuthenticated,
@@ -104,7 +245,14 @@ export default {
       appUser,
       previewMode,
       signinButtonEl,
-      authError
+      authError,
+      lastGoogleRenderError,
+      wipeModalOpen,
+      wipeLoading,
+      wipeError,
+      openWipeModal,
+      closeWipeModal,
+      executeWipe
     }
   }
 }
@@ -127,7 +275,23 @@ export default {
 .signin-btn-wrapper {
   display: flex;
   justify-content: center;
+  align-items: center;
   margin-top: 1.5rem;
+  min-height: 48px;
+  min-width: 200px;
+  width: 100%;
+  max-width: 320px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.gsi-render-error {
+  margin-top: 0.75rem;
+  color: #b00020;
+  font-size: 0.9rem;
+  max-width: 36rem;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .divider {
@@ -237,5 +401,119 @@ export default {
 .card-link:hover {
   text-decoration: none;
   color: inherit;
+}
+
+.admin-tools {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: #fff5f5;
+  border: 1px solid #f5c2c7;
+  border-radius: 8px;
+}
+
+.admin-tools-label {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #842029;
+}
+
+.btn-wipe {
+  background: #fff;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-wipe:hover {
+  background: #f8d7da;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 1rem;
+}
+
+.modal-panel {
+  background: #fff;
+  max-width: 32rem;
+  width: 100%;
+  border-radius: 10px;
+  padding: 1.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  margin: 0 0 0.75rem 0;
+  color: #842029;
+  font-size: 1.25rem;
+}
+
+.modal-warning {
+  margin: 0 0 1rem 0;
+  color: #333;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.modal-error {
+  color: #842029;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.btn-cancel {
+  background: #e9ecef;
+  color: #333;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-confirm-wipe {
+  background: #842029;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-confirm-wipe:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-confirm-wipe:not(:disabled):hover {
+  background: #6a1a22;
 }
 </style>
