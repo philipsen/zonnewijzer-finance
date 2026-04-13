@@ -6,6 +6,9 @@
         <button v-if="isAdmin" @click="openAddModal" class="btn btn-success">
           + Add Session
         </button>
+        <router-link to="/charging-stations" class="btn btn-secondary">
+          Stations
+        </router-link>
         <router-link to="/upload-sessions" class="btn btn-primary">
           Upload CSV
         </router-link>
@@ -65,8 +68,9 @@
               <th>Start Time</th>
               <th>End Time</th>
               <th>Duration</th>
-              <th>User</th>
+              <th>Charging user</th>
               <th>Station</th>
+              <th>Serial</th>
               <th>Energy (kWh)</th>
               <th v-if="isAdmin">Actions</th>
             </tr>
@@ -74,14 +78,24 @@
           <tbody>
             <tr v-for="session in sessions" :key="session.id" class="session-row">
               <td>{{ formatDateTime(session.start) }}</td>
-              <td>{{ formatDateTime(session.end) }}</td>
-              <td>{{ formatDuration(session.duration) }}</td>
               <td>
-                <span class="user-badge">User {{ session.userId }}</span>
+                <span v-if="session.end" class="mono-cell">{{ formatDateTime(session.end) }}</span>
+                <span v-else class="ongoing-label">Ongoing</span>
               </td>
               <td>
-                <span class="station-badge">Station {{ session.stationId }}</span>
+                <span v-if="session.duration != null">{{ formatDuration(session.duration) }}</span>
+                <span v-else class="ongoing-label">Ongoing</span>
               </td>
+              <td>
+                <span class="user-badge">
+                  <template v-if="session.chargingUserDisplayName">{{ session.chargingUserDisplayName }}</template>
+                  <template v-else>User {{ session.userId }}</template>
+                </span>
+              </td>
+              <td class="station-cell">
+                <span class="station-name">{{ formatStationNameAndConnector(session) }}</span>
+              </td>
+              <td class="mono-cell">{{ session.stationSerialNumber || '—' }}</td>
               <td class="energy-cell">{{ session.chargedKwh }} kWh</td>
               <td v-if="isAdmin" class="actions-cell">
                 <button class="btn-icon btn-edit" @click="openEditModal(session)" title="Edit">✏️</button>
@@ -138,16 +152,29 @@
           <input type="datetime-local" v-model="editSession.start" required class="form-input" />
         </div>
         <div class="form-group">
-          <label>End Time</label>
-          <input type="datetime-local" v-model="editSession.end" required class="form-input" />
+          <label>End Time <span class="optional-label">(optional — empty = ongoing)</span></label>
+          <input type="datetime-local" v-model="editSession.end" class="form-input" />
         </div>
         <div class="form-group">
           <label>User ID</label>
           <input type="number" v-model.number="editSession.userId" required min="1" class="form-input" />
         </div>
         <div class="form-group">
-          <label>Station ID</label>
-          <input type="number" v-model.number="editSession.stationId" required min="1" class="form-input" />
+          <label>Charging station name <span class="optional-label">(optional)</span></label>
+          <input type="text" v-model="editSession.chargingStationName" class="form-input" placeholder="e.g. Paal 2" />
+        </div>
+        <div class="form-group">
+          <label>Station serial number</label>
+          <input type="text" v-model="editSession.stationSerialNumber" class="form-input" placeholder="From CSV export" />
+        </div>
+        <div class="form-group">
+          <label>Connector</label>
+          <input type="text" v-model="editSession.connector" class="form-input" placeholder="e.g. 1" />
+        </div>
+        <div class="form-group">
+          <label>Station ID (legacy)</label>
+          <input type="number" v-model.number="editSession.stationId" min="1" class="form-input" placeholder="If not using serial + connector" />
+          <p class="field-hint">When serial and connector are both filled, the charging point id is derived from them and this field is ignored.</p>
         </div>
         <div class="form-group">
           <label>Charged (kWh)</label>
@@ -173,7 +200,13 @@
       </div>
       <div class="modal-body">
         <p>Are you sure you want to delete this session?</p>
-        <p class="delete-detail">User {{ sessionToDelete?.userId }} · Station {{ sessionToDelete?.stationId }} · {{ sessionToDelete?.chargedKwh }} kWh</p>
+        <p class="delete-detail">
+          User {{ sessionToDelete?.userId }} ·
+          {{ sessionToDelete?.chargingStationName || '—' }} ·
+          S/N {{ sessionToDelete?.stationSerialNumber || '?' }} ·
+          conn {{ sessionToDelete?.connector != null && sessionToDelete?.connector !== '' ? sessionToDelete.connector : '?' }} ·
+          {{ sessionToDelete?.chargedKwh }} kWh
+        </p>
         <div v-if="deleteError" class="add-error">{{ deleteError }}</div>
         <div class="modal-actions">
           <button class="btn btn-secondary" @click="closeDeleteConfirm">Cancel</button>
@@ -195,19 +228,32 @@
       <form @submit.prevent="submitAddSession" class="modal-body">
         <div class="form-group">
           <label>Start Time</label>
-          <input type="datetime-local" v-model="newSession.start" required class="form-input" @change="onStartChange" />
+          <input type="datetime-local" v-model="newSession.start" required class="form-input" />
         </div>
         <div class="form-group">
-          <label>End Time</label>
-          <input type="datetime-local" v-model="newSession.end" required class="form-input" />
+          <label>End Time <span class="optional-label">(optional — empty = ongoing)</span></label>
+          <input type="datetime-local" v-model="newSession.end" class="form-input" />
         </div>
         <div class="form-group">
           <label>User ID</label>
           <input type="number" v-model.number="newSession.userId" required min="1" class="form-input" />
         </div>
         <div class="form-group">
-          <label>Station ID</label>
-          <input type="number" v-model.number="newSession.stationId" required min="1" class="form-input" />
+          <label>Charging station name <span class="optional-label">(optional)</span></label>
+          <input type="text" v-model="newSession.chargingStationName" class="form-input" placeholder="e.g. Paal 2" />
+        </div>
+        <div class="form-group">
+          <label>Station serial number</label>
+          <input type="text" v-model="newSession.stationSerialNumber" class="form-input" placeholder="From CSV export" />
+        </div>
+        <div class="form-group">
+          <label>Connector</label>
+          <input type="text" v-model="newSession.connector" class="form-input" placeholder="e.g. 1" />
+        </div>
+        <div class="form-group">
+          <label>Station ID (legacy)</label>
+          <input type="number" v-model.number="newSession.stationId" min="1" class="form-input" placeholder="If not using serial + connector" />
+          <p class="field-hint">When serial and connector are both filled, the charging point id is derived from them and this field is ignored.</p>
         </div>
         <div class="form-group">
           <label>Charged (kWh)</label>
@@ -248,12 +294,31 @@ export default {
     const showAddModal = ref(false)
     const addLoading = ref(false)
     const addError = ref('')
-    const newSession = ref({ start: '', end: '', userId: '', stationId: '', chargedKwh: '' })
+    const newSession = ref({
+      start: '',
+      end: '',
+      userId: '',
+      chargingStationName: '',
+      stationSerialNumber: '',
+      connector: '',
+      stationId: '',
+      chargedKwh: ''
+    })
 
     const showEditModal = ref(false)
     const editLoading = ref(false)
     const editError = ref('')
-    const editSession = ref({ id: null, start: '', end: '', userId: '', stationId: '', chargedKwh: '' })
+    const editSession = ref({
+      id: null,
+      start: '',
+      end: '',
+      userId: '',
+      chargingStationName: '',
+      stationSerialNumber: '',
+      connector: '',
+      stationId: '',
+      chargedKwh: ''
+    })
 
     const showDeleteConfirm = ref(false)
     const deleteLoading = ref(false)
@@ -270,13 +335,35 @@ export default {
       editSession.value = {
         id: session.id,
         start: toLocalDatetimeInput(session.start),
-        end: toLocalDatetimeInput(session.end),
+        end: session.end ? toLocalDatetimeInput(session.end) : '',
         userId: session.userId,
+        chargingStationName: session.chargingStationName ?? '',
+        stationSerialNumber: session.stationSerialNumber ?? '',
+        connector: session.connector ?? '',
         stationId: session.stationId,
         chargedKwh: session.chargedKwh
       }
       editError.value = ''
       showEditModal.value = true
+    }
+
+    const buildStationPayload = (sn, cn, name, legacyId) => {
+      const serial = (sn || '').trim()
+      const conn = (cn || '').trim()
+      const stationName = (name || '').trim()
+      const payload = {}
+      if (stationName) payload.chargingStationName = stationName
+      if (serial && conn) {
+        payload.stationSerialNumber = serial
+        payload.connector = conn
+        payload.stationId = 0
+      } else {
+        const id = typeof legacyId === 'number' ? legacyId : parseInt(legacyId, 10)
+        payload.stationId = Number.isFinite(id) && id >= 1 ? id : 0
+        if (serial) payload.stationSerialNumber = serial
+        if (conn) payload.connector = conn
+      }
+      return payload
     }
 
     const closeEditModal = () => { showEditModal.value = false }
@@ -285,13 +372,26 @@ export default {
       try {
         editLoading.value = true
         editError.value = ''
+        const serial = (editSession.value.stationSerialNumber || '').trim()
+        const conn = (editSession.value.connector || '').trim()
+        const legacyId = editSession.value.stationId
+        if (!(serial && conn) && !(Number(legacyId) >= 1)) {
+          editError.value = 'Fill station serial + connector together, or enter a station id (≥1) for legacy rows.'
+          return
+        }
         const token = localStorage.getItem('token')
+        const stationPayload = buildStationPayload(
+          editSession.value.stationSerialNumber,
+          editSession.value.connector,
+          editSession.value.chargingStationName,
+          editSession.value.stationId
+        )
         await axios.put(`/api/chargingsessions/${editSession.value.id}`, {
           start: new Date(editSession.value.start).toISOString(),
-          end: new Date(editSession.value.end).toISOString(),
+          end: editSession.value.end ? new Date(editSession.value.end).toISOString() : null,
           userId: editSession.value.userId,
-          stationId: editSession.value.stationId,
-          chargedKwh: editSession.value.chargedKwh
+          chargedKwh: editSession.value.chargedKwh,
+          ...stationPayload
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
@@ -343,7 +443,16 @@ export default {
     }
 
     const openAddModal = () => {
-      newSession.value = { start: '', end: '', userId: '', stationId: '', chargedKwh: '' }
+      newSession.value = {
+        start: '',
+        end: '',
+        userId: '',
+        chargingStationName: '',
+        stationSerialNumber: '',
+        connector: '',
+        stationId: '',
+        chargedKwh: ''
+      }
       addError.value = ''
       showAddModal.value = true
     }
@@ -352,21 +461,30 @@ export default {
       showAddModal.value = false
     }
 
-    const onStartChange = () => {
-      if (!newSession.value.end) newSession.value.end = newSession.value.start
-    }
-
     const submitAddSession = async () => {
       try {
         addLoading.value = true
         addError.value = ''
+        const serial = (newSession.value.stationSerialNumber || '').trim()
+        const conn = (newSession.value.connector || '').trim()
+        const legacyId = newSession.value.stationId
+        if (!(serial && conn) && !(Number(legacyId) >= 1)) {
+          addError.value = 'Fill station serial + connector together, or enter a station id (≥1) for legacy rows.'
+          return
+        }
         const token = localStorage.getItem('token')
+        const stationPayload = buildStationPayload(
+          newSession.value.stationSerialNumber,
+          newSession.value.connector,
+          newSession.value.chargingStationName,
+          newSession.value.stationId
+        )
         await axios.post('/api/chargingsessions', {
           start: new Date(newSession.value.start).toISOString(),
-          end: new Date(newSession.value.end).toISOString(),
+          end: newSession.value.end ? new Date(newSession.value.end).toISOString() : null,
           userId: newSession.value.userId,
-          stationId: newSession.value.stationId,
-          chargedKwh: newSession.value.chargedKwh
+          chargedKwh: newSession.value.chargedKwh,
+          ...stationPayload
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
@@ -412,9 +530,10 @@ export default {
     })
 
     const averageSessionDuration = computed(() => {
-      if (sessions.value.length === 0) return '0m'
-      const totalMinutes = sessions.value.reduce((total, session) => total + session.duration, 0)
-      const avgMinutes = Math.round(totalMinutes / sessions.value.length)
+      const completed = sessions.value.filter((s) => s.duration != null)
+      if (completed.length === 0) return sessions.value.length > 0 ? '—' : '0m'
+      const totalMinutes = completed.reduce((total, session) => total + session.duration, 0)
+      const avgMinutes = Math.round(totalMinutes / completed.length)
       return formatDuration(avgMinutes)
     })
 
@@ -488,6 +607,7 @@ export default {
     }
 
     const formatDateTime = (dateString) => {
+      if (dateString == null || dateString === '') return ''
       return new Date(dateString).toLocaleString('en-US', {
         year: 'numeric',
         month: 'short',
@@ -498,12 +618,25 @@ export default {
     }
 
     const formatDuration = (minutes) => {
+      if (minutes == null) return ''
       if (minutes < 60) {
         return `${minutes}m`
       }
       const hours = Math.floor(minutes / 60)
       const remainingMinutes = minutes % 60
       return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+    }
+
+    const formatStationNameAndConnector = (session) => {
+      const name = (session.chargingStationName || '').trim()
+      const conn =
+        session.connector != null && String(session.connector).trim() !== ''
+          ? String(session.connector).trim()
+          : ''
+      if (!name && !conn) return '—'
+      if (!name) return `—, ${conn}`
+      if (!conn) return `${name}, —`
+      return `${name}, ${conn}`
     }
 
     onMounted(() => {
@@ -531,7 +664,6 @@ export default {
       openAddModal,
       closeAddModal,
       submitAddSession,
-      onStartChange,
       showEditModal,
       editLoading,
       editError,
@@ -551,7 +683,8 @@ export default {
       clearFilter,
       getFilterLabel,
       formatDateTime,
-      formatDuration
+      formatDuration,
+      formatStationNameAndConnector
     }
   }
 }
@@ -739,22 +872,31 @@ export default {
   border-bottom: 1px solid #e9ecef;
 }
 
-.user-badge, .station-badge {
+.user-badge {
   display: inline-block;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
   font-size: 0.85rem;
   font-weight: 600;
-}
-
-.user-badge {
   background-color: #e3f2fd;
   color: #1565c0;
 }
 
-.station-badge {
-  background-color: #f3e5f5;
-  color: #7b1fa2;
+.station-cell .station-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.mono-cell {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.ongoing-label {
+  font-weight: 600;
+  color: #1565c0;
+  font-size: 0.9rem;
 }
 
 .energy-cell {
@@ -937,6 +1079,19 @@ export default {
   margin-bottom: 0.4rem;
   font-size: 0.9rem;
   color: #333;
+}
+
+.optional-label {
+  font-weight: 400;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.field-hint {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.8rem;
+  color: #666;
+  line-height: 1.35;
 }
 
 .form-input {

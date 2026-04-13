@@ -8,8 +8,20 @@
       <div class="page-header">
         <h1>Upload Charging Sessions</h1>
         <p class="page-description">
-          Upload CSV files containing charging session data. Duplicate sessions will be automatically skipped.
+          Upload a charging station <strong>CSV export</strong> with columns
+          <strong>Station serial number</strong>, <strong>Charging station name</strong>, <strong>From</strong>, <strong>To</strong>,
+          <strong>Duration [h:mm]</strong>, <strong>kWh</strong> (comma decimals, e.g. <code>0,388</code>), <strong>Connector</strong>, <strong>Token</strong>.
+          A <strong>charging point</strong> is identified by <strong>station serial + connector</strong>; the station name is stored and shown in session lists and invoices.
+          The RFID segment before <code> (</code> in the token column (typically hex) is stored as the profile <strong>RFID key</strong> and mapped to a numeric <strong>charging user id</strong> (hex value modulo 2<sup>31</sup>−1; non-hex tokens use a hash fallback).
+          Text between <code> (</code> and <code>)</code> becomes the charging user <strong>display name</strong> when the profile is first created on import.
+          For a clean import you can <strong>clear charging data only</strong> (sessions + charging user profiles + app links) with the button below, or use <strong>Wipe all data</strong> on Home for a broader reset.
+          Rows that repeat the same <strong>start time</strong>, <strong>charging user</strong>, and <strong>charging point</strong> (station serial + connector) as an earlier row in the file are skipped. Sample: <code>Backend/Assets/sample-charging-export.csv</code> (20 sessions, 3 tokens).
         </p>
+        <div class="page-toolbar">
+          <button type="button" class="btn btn-clear-charging" @click="openClearModal">
+            Clear charging sessions &amp; profiles…
+          </button>
+        </div>
       </div>
 
     <div class="upload-container">
@@ -65,9 +77,13 @@
             <span class="stat-number">{{ uploadResult.data.added }}</span>
             <span class="stat-label">Sessions Added</span>
           </div>
+          <div class="stat" v-if="(uploadResult.data.updated ?? 0) > 0">
+            <span class="stat-number">{{ uploadResult.data.updated }}</span>
+            <span class="stat-label">Existing Sessions Updated</span>
+          </div>
           <div class="stat">
             <span class="stat-number">{{ uploadResult.data.skipped }}</span>
-            <span class="stat-label">Duplicates Skipped</span>
+            <span class="stat-label">Duplicate start / user / station in file</span>
           </div>
           <div class="stat" v-if="uploadResult.data.errors > 0">
             <span class="stat-number">{{ uploadResult.data.errors }}</span>
@@ -83,19 +99,58 @@
     </div>
 
     <div class="csv-format-info">
-      <h3>CSV Format Requirements</h3>
+      <h3>CSV format (portal export)</h3>
+      <p class="format-intro">
+        The server only accepts a <strong>charging station portal export</strong>: the first non-empty line of the file must contain the text
+        <code>Station serial number</code> (see repo file <code>Backend/Assets/sample-charging-export.csv</code>). Column headers are matched by name (spaces matter).
+      </p>
       <div class="format-example">
-        <pre>start,end,userid,stationid,charged_kwh
-2024-01-15T08:15:00,2024-01-15T10:30:00,1,3,45.2
-2024-01-15T09:45:00,2024-01-15T11:20:00,3,1,32.8</pre>
+        <pre>Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token
+6531001272,Paal 2,2026-04-01 07:12:00,2026-04-01 07:28:14,00:16,"2,150",1,047D9322B62290 (Cock van Bruggen)</pre>
       </div>
       <ul class="format-rules">
-        <li><strong>start/end:</strong> ISO datetime format (YYYY-MM-DDTHH:MM:SS)</li>
-        <li><strong>userid:</strong> Integer (1-5)</li>
-        <li><strong>stationid:</strong> Integer (1-5)</li>
-        <li><strong>charged_kwh:</strong> Decimal number for energy delivered</li>
+        <li><strong>Used for import:</strong> <em>Station serial number</em>, <em>Charging station name</em>, <em>Connector</em>, <em>From</em>, <em>To</em>, <em>kWh</em>, <em>Token</em>. <em>Duration</em> is not stored. The internal charging-point id is derived from <strong>serial + connector</strong> (same pair → same point).</li>
+        <li><strong>From / To:</strong> date-time strings the server can parse (export uses <code>yyyy-MM-dd HH:mm:ss</code>).</li>
+        <li><strong>kWh:</strong> comma decimal (Dutch, e.g. <code>"2,150"</code>) or dot decimal; quotes optional.</li>
+        <li><strong>Token:</strong> required; text before <code> (</code> is the RFID key (hex → charging user id; see upload description). Text inside <code>( … )</code> is saved as the charging user display name for new profiles.</li>
+        <li><strong>De-duplication:</strong> within one file, same <em>From</em> + same derived user + same charging point (serial + connector) as a previous row → skipped (counted as duplicate).</li>
+        <li><strong>Re-import:</strong> if the database already has a session with the same <em>From</em>, user, and charging point, that row is <strong>updated</strong> with the new CSV values (kWh, end time, station name, etc.).</li>
       </ul>
     </div>
+
+    <Teleport to="body">
+      <div v-if="clearModalOpen" class="modal-backdrop" @click.self="closeClearModal">
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="clear-modal-title">
+          <h2 id="clear-modal-title" class="modal-title">Clear charging data?</h2>
+          <p class="modal-warning">
+            This removes <strong>all</strong> charging sessions and charging user profiles, and unlinks every app user from a charging account.
+            Invoices and payments in the database are <strong>not</strong> deleted.
+          </p>
+          <p class="modal-instructions">Type exactly (case-sensitive):</p>
+          <code class="modal-phrase">{{ clearConfirmationPhrase }}</code>
+          <input
+            v-model="clearConfirmInput"
+            type="text"
+            class="modal-input"
+            autocomplete="off"
+            placeholder="Confirmation phrase"
+            @keydown.esc="closeClearModal"
+          >
+          <p v-if="clearError" class="modal-error">{{ clearError }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" :disabled="clearLoading" @click="closeClearModal">Cancel</button>
+            <button
+              type="button"
+              class="btn-confirm-clear"
+              :disabled="clearLoading || clearConfirmInput !== clearConfirmationPhrase"
+              @click="executeClearCharging"
+            >
+              {{ clearLoading ? 'Clearing…' : 'Clear charging data' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
     </template>
   </div>
 </template>
@@ -103,6 +158,9 @@
 <script>
 import { ref } from 'vue'
 import axios from 'axios'
+
+/** Must match Backend AuthController.ClearChargingDataConfirmationPhrase */
+const CLEAR_CHARGING_CONFIRMATION_PHRASE = 'CLEAR CHARGING DATA'
 
 export default {
   name: 'UploadChargingSessions',
@@ -123,6 +181,53 @@ export default {
         isAdmin.value = role === 'Admin'
       } catch {
         isAdmin.value = false
+      }
+    }
+
+    const clearModalOpen = ref(false)
+    const clearConfirmInput = ref('')
+    const clearLoading = ref(false)
+    const clearError = ref('')
+    const clearConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
+
+    const openClearModal = () => {
+      clearError.value = ''
+      clearConfirmInput.value = ''
+      clearModalOpen.value = true
+    }
+
+    const closeClearModal = () => {
+      if (clearLoading.value) return
+      clearModalOpen.value = false
+      clearConfirmInput.value = ''
+      clearError.value = ''
+    }
+
+    const executeClearCharging = async () => {
+      if (clearConfirmInput.value !== CLEAR_CHARGING_CONFIRMATION_PHRASE) return
+      clearError.value = ''
+      clearLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        await axios.post(
+          '/api/auth/admin/clear-charging-data',
+          { confirmation: CLEAR_CHARGING_CONFIRMATION_PHRASE },
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        clearLoading.value = false
+        closeClearModal()
+        window.location.reload()
+      } catch (err) {
+        console.error('Clear charging data failed:', err)
+        if (err.response?.status === 403) {
+          clearError.value = 'Only administrators can clear charging data.'
+        } else if (err.response?.data?.message) {
+          clearError.value = err.response.data.message
+        } else {
+          clearError.value = 'Request failed. Please try again.'
+        }
+      } finally {
+        clearLoading.value = false
       }
     }
 
@@ -220,7 +325,15 @@ export default {
       handleDragLeave,
       handleDrop,
       clearFile,
-      uploadFile
+      uploadFile,
+      clearModalOpen,
+      clearConfirmInput,
+      clearLoading,
+      clearError,
+      clearConfirmationPhrase,
+      openClearModal,
+      closeClearModal,
+      executeClearCharging
     }
   }
 }
@@ -260,6 +373,136 @@ export default {
   color: #666;
   font-size: 1.1rem;
   margin: 0;
+}
+
+.page-toolbar {
+  margin-top: 1.25rem;
+}
+
+.btn-clear-charging {
+  background: #fff;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-clear-charging:hover {
+  background: #f8d7da;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 1rem;
+}
+
+.modal-panel {
+  background: #fff;
+  max-width: 32rem;
+  width: 100%;
+  border-radius: 10px;
+  padding: 1.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  margin: 0 0 0.75rem 0;
+  color: #842029;
+  font-size: 1.25rem;
+}
+
+.modal-warning {
+  margin: 0 0 1rem 0;
+  color: #333;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.modal-instructions {
+  margin: 0 0 0.35rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.modal-phrase {
+  display: block;
+  background: #f8f9fa;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: #842029;
+  box-shadow: 0 0 0 2px rgba(132, 32, 41, 0.15);
+}
+
+.modal-error {
+  color: #842029;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.btn-cancel {
+  background: #e9ecef;
+  color: #333;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-confirm-clear {
+  background: #842029;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-confirm-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-confirm-clear:not(:disabled):hover {
+  background: #6a1a22;
 }
 
 .upload-container {
@@ -435,6 +678,13 @@ export default {
 .csv-format-info h3 {
   margin: 0 0 1rem 0;
   color: #333;
+}
+
+.format-intro {
+  margin: 0 0 1rem 0;
+  color: #555;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 .format-example {

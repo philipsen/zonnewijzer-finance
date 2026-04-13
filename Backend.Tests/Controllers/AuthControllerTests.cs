@@ -387,4 +387,123 @@ public class AuthControllerTests : IDisposable
         var appUser = await _db.Users.FindAsync(2);
         Assert.Null(appUser!.ChargingUserId);
     }
+
+    // ── WipeDatabase ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WipeDatabase_InvalidToken_ReturnsUnauthorized()
+    {
+        var result = await BuildController(validUserId: null).WipeDatabase(
+            new WipeDatabaseRequest { Confirm = true });
+        Assert.IsType<UnauthorizedResult>(result);
+    }
+
+    [Fact]
+    public async Task WipeDatabase_WithoutConfirm_ReturnsBadRequest()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var result = await BuildController().WipeDatabase(new WipeDatabaseRequest());
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task WipeDatabase_NonAdmin_ReturnsForbid()
+    {
+        await AddUser(1, "Regular", UserRole.Base);
+        var result = await BuildController().WipeDatabase(
+            new WipeDatabaseRequest { Confirm = true });
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task WipeDatabase_Admin_ClearsDataButPreservesUsers()
+    {
+        await AddUser(1, "Admin", UserRole.Admin, chargingUserId: 10);
+        await AddUser(2, "Bob", UserRole.Base);
+        var t = DateTime.UtcNow;
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 1 });
+        _db.EventLogs.Add(new EventLog { Timestamp = DateTime.UtcNow, UserName = "x", Action = "y" });
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 1, PricePerKwh = 0.2m });
+        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 10, DisplayName = "P" });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 1,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "open"
+        });
+        _db.Invoices.Add(new Invoice
+        {
+            UserId = 2,
+            Year = 2024,
+            Month = 1,
+            InvoiceNumber = "INV-1",
+            UserName = "Bob",
+            TotalAmount = 1,
+            PdfPath = null
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().WipeDatabase(
+            new WipeDatabaseRequest { Confirm = true });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(2, await _db.Users.CountAsync());
+        Assert.Null((await _db.Users.FindAsync(1))!.ChargingUserId);
+        Assert.Equal(0, await _db.ChargingSessions.CountAsync());
+        Assert.Equal(0, await _db.EventLogs.CountAsync());
+        Assert.Equal(0, await _db.Invoices.CountAsync());
+    }
+
+    // ── ClearChargingData ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ClearChargingData_WrongPhrase_ReturnsBadRequest()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var result = await BuildController().ClearChargingData(new WipeDatabaseRequest { Confirmation = "wrong" });
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task ClearChargingData_NonAdmin_ReturnsForbid()
+    {
+        await AddUser(1, "Regular", UserRole.Base);
+        var result = await BuildController().ClearChargingData(
+            new WipeDatabaseRequest { Confirmation = AuthController.ClearChargingDataConfirmationPhrase });
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task ClearChargingData_Admin_ClearsSessionsProfilesUnlinksAndKeepsInvoices()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Bob", UserRole.Base, chargingUserId: 10);
+        var t = DateTime.UtcNow;
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 2 });
+        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 10, DisplayName = "Profile" });
+        _db.Invoices.Add(new Invoice
+        {
+            UserId = 2,
+            Year = 2024,
+            Month = 3,
+            InvoiceNumber = "INV-X",
+            UserName = "Bob",
+            TotalAmount = 5,
+            PdfPath = null
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().ClearChargingData(
+            new WipeDatabaseRequest { Confirmation = AuthController.ClearChargingDataConfirmationPhrase });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(0, await _db.ChargingSessions.CountAsync());
+        Assert.Equal(0, await _db.ChargingUserProfiles.CountAsync());
+        Assert.Null((await _db.Users.FindAsync(2))!.ChargingUserId);
+        Assert.Equal(1, await _db.Invoices.CountAsync());
+    }
 }

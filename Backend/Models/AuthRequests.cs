@@ -27,4 +27,13 @@ namespace Backend.Controllers
         public string? PostalCode { get; set; }
         public string? PlaceName { get; set; }
     }
+
+    public class WipeDatabaseRequest
+    {
+        /// <summary>When true, authorizes POST <c>admin/wipe-database</c> (admin JWT required).</summary>
+        public bool Confirm { get; set; }
+
+        /// <summary>Exact phrase for POST <c>admin/clear-charging-data</c>.</summary>
+        public string? Confirmation { get; set; }
+    }
 }

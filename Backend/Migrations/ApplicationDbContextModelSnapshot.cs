@@ -27,10 +27,18 @@ namespace Backend.Migrations
                         .HasPrecision(8, 2)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ChargingStationName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Connector")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime>("End")
+                    b.Property<DateTime?>("End")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("Start")
@@ -38,6 +46,10 @@ namespace Backend.Migrations
 
                     b.Property<int>("StationId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("StationSerialNumber")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("UserId")
                         .HasColumnType("INTEGER");
@@ -66,6 +78,10 @@ namespace Backend.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PostalCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RfidTokenKey")
+                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Street")

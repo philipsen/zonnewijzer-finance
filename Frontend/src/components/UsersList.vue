@@ -6,6 +6,7 @@
         {{ users.length }} user{{ users.length !== 1 ? 's' : '' }} registered
       </div>
     </div>
+
     
     <div v-if="loading" class="loading">
       Loading users...

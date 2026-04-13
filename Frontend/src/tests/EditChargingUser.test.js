@@ -21,6 +21,7 @@ const makeRouter = (id = '5') => {
 
 const mockChargingUser = {
   id: 5,
+  rfidTokenKey: '047D9322B62290',
   displayName: 'Alice',
   linkedUserId: null,
   street: 'Main St',
@@ -70,6 +71,7 @@ describe('EditChargingUser.vue', () => {
     await flushPromises()
     expect(wrapper.find('.edit-form').exists()).toBe(true)
     expect(wrapper.find('#displayName').element.value).toBe('Alice')
+    expect(wrapper.text()).toContain('047D9322B62290')
   })
 
   it('shows 404 error when charging user not found', async () => {
