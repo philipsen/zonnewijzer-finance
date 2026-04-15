@@ -17,6 +17,7 @@ public class AuthControllerTests : IDisposable
     private readonly ApplicationDbContext _db;
     private readonly Mock<IJwtService> _jwtMock;
     private readonly Mock<IConfiguration> _configMock;
+    private readonly Mock<IEmailService> _emailMock;
 
     public AuthControllerTests()
     {
@@ -26,6 +27,7 @@ public class AuthControllerTests : IDisposable
         _db = new ApplicationDbContext(options);
         _jwtMock = new Mock<IJwtService>();
         _configMock = new Mock<IConfiguration>();
+        _emailMock = new Mock<IEmailService>();
     }
 
     public void Dispose() => _db.Dispose();
@@ -33,7 +35,7 @@ public class AuthControllerTests : IDisposable
     private AuthController BuildController(string? validUserId = "1")
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(validUserId);
-        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance);
+        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance, _emailMock.Object);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
@@ -111,6 +113,37 @@ public class AuthControllerTests : IDisposable
         Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
+    [Fact]
+    public async Task ForgotPassword_WithPasswordUser_SendsEmailAndStoresToken()
+    {
+        var user = await AddUser(1, "Local User");
+        var hasher = new PasswordHasher<User>();
+        user.PasswordHash = hasher.HashPassword(user, "Password123!");
+        user.GoogleId = null;
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().ForgotPassword(new ForgotPasswordRequest
+        {
+            Email = user.Email,
+            ResetBaseUrl = "http://localhost:3000"
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.PasswordResetTokens.CountAsync());
+        _emailMock.Verify(m => m.SendAsync(user.Email, It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetPassword_WithInvalidToken_ReturnsBadRequest()
+    {
+        var result = await BuildController().ResetPassword(new ResetPasswordRequest
+        {
+            Token = "invalid-token",
+            NewPassword = "Password123!"
+        });
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
     // ── GetAllUsers ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -167,7 +200,7 @@ public class AuthControllerTests : IDisposable
     public async Task GetUser_WhenUserMissing_ReturnsNotFound()
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("42");
-        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance);
+        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance, _emailMock.Object);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
