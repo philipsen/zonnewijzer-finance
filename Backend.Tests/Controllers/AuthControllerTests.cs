@@ -3,6 +3,7 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -53,6 +54,61 @@ public class AuthControllerTests : IDisposable
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
         return user;
+    }
+
+    [Fact]
+    public async Task Register_CreatesPasswordUser_AndReturnsToken()
+    {
+        _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("jwt-token");
+        var controller = BuildController();
+        var result = await controller.Register(new RegisterRequest
+        {
+            Email = "newuser@test.com",
+            Password = "Password123!",
+            Name = "New User"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var created = await _db.Users.FirstOrDefaultAsync(u => u.Email == "newuser@test.com");
+        Assert.NotNull(created);
+        Assert.False(string.IsNullOrWhiteSpace(created!.PasswordHash));
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("jwt-token", doc.RootElement.GetProperty("token").GetString());
+    }
+
+    [Fact]
+    public async Task Login_WithValidPassword_ReturnsToken()
+    {
+        var user = await AddUser(1, "Local User");
+        var hasher = new PasswordHasher<User>();
+        user.PasswordHash = hasher.HashPassword(user, "Password123!");
+        user.GoogleId = null;
+        await _db.SaveChangesAsync();
+        _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("jwt-login");
+
+        var result = await BuildController().Login(new LoginRequest
+        {
+            Email = user.Email,
+            Password = "Password123!"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("jwt-login", doc.RootElement.GetProperty("token").GetString());
+    }
+
+    [Fact]
+    public async Task Login_WithoutPasswordAccount_ReturnsUnauthorized()
+    {
+        await AddUser(1, "Google Only");
+        var result = await BuildController().Login(new LoginRequest
+        {
+            Email = "user1@test.com",
+            Password = "Password123!"
+        });
+        Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     // ── GetAllUsers ────────────────────────────────────────────────────────────
