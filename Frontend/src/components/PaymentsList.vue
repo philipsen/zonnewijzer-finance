@@ -36,11 +36,17 @@
               <td class="period-cell">{{ formatPeriod(payment.year, payment.month) }}</td>
               <td class="amount-cell">€{{ payment.amount.toFixed(2) }}</td>
               <td class="status-cell">
-                <span :class="['status-badge', payment.status]">{{ payment.status }}</span>
+                <span :class="['status-badge', normalizePaymentStatus(payment.status)]">{{ normalizePaymentStatus(payment.status) }}</span>
               </td>
               <td class="date-cell">{{ formatDate(payment.createdAt) }}</td>
               <td class="link-cell">
-                <a v-if="payment.status !== 'paid'" :href="payment.checkoutUrl" target="_blank" rel="noopener noreferrer" class="checkout-link">
+                <a
+                  v-if="canOpenCheckout(payment.status)"
+                  :href="payment.checkoutUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="checkout-link"
+                >
                   Open ↗
                 </a>
                 <span v-else>—</span>
@@ -145,6 +151,14 @@ export default {
     const formatPeriod = (year, month) =>
       new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
+    const normalizePaymentStatus = (status) =>
+      String(status || '').trim().toLowerCase().replace(/^state/, '')
+
+    const canOpenCheckout = (status) => {
+      const normalizedStatus = normalizePaymentStatus(status)
+      return normalizedStatus === 'open' || normalizedStatus === 'pending'
+    }
+
     const formatDate = (iso) =>
       new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
 
@@ -157,6 +171,8 @@ export default {
       deletingPaymentId,
       error,
       formatPeriod,
+      normalizePaymentStatus,
+      canOpenCheckout,
       formatDate,
       refreshPayments,
       deletePayment

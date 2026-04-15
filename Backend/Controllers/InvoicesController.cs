@@ -16,6 +16,12 @@ namespace Backend.Controllers
         private readonly IMollieService _mollieService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<InvoicesController> _logger;
+        private static readonly HashSet<string> FinalPaymentStatuses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "paid",
+            "failed",
+            "canceled"
+        };
 
         public InvoicesController(ApplicationDbContext context, IJwtService jwtService, IPdfService pdfService, IMollieService mollieService, IConfiguration configuration, ILogger<InvoicesController> logger)
         {
@@ -302,12 +308,31 @@ namespace Backend.Controllers
                 if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
                     return Unauthorized();
 
-                // Check for existing payment link
+                // Check for existing payment link and sync latest status first
                 var existing = await _context.MolliePayments
                     .FirstOrDefaultAsync(p => p.ChargingUserId == userId && p.Year == year && p.Month == month);
 
                 if (existing != null)
-                    return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
+                {
+                    try
+                    {
+                        var latestStatus = await _mollieService.GetPaymentStatusAsync(existing.MolliePaymentId);
+                        if (!string.Equals(existing.Status, latestStatus, StringComparison.OrdinalIgnoreCase))
+                        {
+                            existing.Status = latestStatus;
+                            existing.UpdatedAt = DateTime.UtcNow;
+                            await _context.SaveChangesAsync();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not refresh Mollie status for {PaymentId}", existing.MolliePaymentId);
+                    }
+
+                    // Reuse active or paid links; replace terminal unpaid links with a fresh payment below.
+                    if (existing.Status == "open" || existing.Status == "pending" || existing.Status == "paid")
+                        return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
+                }
 
                 // Get charging sessions to calculate amount
                 var chargingSessions = await _context.ChargingSessions
@@ -347,6 +372,11 @@ namespace Backend.Controllers
                 var description = $"Charging invoice {invoiceNumber} – {userName} – {monthName}";
 
                 var result = await _mollieService.CreatePaymentAsync(totalAmount, description, invoiceNumber, redirectUrl, webhookUrl);
+
+                if (existing != null)
+                {
+                    _context.MolliePayments.Remove(existing);
+                }
 
                 var molliePayment = new MolliePayment
                 {
@@ -400,8 +430,8 @@ namespace Backend.Controllers
                 if (payment == null)
                     return NotFound();
 
-                // Refresh status from Mollie if still open
-                if (payment.Status == "open" || payment.Status == "pending")
+                // Refresh status from Mollie while not in a terminal state
+                if (!FinalPaymentStatuses.Contains(payment.Status))
                 {
                     try
                     {
@@ -454,8 +484,8 @@ namespace Backend.Controllers
                     .Select(u => new { u.ChargingUserId, u.Name })
                     .ToListAsync();
 
-                // Refresh open/pending statuses from Mollie
-                var stalePayments = payments.Where(p => p.Status == "open" || p.Status == "pending").ToList();
+                // Refresh non-final statuses from Mollie
+                var stalePayments = payments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
                 foreach (var p in stalePayments)
                 {
                     try

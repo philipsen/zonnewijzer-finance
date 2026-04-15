@@ -14,6 +14,12 @@ namespace Backend.Controllers
         private readonly IJwtService _jwtService;
         private readonly IMollieService _mollieService;
         private readonly ILogger<MyInvoicesController> _logger;
+        private static readonly HashSet<string> FinalPaymentStatuses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "paid",
+            "failed",
+            "canceled"
+        };
 
         public MyInvoicesController(ApplicationDbContext context, IJwtService jwtService, IMollieService mollieService, ILogger<MyInvoicesController> logger)
         {
@@ -61,8 +67,8 @@ namespace Backend.Controllers
                     .Where(p => p.ChargingUserId == chargingUserId)
                     .ToListAsync();
 
-                // Refresh open/pending statuses from Mollie
-                var stale = allPayments.Where(p => p.Status == "open" || p.Status == "pending").ToList();
+                // Refresh non-final statuses from Mollie
+                var stale = allPayments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
                 foreach (var p in stale)
                 {
                     try
