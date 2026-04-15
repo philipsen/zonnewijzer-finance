@@ -565,5 +565,47 @@ namespace Backend.Controllers
                 return Ok(); // Always return 200 to Mollie to avoid retries on our errors
             }
         }
+
+        [HttpDelete("payments/{id:int}")]
+        public async Task<IActionResult> DeletePayment(int id)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int requestingUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FindAsync(requestingUserId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                var payment = await _context.MolliePayments.FirstOrDefaultAsync(p => p.Id == id);
+                if (payment == null)
+                    return NotFound();
+
+                var profile = await _context.ChargingUserProfiles.FirstOrDefaultAsync(p => p.Id == payment.ChargingUserId);
+                var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == payment.ChargingUserId);
+                var userName = linkedUser?.Name ?? profile?.DisplayName ?? $"Charging User {payment.ChargingUserId}";
+                var monthName = new DateTime(payment.Year, payment.Month, 1).ToString("MMMM yyyy");
+
+                _context.MolliePayments.Remove(payment);
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"Payment deleted: {userName} – {monthName}"
+                });
+
+                await _context.SaveChangesAsync();
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting payment {PaymentId}", id);
+                return BadRequest($"Failed to delete payment: {ex.Message}");
+            }
+        }
     }
 }
