@@ -27,6 +27,7 @@
               <th>Status</th>
               <th>Created</th>
               <th>Payment link</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -35,14 +36,29 @@
               <td class="period-cell">{{ formatPeriod(payment.year, payment.month) }}</td>
               <td class="amount-cell">€{{ payment.amount.toFixed(2) }}</td>
               <td class="status-cell">
-                <span :class="['status-badge', payment.status]">{{ payment.status }}</span>
+                <span :class="['status-badge', normalizePaymentStatus(payment.status)]">{{ normalizePaymentStatus(payment.status) }}</span>
               </td>
               <td class="date-cell">{{ formatDate(payment.createdAt) }}</td>
               <td class="link-cell">
-                <a v-if="payment.status !== 'paid'" :href="payment.checkoutUrl" target="_blank" rel="noopener noreferrer" class="checkout-link">
+                <a
+                  v-if="canOpenCheckout(payment.status)"
+                  :href="payment.checkoutUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="checkout-link"
+                >
                   Open ↗
                 </a>
                 <span v-else>—</span>
+              </td>
+              <td class="actions-cell">
+                <button
+                  class="delete-btn"
+                  :disabled="deletingPaymentId === payment.id"
+                  @click="deletePayment(payment)"
+                >
+                  {{ deletingPaymentId === payment.id ? 'Deleting...' : 'Delete' }}
+                </button>
               </td>
             </tr>
           </tbody>
@@ -62,6 +78,7 @@ export default {
     const payments = ref([])
     const loading = ref(true)
     const refreshing = ref(false)
+    const deletingPaymentId = ref(null)
     const error = ref('')
 
     const fetchPayments = async ({ silent = false } = {}) => {
@@ -95,15 +112,71 @@ export default {
       refreshing.value = false
     }
 
+    const deletePayment = async (payment) => {
+      const period = formatPeriod(payment.year, payment.month)
+      const confirmed = window.confirm(
+        `Delete payment for ${payment.userName} (${period})?\n\nThis will revert the invoice to unpaid.`
+      )
+      if (!confirmed) return
+
+      try {
+        deletingPaymentId.value = payment.id
+        const token = localStorage.getItem('token')
+        if (!token) {
+          error.value = 'You must be logged in to delete payments'
+          return
+        }
+
+        await axios.delete(`/api/invoices/payments/${payment.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+
+        error.value = ''
+        await fetchPayments({ silent: true })
+      } catch (err) {
+        console.error('Failed to delete payment:', err)
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          error.value = 'You are not allowed to delete payments.'
+        } else if (err.response?.status === 404) {
+          error.value = 'Payment was already removed.'
+          await fetchPayments({ silent: true })
+        } else {
+          error.value = 'Failed to delete payment. Please try again.'
+        }
+      } finally {
+        deletingPaymentId.value = null
+      }
+    }
+
     const formatPeriod = (year, month) =>
       new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+
+    const normalizePaymentStatus = (status) =>
+      String(status || '').trim().toLowerCase().replace(/^state/, '')
+
+    const canOpenCheckout = (status) => {
+      const normalizedStatus = normalizePaymentStatus(status)
+      return normalizedStatus === 'open' || normalizedStatus === 'pending'
+    }
 
     const formatDate = (iso) =>
       new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
 
     onMounted(fetchPayments)
 
-    return { payments, loading, refreshing, error, formatPeriod, formatDate, refreshPayments }
+    return {
+      payments,
+      loading,
+      refreshing,
+      deletingPaymentId,
+      error,
+      formatPeriod,
+      normalizePaymentStatus,
+      canOpenCheckout,
+      formatDate,
+      refreshPayments,
+      deletePayment
+    }
   }
 }
 </script>
@@ -259,6 +332,29 @@ export default {
   color: #6c757d;
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.actions-cell {
+  white-space: nowrap;
+}
+
+.delete-btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.delete-btn:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.delete-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 @media (max-width: 600px) {
