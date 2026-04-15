@@ -263,6 +263,49 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DeletePayment_NonAdmin_ReturnsForbid()
+    {
+        _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 1,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr_del",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").DeletePayment((await _db.MolliePayments.FirstAsync()).Id);
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task DeletePayment_Admin_RemovesPayment()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 3,
+            Year = 2024,
+            Month = 2,
+            MolliePaymentId = "tr_del2",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+        var paymentId = (await _db.MolliePayments.FirstAsync()).Id;
+
+        var result = await BuildController().DeletePayment(paymentId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(0, await _db.MolliePayments.CountAsync());
+    }
+
+    [Fact]
     public async Task MollieWebhook_MissingId_ReturnsBadRequest()
     {
         var form = new FormCollection(new Dictionary<string, StringValues>());
