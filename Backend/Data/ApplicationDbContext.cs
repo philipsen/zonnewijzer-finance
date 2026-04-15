@@ -17,6 +17,7 @@ namespace Backend.Data
         public DbSet<EnergyPrice> EnergyPrices { get; set; }
         public DbSet<ChargingUserProfile> ChargingUserProfiles { get; set; }
         public DbSet<MolliePayment> MolliePayments { get; set; }
+        public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -95,6 +96,21 @@ namespace Backend.Data
 
                 // Unique constraint: one payment per charging user + year + month
                 entity.HasIndex(e => new { e.ChargingUserId, e.Year, e.Month }).IsUnique();
+            });
+
+            modelBuilder.Entity<PasswordResetToken>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.TokenHash).HasMaxLength(128).IsRequired();
+                entity.Property(e => e.ExpiresAt).IsRequired();
+                entity.Property(e => e.CreatedAt).IsRequired();
+                entity.HasIndex(e => e.TokenHash).IsUnique();
+                entity.HasIndex(e => new { e.UserId, e.ExpiresAt });
+
+                entity.HasOne(e => e.User)
+                      .WithMany()
+                      .HasForeignKey(e => e.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }
