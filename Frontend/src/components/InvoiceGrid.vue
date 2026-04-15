@@ -61,9 +61,17 @@
                       <template v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month)">
                         <span :class="['payment-status-badge', getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status }}</span>
                         <a
-                          v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status !== 'paid'"
+                          v-if="canOpenPaymentLink(userRow.user.id, monthData.year, monthData.month)"
                           :href="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).checkoutUrl"
                           target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                        <button
+                          v-else-if="!isPaymentPaid(userRow.user.id, monthData.year, monthData.month)"
+                          class="btn-payment-link"
+                          :disabled="isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month)"
+                          @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
+                        >
+                          {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                        </button>
                       </template>
                       <button
                         v-else
@@ -120,9 +128,17 @@
                 <template v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month)">
                   <span :class="['payment-status-badge', getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status }}</span>
                   <a
-                    v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status !== 'paid'"
+                    v-if="canOpenPaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
                     :href="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).checkoutUrl"
                     target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                  <button
+                    v-else-if="!isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                    class="btn-payment-link"
+                    :disabled="isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
+                    @click="handlePaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  >
+                    {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                  </button>
                 </template>
                 <button
                   v-else
@@ -227,11 +243,24 @@ export default {
     // Payment links state: keyed by `${userId}_${year}_${month}`
     const paymentLinks = ref({})
     const paymentLinksLoading = ref({})
+    const normalizePaymentStatus = (status) =>
+      String(status || '').trim().toLowerCase().replace(/^state/, '')
 
     const paymentLinkKey = (userId, year, month) => `${userId}_${year}_${month}`
 
     const getPaymentLinkState = (userId, year, month) =>
       paymentLinks.value[paymentLinkKey(userId, year, month)] || null
+
+    const canOpenPaymentLink = (userId, year, month) => {
+      const state = getPaymentLinkState(userId, year, month)
+      if (!state?.checkoutUrl) return false
+      return state.status === 'open' || state.status === 'pending'
+    }
+
+    const isPaymentPaid = (userId, year, month) => {
+      const state = getPaymentLinkState(userId, year, month)
+      return state?.status === 'paid'
+    }
 
     const isPaymentLinkLoading = (userId, year, month) =>
       !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
@@ -244,7 +273,13 @@ export default {
         const response = await axios.post(`/api/invoices/${userId}/${year}/${month}/payment-link`, null, {
           headers: { Authorization: `Bearer ${token}` }
         })
-        paymentLinks.value = { ...paymentLinks.value, [key]: response.data }
+        paymentLinks.value = {
+          ...paymentLinks.value,
+          [key]: {
+            ...response.data,
+            status: normalizePaymentStatus(response.data.status)
+          }
+        }
         window.open(response.data.checkoutUrl, '_blank', 'noopener,noreferrer')
       } catch (err) {
         console.error('Failed to create payment link:', err)
@@ -266,7 +301,7 @@ export default {
           map[paymentLinkKey(p.chargingUserId, p.year, p.month)] = {
             checkoutUrl: p.checkoutUrl,
             paymentId: p.molliePaymentId,
-            status: p.status
+            status: normalizePaymentStatus(p.status)
           }
         }
         paymentLinks.value = map
@@ -292,6 +327,8 @@ export default {
       generatePdfInvoice,
       paymentLinks,
       getPaymentLinkState,
+      canOpenPaymentLink,
+      isPaymentPaid,
       isPaymentLinkLoading,
       handlePaymentLink
     }

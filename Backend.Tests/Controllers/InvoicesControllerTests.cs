@@ -153,6 +153,7 @@ public class InvoicesControllerTests : IDisposable
             Status = "open"
         });
         await _db.SaveChangesAsync();
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_old")).ReturnsAsync("open");
 
         var result = await BuildController().CreatePaymentLink(5, 2024, 3);
 
@@ -161,6 +162,39 @@ public class InvoicesControllerTests : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal("tr_old", doc.RootElement.GetProperty("paymentId").GetString());
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_WhenExistingExpired_CreatesFreshPayment()
+    {
+        await SeedAdminAsync();
+        var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(new ChargingSession { UserId = 5, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 4 });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 5,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "tr_old_expired",
+            CheckoutUrl = "https://old",
+            Amount = 10,
+            Status = "expired"
+        });
+        await _db.SaveChangesAsync();
+
+        _configMock.Setup(c => c["Mollie:RedirectUrl"]).Returns((string?)null);
+        _configMock.Setup(c => c["Mollie:BaseUrl"]).Returns((string?)null);
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_old_expired")).ReturnsAsync("expired");
+        _mollieMock
+            .Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new MolliePaymentResult("tr_new_after_expired", "https://new", "open"));
+
+        var result = await BuildController().CreatePaymentLink(5, 2024, 3);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.MolliePayments.CountAsync());
+        var payment = await _db.MolliePayments.FirstAsync();
+        Assert.Equal("tr_new_after_expired", payment.MolliePaymentId);
     }
 
     [Fact]
@@ -260,6 +294,73 @@ public class InvoicesControllerTests : IDisposable
         var ok = Assert.IsType<OkObjectResult>(result);
         var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
         Assert.Single(list);
+    }
+
+    [Fact]
+    public async Task GetAllPayments_RefreshesExpiredStatus()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 1,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr_expired",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "expired"
+        });
+        await _db.SaveChangesAsync();
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_expired")).ReturnsAsync("paid");
+
+        var result = await BuildController().GetAllPayments();
+
+        Assert.IsType<OkObjectResult>(result);
+        var payment = await _db.MolliePayments.FirstAsync();
+        Assert.Equal("paid", payment.Status);
+    }
+
+    [Fact]
+    public async Task DeletePayment_NonAdmin_ReturnsForbid()
+    {
+        _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 1,
+            Year = 2024,
+            Month = 1,
+            MolliePaymentId = "tr_del",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").DeletePayment((await _db.MolliePayments.FirstAsync()).Id);
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task DeletePayment_Admin_RemovesPayment()
+    {
+        await SeedAdminAsync();
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            ChargingUserId = 3,
+            Year = 2024,
+            Month = 2,
+            MolliePaymentId = "tr_del2",
+            CheckoutUrl = "https://x",
+            Amount = 1,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+        var paymentId = (await _db.MolliePayments.FirstAsync()).Id;
+
+        var result = await BuildController().DeletePayment(paymentId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(0, await _db.MolliePayments.CountAsync());
     }
 
     [Fact]

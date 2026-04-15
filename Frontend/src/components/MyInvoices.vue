@@ -42,7 +42,7 @@
               </td>
               <td class="pay-cell">
                 <a
-                  v-if="!m.isPaid && m.checkoutUrl"
+                  v-if="canOpenPayment(m)"
                   href="#"
                   class="get-link-btn"
                   @click.prevent="openPayment(m.checkoutUrl)"
@@ -53,7 +53,7 @@
                   class="get-link-btn"
                   :disabled="m._loading"
                   @click="createPaymentLink(m)"
-                >{{ m._loading ? '...' : 'Pay' }}</button>
+                >{{ m._loading ? '...' : paymentActionLabel(m) }}</button>
               </td>
             </tr>
           </tbody>
@@ -70,6 +70,22 @@ import axios from 'axios'
 export default {
   name: 'MyInvoices',
   setup() {
+    const normalizePaymentStatus = (status) =>
+      String(status || '').trim().toLowerCase().replace(/^state/, '')
+
+    const canOpenPayment = (month) => {
+      const normalizedStatus = normalizePaymentStatus(month.paymentStatus)
+      return !month.isPaid && !!month.checkoutUrl && (normalizedStatus === 'open' || normalizedStatus === 'pending')
+    }
+
+    const paymentActionLabel = (month) => {
+      const normalizedStatus = normalizePaymentStatus(month.paymentStatus)
+      if (normalizedStatus === 'expired' || normalizedStatus === 'failed' || normalizedStatus === 'canceled') {
+        return 'New link'
+      }
+      return 'Pay'
+    }
+
     const loading = ref(true)
     const error = ref('')
     const userName = ref('')
@@ -131,7 +147,8 @@ export default {
       }
     }
 
-    const createPaymentLink = async (month) => {      month._loading = true
+    const createPaymentLink = async (month) => {
+      month._loading = true
       try {
         const token = localStorage.getItem('token')
         const response = await axios.post(
@@ -140,8 +157,8 @@ export default {
           { headers: { Authorization: `Bearer ${token}` } }
         )
         month.checkoutUrl = response.data.checkoutUrl
-        month.paymentStatus = response.data.status
-        month.isPaid = response.data.status === 'paid'
+        month.paymentStatus = normalizePaymentStatus(response.data.status)
+        month.isPaid = month.paymentStatus === 'paid'
         window.open(response.data.checkoutUrl, '_blank')
       } catch (err) {
         console.error('Failed to create payment link:', err)
@@ -171,7 +188,18 @@ export default {
       window.removeEventListener('message', onPaymentMessage)
     })
 
-    return { loading, error, userName, months, hasChargingAccount, createPaymentLink, downloadInvoice, openPayment }
+    return {
+      loading,
+      error,
+      userName,
+      months,
+      hasChargingAccount,
+      createPaymentLink,
+      downloadInvoice,
+      openPayment,
+      canOpenPayment,
+      paymentActionLabel
+    }
   }
 }
 </script>
