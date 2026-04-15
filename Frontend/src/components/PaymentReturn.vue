@@ -2,8 +2,8 @@
   <div class="payment-return">
     <div class="card">
       <div class="icon">✓</div>
-      <h2>Payment processed</h2>
-      <p>You can close this window.</p>
+      <h2>Payment flow completed</h2>
+      <p>This window can be closed. The invoice status will refresh automatically.</p>
     </div>
   </div>
 </template>
