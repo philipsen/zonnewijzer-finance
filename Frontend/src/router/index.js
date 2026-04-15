@@ -11,6 +11,7 @@ import InvoiceGrid from '../components/InvoiceGrid.vue'
 import MyInvoices from '../components/MyInvoices.vue'
 import PaymentsList from '../components/PaymentsList.vue'
 import PaymentReturn from '../components/PaymentReturn.vue'
+import ResetPassword from '../components/ResetPassword.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 import ChargingStationsPage from '../components/ChargingStationsPage.vue'
@@ -102,6 +103,11 @@ const routes = [
     path: '/payment-return',
     name: 'PaymentReturn',
     component: PaymentReturn
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: ResetPassword
   },
   {
     path: '/event-log',

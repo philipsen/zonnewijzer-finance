@@ -1,10 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Google.Apis.Auth;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Backend.Controllers
 {
@@ -16,13 +19,193 @@ namespace Backend.Controllers
         private readonly IJwtService _jwtService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthController> _logger;
+        private readonly IEmailService _emailService;
+        private static readonly PasswordHasher<User> PasswordHasher = new();
 
-        public AuthController(ApplicationDbContext context, IJwtService jwtService, IConfiguration configuration, ILogger<AuthController> logger)
+        public AuthController(ApplicationDbContext context, IJwtService jwtService, IConfiguration configuration, ILogger<AuthController> logger, IEmailService emailService)
         {
             _context = context;
             _jwtService = jwtService;
             _configuration = configuration;
             _logger = logger;
+            _emailService = emailService;
+        }
+
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+        {
+            try
+            {
+                var email = request.Email?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                    return BadRequest("A valid email address is required.");
+
+                if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
+                    return BadRequest("Password must be at least 8 characters.");
+
+                var existing = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                if (existing != null)
+                    return Conflict("An account with this email already exists.");
+
+                var displayName = string.IsNullOrWhiteSpace(request.Name)
+                    ? email.Split('@')[0]
+                    : request.Name.Trim();
+
+                var user = new User
+                {
+                    Email = email,
+                    Name = displayName,
+                    CreatedAt = DateTime.UtcNow,
+                    LastLoginAt = DateTime.UtcNow
+                };
+                user.PasswordHash = PasswordHasher.HashPassword(user, request.Password);
+
+                _context.Users.Add(user);
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = user.Name,
+                    Action = "Register (Email/Password)"
+                });
+
+                await _context.SaveChangesAsync();
+                var token = _jwtService.GenerateToken(user);
+                return Ok(BuildAuthResponse(user, token));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email/password registration failed for {Email}", request.Email);
+                return BadRequest($"Registration failed: {ex.Message}");
+            }
+        }
+
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
+        {
+            try
+            {
+                var email = request.Email?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
+                    return Unauthorized("Invalid email or password.");
+
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash))
+                    return Unauthorized("Invalid email or password.");
+
+                var verify = PasswordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
+                if (verify == PasswordVerificationResult.Failed)
+                    return Unauthorized("Invalid email or password.");
+
+                if (verify == PasswordVerificationResult.SuccessRehashNeeded)
+                    user.PasswordHash = PasswordHasher.HashPassword(user, request.Password);
+
+                user.LastLoginAt = DateTime.UtcNow;
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = user.Name,
+                    Action = "Login (Email/Password)"
+                });
+                await _context.SaveChangesAsync();
+
+                var token = _jwtService.GenerateToken(user);
+                return Ok(BuildAuthResponse(user, token));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email/password login failed for {Email}", request.Email);
+                return Unauthorized();
+            }
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        {
+            try
+            {
+                var normalizedEmail = request.Email?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(normalizedEmail))
+                    return Ok(new { message = "If an account exists for that email, a reset link has been sent." });
+
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail);
+                if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash))
+                    return Ok(new { message = "If an account exists for that email, a reset link has been sent." });
+
+                var rawToken = GenerateResetToken();
+                var tokenHash = HashToken(rawToken);
+                var expiresAt = DateTime.UtcNow.AddMinutes(30);
+
+                var existingActiveTokens = await _context.PasswordResetTokens
+                    .Where(t => t.UserId == user.Id && t.UsedAt == null)
+                    .ToListAsync();
+                foreach (var token in existingActiveTokens)
+                    token.UsedAt = DateTime.UtcNow;
+
+                _context.PasswordResetTokens.Add(new PasswordResetToken
+                {
+                    UserId = user.Id,
+                    TokenHash = tokenHash,
+                    ExpiresAt = expiresAt,
+                    CreatedAt = DateTime.UtcNow
+                });
+                await _context.SaveChangesAsync();
+
+                var resetLink = BuildResetLink(request.ResetBaseUrl, rawToken);
+                var body = $@"
+<p>Hello {System.Net.WebUtility.HtmlEncode(user.Name)},</p>
+<p>You requested a password reset for your Zonnewijzer Finance account.</p>
+<p><a href=""{resetLink}"">Click here to reset your password</a></p>
+<p>This link is valid for 30 minutes and can only be used once.</p>
+<p>If you did not request this, you can ignore this email.</p>";
+
+                await _emailService.SendAsync(user.Email, "Reset your Zonnewijzer Finance password", body);
+                return Ok(new { message = "If an account exists for that email, a reset link has been sent." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Forgot-password flow failed for {Email}", request.Email);
+                return Ok(new { message = "If an account exists for that email, a reset link has been sent." });
+            }
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.Token))
+                    return BadRequest("Invalid reset token.");
+                if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
+                    return BadRequest("Password must be at least 8 characters.");
+
+                var tokenHash = HashToken(request.Token.Trim());
+                var resetToken = await _context.PasswordResetTokens
+                    .Include(t => t.User)
+                    .FirstOrDefaultAsync(t => t.TokenHash == tokenHash);
+
+                if (resetToken == null || resetToken.User == null || resetToken.UsedAt != null || resetToken.ExpiresAt <= DateTime.UtcNow)
+                    return BadRequest("This reset link is invalid or expired.");
+
+                var user = resetToken.User;
+                user.PasswordHash = PasswordHasher.HashPassword(user, request.NewPassword);
+                user.LastLoginAt = DateTime.UtcNow;
+                resetToken.UsedAt = DateTime.UtcNow;
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = user.Name,
+                    Action = "Password reset"
+                });
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "Password has been reset successfully." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Password reset failed");
+                return BadRequest("Password reset failed.");
+            }
         }
 
         [HttpPost("google")]
@@ -46,14 +229,16 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("Google token validated for user {Email}", payload.Email);
 
-                var user = await _context.Users.FirstOrDefaultAsync(u => u.GoogleId == payload.Subject);
+                var normalizedEmail = payload.Email.Trim().ToLowerInvariant();
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.GoogleId == payload.Subject)
+                    ?? await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail);
 
                 if (user == null)
                 {
                     user = new User
                     {
                         GoogleId = payload.Subject,
-                        Email = payload.Email,
+                        Email = normalizedEmail,
                         Name = payload.Name,
                         PictureUrl = payload.Picture,
                         CreatedAt = DateTime.UtcNow,
@@ -64,6 +249,8 @@ namespace Backend.Controllers
                 }
                 else
                 {
+                    if (string.IsNullOrWhiteSpace(user.GoogleId))
+                        user.GoogleId = payload.Subject;
                     user.LastLoginAt = DateTime.UtcNow;
                     user.Name = payload.Name;
                     user.PictureUrl = payload.Picture;
@@ -83,25 +270,59 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("Authentication successful for user {Email}", user.Email);
 
-                return Ok(new
-                {
-                    token,
-                    user = new
-                    {
-                        id = user.Id,
-                        email = user.Email,
-                        name = user.Name,
-                        picture = user.PictureUrl,
-                        role = user.Role.ToString(),
-                        chargingUserId = user.ChargingUserId
-                    }
-                });
+                return Ok(BuildAuthResponse(user, token));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Authentication failed for Google credential");
                 return BadRequest($"Authentication failed: {ex.Message}");
             }
+        }
+
+        private static object BuildAuthResponse(User user, string token) => new
+        {
+            token,
+            user = new
+            {
+                id = user.Id,
+                email = user.Email,
+                name = user.Name,
+                picture = user.PictureUrl,
+                role = user.Role.ToString(),
+                chargingUserId = user.ChargingUserId
+            }
+        };
+
+        private static string GenerateResetToken()
+        {
+            var bytes = RandomNumberGenerator.GetBytes(32);
+            return Convert.ToBase64String(bytes)
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+        }
+
+        private static string HashToken(string token)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+            return Convert.ToHexString(bytes);
+        }
+
+        private string BuildResetLink(string? requestBaseUrl, string token)
+        {
+            var baseUrl = requestBaseUrl;
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                baseUrl = _configuration["Auth:PasswordResetBaseUrl"];
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                baseUrl = $"{Request.Scheme}://{Request.Host}";
+
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                throw new InvalidOperationException("Invalid reset base URL.");
+            }
+
+            return $"{uri.ToString().TrimEnd('/')}/reset-password?token={Uri.EscapeDataString(token)}";
         }
 
         [HttpPost("logout")]
@@ -842,6 +1063,7 @@ namespace Backend.Controllers
                     _logger.LogError("GitHub OAuth: no verified primary email for user {GithubId}", githubId);
                     return Redirect($"{frontendUrl}?auth_error=github_no_email");
                 }
+                email = email.Trim().ToLowerInvariant();
 
                 // Find existing user by GitHubId or email
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.GitHubId == githubId)

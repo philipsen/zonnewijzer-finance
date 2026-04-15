@@ -12,6 +12,50 @@
         <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
         Sign in with GitHub
       </a>
+      <div class="divider"><span>or</span></div>
+      <div class="email-auth">
+        <div class="auth-mode-toggle">
+          <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">Email login</button>
+          <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">Create account</button>
+        </div>
+        <form class="email-auth-form" @submit.prevent="submitEmailAuth">
+          <input
+            v-if="authMode === 'register'"
+            v-model.trim="authName"
+            type="text"
+            placeholder="Name (optional)"
+            autocomplete="name"
+          >
+          <input
+            v-model.trim="authEmail"
+            type="email"
+            placeholder="Email"
+            autocomplete="email"
+            required
+          >
+          <input
+            v-model="authPassword"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+            minlength="8"
+            required
+          >
+          <button type="submit" class="email-auth-submit" :disabled="emailAuthLoading">
+            {{ emailAuthLoading ? 'Please wait…' : (authMode === 'login' ? 'Sign in' : 'Create account') }}
+          </button>
+        </form>
+        <button
+          v-if="authMode === 'login'"
+          type="button"
+          class="forgot-password-btn"
+          :disabled="forgotPasswordLoading"
+          @click="submitForgotPassword"
+        >
+          {{ forgotPasswordLoading ? 'Sending…' : 'Forgot password?' }}
+        </button>
+        <p v-if="forgotPasswordMessage" class="forgot-password-message">{{ forgotPasswordMessage }}</p>
+      </div>
       <div v-if="authError" class="auth-error">{{ authError }}</div>
     </div>
 
@@ -104,6 +148,13 @@ export default {
     const renderSigninButton = inject('renderSigninButton', null)
     const lastGoogleRenderError = inject('lastGoogleRenderError', ref(''))
     const authError = ref('')
+    const authMode = ref('login')
+    const authEmail = ref('')
+    const authPassword = ref('')
+    const authName = ref('')
+    const emailAuthLoading = ref(false)
+    const forgotPasswordLoading = ref(false)
+    const forgotPasswordMessage = ref('')
 
     const wipeModalOpen = ref(false)
     const wipeLoading = ref(false)
@@ -144,6 +195,51 @@ export default {
         }
       } finally {
         wipeLoading.value = false
+      }
+    }
+
+    const submitEmailAuth = async () => {
+      authError.value = ''
+      forgotPasswordMessage.value = ''
+      emailAuthLoading.value = true
+      try {
+        const endpoint = authMode.value === 'register' ? '/api/auth/register' : '/api/auth/login'
+        const payload = authMode.value === 'register'
+          ? { email: authEmail.value, password: authPassword.value, name: authName.value }
+          : { email: authEmail.value, password: authPassword.value }
+
+        const response = await axios.post(endpoint, payload)
+        localStorage.setItem('token', response.data.token)
+        window.location.reload()
+      } catch (err) {
+        if (err.response?.status === 401) {
+          authError.value = 'Invalid email or password.'
+        } else if (err.response?.status === 409) {
+          authError.value = 'An account with this email already exists.'
+        } else if (typeof err.response?.data === 'string') {
+          authError.value = err.response.data
+        } else {
+          authError.value = 'Authentication failed. Please try again.'
+        }
+      } finally {
+        emailAuthLoading.value = false
+      }
+    }
+
+    const submitForgotPassword = async () => {
+      authError.value = ''
+      forgotPasswordMessage.value = ''
+      forgotPasswordLoading.value = true
+      try {
+        await axios.post('/api/auth/forgot-password', {
+          email: authEmail.value,
+          resetBaseUrl: window.location.origin
+        })
+        forgotPasswordMessage.value = 'If your account exists, a reset link has been sent.'
+      } catch {
+        forgotPasswordMessage.value = 'If your account exists, a reset link has been sent.'
+      } finally {
+        forgotPasswordLoading.value = false
       }
     }
 
@@ -246,13 +342,22 @@ export default {
       previewMode,
       signinButtonEl,
       authError,
+      authMode,
+      authEmail,
+      authPassword,
+      authName,
+      emailAuthLoading,
+      forgotPasswordLoading,
+      forgotPasswordMessage,
       lastGoogleRenderError,
       wipeModalOpen,
       wipeLoading,
       wipeError,
       openWipeModal,
       closeWipeModal,
-      executeWipe
+      executeWipe,
+      submitEmailAuth,
+      submitForgotPassword
     }
   }
 }
@@ -341,6 +446,86 @@ export default {
   margin-top: 1rem;
   color: #b00020;
   font-size: 0.9rem;
+}
+
+.email-auth {
+  margin: 1rem auto 0;
+  width: 100%;
+  max-width: 320px;
+}
+
+.auth-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.auth-mode-toggle button {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.auth-mode-toggle button.active {
+  background: #4a6fa5;
+  border-color: #4a6fa5;
+  color: white;
+}
+
+.email-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.email-auth-form input {
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.95rem;
+}
+
+.email-auth-submit {
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  background: #4a6fa5;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.email-auth-submit:hover:not(:disabled) {
+  background: #3f5f8c;
+}
+
+.email-auth-submit:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.forgot-password-btn {
+  margin-top: 0.55rem;
+  background: transparent;
+  border: none;
+  color: #4a6fa5;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 0.88rem;
+}
+
+.forgot-password-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.forgot-password-message {
+  margin: 0.4rem 0 0;
+  color: #2f5132;
+  font-size: 0.85rem;
 }
 
 .pending-access {
