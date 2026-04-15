@@ -87,6 +87,7 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 builder.Services.AddHttpClient("Mollie");
 builder.Services.AddScoped<IMollieService, MollieService>();
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 
 var app = builder.Build();
 

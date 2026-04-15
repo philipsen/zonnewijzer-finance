@@ -45,6 +45,16 @@
             {{ emailAuthLoading ? 'Please wait…' : (authMode === 'login' ? 'Sign in' : 'Create account') }}
           </button>
         </form>
+        <button
+          v-if="authMode === 'login'"
+          type="button"
+          class="forgot-password-btn"
+          :disabled="forgotPasswordLoading"
+          @click="submitForgotPassword"
+        >
+          {{ forgotPasswordLoading ? 'Sending…' : 'Forgot password?' }}
+        </button>
+        <p v-if="forgotPasswordMessage" class="forgot-password-message">{{ forgotPasswordMessage }}</p>
       </div>
       <div v-if="authError" class="auth-error">{{ authError }}</div>
     </div>
@@ -143,6 +153,8 @@ export default {
     const authPassword = ref('')
     const authName = ref('')
     const emailAuthLoading = ref(false)
+    const forgotPasswordLoading = ref(false)
+    const forgotPasswordMessage = ref('')
 
     const wipeModalOpen = ref(false)
     const wipeLoading = ref(false)
@@ -188,6 +200,7 @@ export default {
 
     const submitEmailAuth = async () => {
       authError.value = ''
+      forgotPasswordMessage.value = ''
       emailAuthLoading.value = true
       try {
         const endpoint = authMode.value === 'register' ? '/api/auth/register' : '/api/auth/login'
@@ -210,6 +223,23 @@ export default {
         }
       } finally {
         emailAuthLoading.value = false
+      }
+    }
+
+    const submitForgotPassword = async () => {
+      authError.value = ''
+      forgotPasswordMessage.value = ''
+      forgotPasswordLoading.value = true
+      try {
+        await axios.post('/api/auth/forgot-password', {
+          email: authEmail.value,
+          resetBaseUrl: window.location.origin
+        })
+        forgotPasswordMessage.value = 'If your account exists, a reset link has been sent.'
+      } catch {
+        forgotPasswordMessage.value = 'If your account exists, a reset link has been sent.'
+      } finally {
+        forgotPasswordLoading.value = false
       }
     }
 
@@ -317,6 +347,8 @@ export default {
       authPassword,
       authName,
       emailAuthLoading,
+      forgotPasswordLoading,
+      forgotPasswordMessage,
       lastGoogleRenderError,
       wipeModalOpen,
       wipeLoading,
@@ -324,7 +356,8 @@ export default {
       openWipeModal,
       closeWipeModal,
       executeWipe,
-      submitEmailAuth
+      submitEmailAuth,
+      submitForgotPassword
     }
   }
 }
@@ -472,6 +505,27 @@ export default {
 .email-auth-submit:disabled {
   opacity: 0.7;
   cursor: default;
+}
+
+.forgot-password-btn {
+  margin-top: 0.55rem;
+  background: transparent;
+  border: none;
+  color: #4a6fa5;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 0.88rem;
+}
+
+.forgot-password-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.forgot-password-message {
+  margin: 0.4rem 0 0;
+  color: #2f5132;
+  font-size: 0.85rem;
 }
 
 .pending-access {
