@@ -1,4 +1,4 @@
-name: Build and Push Docker Images
+name: Build and Deploy Backend Image
 
 on:
   push:
@@ -25,16 +25,10 @@ jobs:
       - name: Build and push backend image
         uses: docker/build-push-action@v5
         with:
-          context: ./Backend
+          context: .
+          file: ./Backend/Dockerfile
           push: true
           tags: philipsen/finance-backend:latest
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./Frontend
-          push: true
-          tags: philipsen/finance-frontend:latest
 
   deploy:
     needs: build-and-push
