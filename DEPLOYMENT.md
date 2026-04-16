@@ -24,10 +24,9 @@ This guide explains how to deploy the Finance App using Docker images from Docke
    ```
 
 4. **Access the application**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:5001
+   - App + API: http://localhost:5000
 
-## Production Deployment (with Nginx)
+## Production Deployment (Single Backend Container)
 
 1. **Create required directories**
    ```bash
@@ -41,8 +40,7 @@ This guide explains how to deploy the Finance App using Docker images from Docke
    ```
 
 3. **Access the application**
-   - Frontend: http://localhost:8080
-   - Backend API: http://localhost:8080/api/
+   - App + API: http://localhost:5000
 
 ## Configuration
 
@@ -58,12 +56,17 @@ DATABASE_PATH=/app/database/finance.db
 ASPNETCORE_ENVIRONMENT=Production
 BACKEND_PORT=5001
 
-# Frontend  
-FRONTEND_PORT=3000
+# App
+APP_PORT=5000
 
-# Nginx (production only)
-HTTP_PORT=80
-HTTPS_PORT=443
+# SMTP (used for password reset emails, via Backend -> SmtpEmailService)
+SMTP_HOST=mail-eu.smtp2go.com
+SMTP_PORT=587
+SMTP_ENABLESSL=true
+SMTP_USERNAME=your-smtp-username
+SMTP_PASSWORD=your-smtp-password
+SMTP_FROM_EMAIL=your-from-email
+SMTP_FROM_NAME=Zonnewijzer Finance
 ```
 
 ### Google OAuth Setup
@@ -126,7 +129,7 @@ cp data/finance.db data/finance.db.backup.$(date +%Y%m%d)
 
 ### Common Issues
 
-1. **Port conflicts**: If ports 8080, 3000, or 5000 are in use, modify the ports in the docker-compose file
+1. **Port conflicts**: If port 5000 is in use, modify the port mapping in docker-compose
 
 2. **Database permissions**: Ensure the `data` directory is writable
    ```bash
@@ -146,8 +149,7 @@ docker-compose up -d
 
 ## Service URLs
 
-- **Frontend**: Vue.js application with invoice management interface
-- **Backend**: ASP.NET Core API with Google OAuth and SQLite database
+- **App + Backend**: ASP.NET Core service that serves both API and Vue frontend assets
 - **Database**: SQLite database file for persistence
 
 ## Support
@@ -157,5 +159,4 @@ For issues or questions, check the application logs or contact the development t
 ## Version Information
 
 - Backend Image: `philipsen/finance-backend:latest`
-- Frontend Image: `philipsen/finance-frontend:latest`
 - Last Updated: March 2026

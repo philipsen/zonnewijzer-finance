@@ -1,6 +1,7 @@
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using QRCoder;
 using System.IO;
 
 
@@ -20,6 +21,23 @@ namespace Backend.Services
             var excl = Math.Round(totalInclVat / (1 + VatRate), 2, MidpointRounding.AwayFromZero);
             var vat = Math.Round(totalInclVat - excl, 2, MidpointRounding.AwayFromZero);
             return (excl, vat);
+        }
+
+        private static byte[]? TryGeneratePaymentQrCode(string? paymentUrl)
+        {
+            if (string.IsNullOrWhiteSpace(paymentUrl))
+                return null;
+
+            if (!Uri.TryCreate(paymentUrl, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                return null;
+            }
+
+            using var qrGenerator = new QRCodeGenerator();
+            using var qrData = qrGenerator.CreateQrCode(paymentUrl, QRCodeGenerator.ECCLevel.Q);
+            var pngQrCode = new PngByteQRCode(qrData);
+            return pngQrCode.GetGraphic(8);
         }
 
         private static void ComposeInvoiceFooter(PageDescriptor page)
@@ -47,6 +65,7 @@ namespace Backend.Services
             var logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "zonnewijzer_logo.png");
             var hasLogo = File.Exists(logoPath);
             var (totalExclVat, vatAmount) = SplitVatInclusive(invoiceData.TotalAmount);
+            var paymentQrCode = TryGeneratePaymentQrCode(invoiceData.PaymentUrl);
 
             var document = Document.Create(container =>
             {
@@ -168,8 +187,25 @@ namespace Backend.Services
                                     if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
                                     {
                                         col.Item().PaddingTop(10).Text("Pay online:").Bold();
-                                        col.Item().PaddingTop(3).Text(invoiceData.PaymentUrl)
-                                            .FontColor(Colors.Blue.Medium).FontSize(10);
+                                        col.Item().PaddingTop(6).Row(row =>
+                                        {
+                                            row.RelativeItem().Column(linkCol =>
+                                            {
+                                                linkCol.Item().Text(invoiceData.PaymentUrl)
+                                                    .FontColor(Colors.Blue.Medium).FontSize(10);
+                                                linkCol.Item().PaddingTop(3).Text("If scanning is easier, use the QR code.")
+                                                    .FontSize(9).FontColor(Colors.Grey.Darken1);
+                                            });
+
+                                            if (paymentQrCode != null)
+                                            {
+                                                row.ConstantItem(120).AlignRight().Column(qrCol =>
+                                                {
+                                                    qrCol.Item().AlignCenter().Text("Scan to pay").FontSize(9).Bold();
+                                                    qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(paymentQrCode);
+                                                });
+                                            }
+                                        });
                                     }
                                 }
                                 col.Item().PaddingTop(10).Text("For questions regarding this invoice, please contact the billing department.")
