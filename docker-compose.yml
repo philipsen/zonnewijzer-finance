@@ -1,6 +1,9 @@
 services:
   backend:
-    image: philipsen/finance-backend:latest
+    build:
+      context: .
+      dockerfile: Backend/Dockerfile
+    image: finance-backend:local
     container_name: finance-backend
     ports:
       - "5000:5000"
@@ -11,15 +14,6 @@ services:
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
-    networks:
-      - finance-network
-    restart: unless-stopped
-
-  frontend:
-    image: philipsen/finance-frontend:latest
-    container_name: finance-frontend
-    ports:
-      - "3000:80"
     networks:
       - finance-network
     restart: unless-stopped

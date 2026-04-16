@@ -807,6 +807,10 @@ namespace Backend.Controllers
             return Ok(result);
         }
 
+        // Convenience route so `/charging-users` (without `/api/auth` prefix) also works
+        [HttpGet("/charging-users")]
+        public Task<IActionResult> GetChargingUsersRoot() => GetChargingUsers();
+
         [HttpGet("charging-users/{id}")]
         public async Task<IActionResult> GetChargingUserById(int id)
         {
