@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Yarp.ReverseProxy.Configuration;
 using System.Text;
 using Backend.Data;
 using Backend.Services;
@@ -81,6 +82,27 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 // Add health checks
 builder.Services.AddHealthChecks();
+builder.Services.AddReverseProxy().LoadFromMemory(
+    new[]
+    {
+        new RouteConfig
+        {
+            RouteId = "vite-dev-catchall",
+            ClusterId = "vite-dev",
+            Match = new RouteMatch { Path = "/{**catch-all}" }
+        }
+    },
+    new[]
+    {
+        new ClusterConfig
+        {
+            ClusterId = "vite-dev",
+            Destinations = new Dictionary<string, DestinationConfig>
+            {
+                { "vite", new DestinationConfig { Address = "http://localhost:3000/" } }
+            }
+        }
+    });
 
 // Add custom services
 builder.Services.AddScoped<IJwtService, JwtService>();
@@ -117,6 +139,17 @@ var app = builder.Build();
     app.UseAuthentication();
     app.UseAuthorization();
     app.MapControllers();
+
+    if (app.Environment.IsDevelopment())
+    {
+        app.MapReverseProxy();
+    }
+    else
+    {
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
+        app.MapFallbackToFile("index.html");
+    }
 
     Log.Information("Finance App backend started successfully");
     app.Run();
