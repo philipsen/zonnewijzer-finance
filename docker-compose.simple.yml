@@ -15,15 +15,6 @@ services:
       - finance-network
     restart: unless-stopped
 
-  frontend:
-    image: philipsen/finance-frontend:latest
-    container_name: finance-frontend
-    ports:
-      - "3000:80"
-    networks:
-      - finance-network
-    restart: unless-stopped
-
 networks:
   finance-network:
     driver: bridge
