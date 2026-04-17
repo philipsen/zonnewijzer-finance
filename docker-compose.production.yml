@@ -22,11 +22,12 @@ services:
     volumes:                                                                                                                                                                                                                                       
       - ./data:/app/database                                                                                                                                                                                                                       
       - ./logs:/app/logs                                                                                                                                                                                                                           
-    networks:                                                                                                                                                                                                                                      
-      - finance-network                                                                                                                                                                                                                            
-      - mailcow-ext                                                                                                                                                                                                                                
-                                                                                                                                                                                                                                                   
-    restart: unless-stopped                                                                                                                                                                                                                        
+    networks:
+      - finance-network
+      - mailcow-ext
+      - seq-network
+
+    restart: unless-stopped
     healthcheck:                                                                                                                                                                                                                                   
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]                                                                                                                                                                                  
       interval: 30s                                                                                                                                                                                                                                
@@ -36,11 +37,14 @@ services:
 networks:                                                                                                                                                                                                                                          
   finance-network:                                                                                                                                                                                                                                 
     driver: bridge                                                                                                                                                                                                                                 
-  mailcow-ext:                                                                                                                                                                                                                                     
-    external: true                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                                   
-volumes:                                                                                                                                                                                                                                           
+  mailcow-ext:
+    external: true
+  seq-network:
+    name: seq_default
+    external: true
+
+
+volumes:
   database:                                                                                                                                                                                                                                        
     driver: local                                                                                                                                                                                                                                  
   logs:                                                                                                                                                                                                                                            
