@@ -208,6 +208,91 @@ namespace Backend.Controllers
             }
         }
 
+        [Authorize(Roles = "Admin")]
+        [HttpPost("users/invite")]
+        public async Task<IActionResult> InviteUser([FromBody] InviteUserRequest request)
+        {
+            try
+            {
+                var email = request.Email?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                    return BadRequest("A valid email address is required.");
+
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var invitingUser = await _context.Users.FindAsync(currentUserId);
+                if (invitingUser == null || invitingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                if (user == null)
+                {
+                    var displayName = string.IsNullOrWhiteSpace(request.Name)
+                        ? email.Split('@')[0]
+                        : request.Name.Trim();
+
+                    user = new User
+                    {
+                        Email = email,
+                        Name = displayName,
+                        CreatedAt = DateTime.UtcNow,
+                        LastLoginAt = DateTime.UtcNow
+                    };
+
+                    // Temporary password hash so the invited account can complete set-password flow.
+                    var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
+                    user.PasswordHash = PasswordHasher.HashPassword(user, temporaryPassword);
+                    _context.Users.Add(user);
+                    await _context.SaveChangesAsync();
+                }
+
+                var rawToken = GenerateResetToken();
+                var tokenHash = HashToken(rawToken);
+                var expiresAt = DateTime.UtcNow.AddMinutes(30);
+
+                var existingActiveTokens = await _context.PasswordResetTokens
+                    .Where(t => t.UserId == user.Id && t.UsedAt == null)
+                    .ToListAsync();
+                foreach (var existingToken in existingActiveTokens)
+                    existingToken.UsedAt = DateTime.UtcNow;
+
+                _context.PasswordResetTokens.Add(new PasswordResetToken
+                {
+                    UserId = user.Id,
+                    TokenHash = tokenHash,
+                    ExpiresAt = expiresAt,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = invitingUser.Name,
+                    Action = $"Invited user '{email}'"
+                });
+                await _context.SaveChangesAsync();
+
+                var resetLink = BuildResetLink(request.ResetBaseUrl, rawToken);
+                var body = $@"
+<p>Hello {System.Net.WebUtility.HtmlEncode(user.Name)},</p>
+<p>You were invited to the Zonnewijzer Finance app.</p>
+<p><a href=""{resetLink}"">Click here to set your password</a></p>
+<p>This invite link is valid for 30 minutes and can only be used once.</p>";
+
+                await _emailService.SendAsync(user.Email, "You're invited to Zonnewijzer Finance", body);
+
+                return Ok(new { message = "Invitation sent." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to invite user {Email}", request.Email);
+                return BadRequest("Failed to send invite.");
+            }
+        }
+
         [HttpPost("google")]
         public async Task<IActionResult> GoogleAuth([FromBody] GoogleAuthRequest request)
         {
@@ -423,7 +508,11 @@ namespace Backend.Controllers
                         role = u.Role.ToString(),
                         chargingUserId = u.ChargingUserId,
                         createdAt = u.CreatedAt,
-                        lastLoginAt = u.LastLoginAt
+                        lastLoginAt = u.LastLoginAt,
+                        hasPendingInvite = _context.PasswordResetTokens.Any(t =>
+                            t.UserId == u.Id &&
+                            t.UsedAt == null &&
+                            t.ExpiresAt > DateTime.UtcNow)
                     })
                     .ToListAsync();
 

@@ -42,6 +42,13 @@ namespace Backend.Controllers
         public string Role { get; set; } = string.Empty;
     }
 
+    public class InviteUserRequest
+    {
+        public string Email { get; set; } = string.Empty;
+        public string? Name { get; set; }
+        public string? ResetBaseUrl { get; set; }
+    }
+
     public class UpdateChargingUserRequest
     {
         public string? DisplayName { get; set; }

@@ -7,6 +7,29 @@
       </div>
     </div>
 
+    <form
+      v-if="currentUserRole === 'Admin'"
+      class="invite-form"
+      @submit.prevent="inviteUserByEmail"
+    >
+      <label for="invite-email" class="invite-label">Invite user by email</label>
+      <div class="invite-row">
+        <input
+          id="invite-email"
+          v-model="inviteEmail"
+          type="email"
+          class="invite-input"
+          placeholder="name@example.com"
+          required
+        >
+        <button type="submit" class="btn btn-invite" :disabled="inviting || !inviteEmail.trim()">
+          {{ inviting ? 'Sending...' : 'Invite' }}
+        </button>
+      </div>
+      <p v-if="inviteSuccess" class="invite-message success">{{ inviteSuccess }}</p>
+      <p v-if="inviteError" class="invite-message error-text">{{ inviteError }}</p>
+    </form>
+
     
     <div v-if="loading" class="loading">
       Loading users...
@@ -34,7 +57,10 @@
           </div>
         </div>
         <div class="user-info">
-          <h3 class="user-name">{{ user.name }}</h3>
+          <h3 class="user-name">
+            {{ user.name }}
+            <span v-if="user.hasPendingInvite" class="invite-badge">Invited</span>
+          </h3>
           <p class="user-email">{{ user.email }}</p>
           <div class="user-dates">
             <div class="date-item">
@@ -88,6 +114,10 @@ export default {
     const error = ref('')
     const currentUserRole = ref('')
     const currentUserId = ref(null)
+    const inviteEmail = ref('')
+    const inviting = ref(false)
+    const inviteSuccess = ref('')
+    const inviteError = ref('')
 
     const fetchCurrentUser = async () => {
       try {
@@ -160,6 +190,42 @@ export default {
       }
     }
 
+    const inviteUserByEmail = async () => {
+      inviteSuccess.value = ''
+      inviteError.value = ''
+      const email = inviteEmail.value.trim()
+      if (!email) return
+
+      try {
+        inviting.value = true
+        const token = localStorage.getItem('token')
+        if (!token) {
+          inviteError.value = 'You must be logged in to invite users.'
+          return
+        }
+
+        await axios.post('/api/auth/users/invite', {
+          email,
+          resetBaseUrl: window.location.origin
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+
+        inviteSuccess.value = `Invitation sent to ${email}.`
+        inviteEmail.value = ''
+        await fetchUsers()
+      } catch (err) {
+        console.error('Failed to invite user:', err)
+        if (err.response?.status === 403) {
+          inviteError.value = 'Only administrators can invite users.'
+        } else {
+          inviteError.value = err.response?.data || 'Failed to send invitation.'
+        }
+      } finally {
+        inviting.value = false
+      }
+    }
+
     const formatDate = (dateString) => {
       return new Date(dateString).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -190,9 +256,14 @@ export default {
       error,
       currentUserRole,
       currentUserId,
+      inviteEmail,
+      inviting,
+      inviteSuccess,
+      inviteError,
       formatDate,
       getUserInitials,
-      updateUserRole
+      updateUserRole,
+      inviteUserByEmail
     }
   }
 }
@@ -225,6 +296,70 @@ export default {
   background: #f8f9fa;
   padding: 0.5rem 1rem;
   border-radius: 20px;
+}
+
+.invite-form {
+  margin-bottom: 1.5rem;
+  padding: 0.75rem;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  background: #f8f9fa;
+}
+
+.invite-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #444;
+}
+
+.invite-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.invite-input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.invite-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
+}
+
+.btn-invite {
+  background-color: #28a745;
+  color: white;
+  min-width: 90px;
+}
+
+.btn-invite:hover {
+  background-color: #1f8838;
+}
+
+.btn-invite:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.invite-message {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+}
+
+.success {
+  color: #1f8838;
+}
+
+.error-text {
+  color: #b42318;
 }
 
 .loading {
@@ -305,6 +440,24 @@ export default {
   margin: 0 0 0.5rem 0;
   color: #333;
   font-size: 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.invite-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #7a2e00;
+  background: #ffe8cc;
+  border: 1px solid #ffd8a8;
 }
 
 .user-email {
@@ -433,6 +586,15 @@ export default {
 
   .users-grid {
     grid-template-columns: 1fr;
+  }
+
+  .invite-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-invite {
+    width: 100%;
   }
 
   .user-card {
