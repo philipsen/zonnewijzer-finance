@@ -69,6 +69,7 @@ namespace Backend.Controllers
                 });
 
                 await _context.SaveChangesAsync();
+                await NotifyAdminsOfNewSignupAsync(user, "Email/Password");
                 var token = _jwtService.GenerateToken(user);
                 return Ok(BuildAuthResponse(user, token));
             }
@@ -99,6 +100,7 @@ namespace Backend.Controllers
                 if (verify == PasswordVerificationResult.SuccessRehashNeeded)
                     user.PasswordHash = PasswordHasher.HashPassword(user, request.Password);
 
+                var isFirstLogin = user.LastLoginAt == user.CreatedAt;
                 user.LastLoginAt = DateTime.UtcNow;
                 _context.EventLogs.Add(new EventLog
                 {
@@ -107,6 +109,8 @@ namespace Backend.Controllers
                     Action = "Login (Email/Password)"
                 });
                 await _context.SaveChangesAsync();
+                if (isFirstLogin && await IsInvitedUserAsync(user))
+                    await NotifyAdminsOfInviteMilestoneAsync(user, "First login");
 
                 var token = _jwtService.GenerateToken(user);
                 return Ok(BuildAuthResponse(user, token));
@@ -187,6 +191,7 @@ namespace Backend.Controllers
                     return BadRequest("This reset link is invalid or expired.");
 
                 var user = resetToken.User;
+                var invitedUser = await IsInvitedUserAsync(user);
                 user.PasswordHash = PasswordHasher.HashPassword(user, request.NewPassword);
                 user.LastLoginAt = DateTime.UtcNow;
                 resetToken.UsedAt = DateTime.UtcNow;
@@ -198,6 +203,8 @@ namespace Backend.Controllers
                     Action = "Password reset"
                 });
                 await _context.SaveChangesAsync();
+                if (invitedUser)
+                    await NotifyAdminsOfInviteMilestoneAsync(user, "Password set");
 
                 return Ok(new { message = "Password has been reset successfully." });
             }
@@ -205,6 +212,91 @@ namespace Backend.Controllers
             {
                 _logger.LogError(ex, "Password reset failed");
                 return BadRequest("Password reset failed.");
+            }
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpPost("users/invite")]
+        public async Task<IActionResult> InviteUser([FromBody] InviteUserRequest request)
+        {
+            try
+            {
+                var email = request.Email?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                    return BadRequest("A valid email address is required.");
+
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var invitingUser = await _context.Users.FindAsync(currentUserId);
+                if (invitingUser == null || invitingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                if (user == null)
+                {
+                    var displayName = string.IsNullOrWhiteSpace(request.Name)
+                        ? email.Split('@')[0]
+                        : request.Name.Trim();
+
+                    user = new User
+                    {
+                        Email = email,
+                        Name = displayName,
+                        CreatedAt = DateTime.UtcNow,
+                        LastLoginAt = DateTime.UtcNow
+                    };
+
+                    // Temporary password hash so the invited account can complete set-password flow.
+                    var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
+                    user.PasswordHash = PasswordHasher.HashPassword(user, temporaryPassword);
+                    _context.Users.Add(user);
+                    await _context.SaveChangesAsync();
+                }
+
+                var rawToken = GenerateResetToken();
+                var tokenHash = HashToken(rawToken);
+                var expiresAt = DateTime.UtcNow.AddMinutes(30);
+
+                var existingActiveTokens = await _context.PasswordResetTokens
+                    .Where(t => t.UserId == user.Id && t.UsedAt == null)
+                    .ToListAsync();
+                foreach (var existingToken in existingActiveTokens)
+                    existingToken.UsedAt = DateTime.UtcNow;
+
+                _context.PasswordResetTokens.Add(new PasswordResetToken
+                {
+                    UserId = user.Id,
+                    TokenHash = tokenHash,
+                    ExpiresAt = expiresAt,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = invitingUser.Name,
+                    Action = $"Invited user '{email}'"
+                });
+                await _context.SaveChangesAsync();
+
+                var resetLink = BuildResetLink(request.ResetBaseUrl, rawToken);
+                var body = $@"
+<p>Hello {System.Net.WebUtility.HtmlEncode(user.Name)},</p>
+<p>You were invited to the Zonnewijzer Finance app.</p>
+<p><a href=""{resetLink}"">Click here to set your password</a></p>
+<p>This invite link is valid for 30 minutes and can only be used once.</p>";
+
+                await _emailService.SendAsync(user.Email, "You're invited to Zonnewijzer Finance", body);
+
+                return Ok(new { message = "Invitation sent." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to invite user {Email}", request.Email);
+                return BadRequest("Failed to send invite.");
             }
         }
 
@@ -232,6 +324,7 @@ namespace Backend.Controllers
                 var normalizedEmail = payload.Email.Trim().ToLowerInvariant();
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.GoogleId == payload.Subject)
                     ?? await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail);
+                var isNewUser = user == null;
 
                 if (user == null)
                 {
@@ -265,6 +358,8 @@ namespace Backend.Controllers
                 });
 
                 await _context.SaveChangesAsync();
+                if (isNewUser)
+                    await NotifyAdminsOfNewSignupAsync(user, "Google");
 
                 var token = _jwtService.GenerateToken(user);
 
@@ -423,7 +518,11 @@ namespace Backend.Controllers
                         role = u.Role.ToString(),
                         chargingUserId = u.ChargingUserId,
                         createdAt = u.CreatedAt,
-                        lastLoginAt = u.LastLoginAt
+                        lastLoginAt = u.LastLoginAt,
+                        hasPendingInvite = _context.PasswordResetTokens.Any(t =>
+                            t.UserId == u.Id &&
+                            t.UsedAt == null &&
+                            t.ExpiresAt > DateTime.UtcNow)
                     })
                     .ToListAsync();
 
@@ -1072,6 +1171,7 @@ namespace Backend.Controllers
                 // Find existing user by GitHubId or email
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.GitHubId == githubId)
                         ?? await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                var isNewUser = user == null;
 
                 if (user == null)
                 {
@@ -1103,6 +1203,8 @@ namespace Backend.Controllers
                 });
 
                 await _context.SaveChangesAsync();
+                if (isNewUser)
+                    await NotifyAdminsOfNewSignupAsync(user, "GitHub");
 
                 var jwt = _jwtService.GenerateToken(user);
                 return Redirect($"{frontendUrl}?github_token={Uri.EscapeDataString(jwt)}");
@@ -1112,6 +1214,100 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "GitHub OAuth callback failed");
                 return Redirect($"{frontendUrl}?auth_error=github_error");
             }
+        }
+
+        private async Task NotifyAdminsOfNewSignupAsync(User newUser, string signupMethod)
+        {
+            try
+            {
+                var adminEmails = _configuration.GetSection("AdminEmails").Get<string[]>() ?? Array.Empty<string>();
+                var recipients = adminEmails
+                    .Where(e => !string.IsNullOrWhiteSpace(e))
+                    .Select(e => e.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (!recipients.Any())
+                    return;
+
+                var encodedName = System.Net.WebUtility.HtmlEncode(newUser.Name);
+                var encodedEmail = System.Net.WebUtility.HtmlEncode(newUser.Email);
+                var encodedMethod = System.Net.WebUtility.HtmlEncode(signupMethod);
+                var editUserLink = BuildUserEditLink(newUser.Id);
+                var body = $@"
+<p>A new user has signed up for Zonnewijzer Finance.</p>
+<ul>
+  <li>Name: {encodedName}</li>
+  <li>Email: {encodedEmail}</li>
+  <li>Method: {encodedMethod}</li>
+</ul>
+<p><a href=""{System.Net.WebUtility.HtmlEncode(editUserLink)}"">Edit user</a></p>";
+
+                foreach (var recipient in recipients)
+                    await _emailService.SendAsync(recipient, "New Zonnewijzer Finance signup", body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to notify admins about new signup for {Email}", newUser.Email);
+            }
+        }
+
+        private async Task<bool> IsInvitedUserAsync(User user)
+        {
+            var email = user.Email?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(email))
+                return false;
+
+            return await _context.EventLogs.AnyAsync(e =>
+                e.Action == $"Invited user '{email}'");
+        }
+
+        private async Task NotifyAdminsOfInviteMilestoneAsync(User user, string milestone)
+        {
+            try
+            {
+                var adminEmails = _configuration.GetSection("AdminEmails").Get<string[]>() ?? Array.Empty<string>();
+                var recipients = adminEmails
+                    .Where(e => !string.IsNullOrWhiteSpace(e))
+                    .Select(e => e.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (!recipients.Any())
+                    return;
+
+                var encodedName = System.Net.WebUtility.HtmlEncode(user.Name);
+                var encodedEmail = System.Net.WebUtility.HtmlEncode(user.Email);
+                var encodedMilestone = System.Net.WebUtility.HtmlEncode(milestone);
+                var editUserLink = BuildUserEditLink(user.Id);
+                var body = $@"
+<p>An invited user reached a milestone in Zonnewijzer Finance.</p>
+<ul>
+  <li>Name: {encodedName}</li>
+  <li>Email: {encodedEmail}</li>
+  <li>Milestone: {encodedMilestone}</li>
+</ul>
+<p><a href=""{System.Net.WebUtility.HtmlEncode(editUserLink)}"">Edit user</a></p>";
+
+                foreach (var recipient in recipients)
+                    await _emailService.SendAsync(recipient, "Invited user activity", body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to notify admins about invite milestone for {Email}", user.Email);
+            }
+        }
+
+        private string BuildUserEditLink(int userId)
+        {
+            var baseUrl = _configuration["Auth:PasswordResetBaseUrl"]
+                ?? _configuration["GitHub:FrontendUrl"]
+                ?? $"{Request.Scheme}://{Request.Host}";
+
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+                return $"/users/{userId}/edit";
+
+            return $"{uri.ToString().TrimEnd('/')}/users/{userId}/edit";
         }
     }
 }

@@ -63,7 +63,7 @@
       <div class="pending-icon">🔒</div>
       <h3>Account not yet activated</h3>
       <p>Your account (<strong>{{ appUser.email }}</strong>) has been created but is not yet linked to a charging account.</p>
-      <p>Please contact <strong>Tom</strong> (the administrator) to request access.</p>
+      <p>Please contact <strong>Wim</strong> (the administrator) to request access.</p>
     </div>
 
     <div v-else class="dashboard">
