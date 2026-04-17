@@ -11,6 +11,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5000
       - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
+      - Serilog__WriteTo__1__Args__serverUrl=http://host.docker.internal:5341
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
