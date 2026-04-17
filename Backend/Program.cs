@@ -6,6 +6,7 @@ using System.Text;
 using Backend.Data;
 using Backend.Services;
 using Serilog;
+using Serilog.Events;
 using Serilog.Formatting.Compact;
 
 // Configure Serilog early
@@ -117,6 +118,16 @@ var app = builder.Build();
     app.UseSerilogRequestLogging(options =>
     {
         options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+        options.GetLevel = (httpContext, _, ex) =>
+        {
+            if (ex != null || httpContext.Response.StatusCode >= 500)
+                return LogEventLevel.Error;
+
+            if (httpContext.Request.Path.StartsWithSegments("/health"))
+                return LogEventLevel.Verbose; // filtered by default minimum level
+
+            return LogEventLevel.Information;
+        };
     });
 
     // Ensure database migrations are applied
