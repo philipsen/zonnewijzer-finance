@@ -2,7 +2,9 @@ using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +20,7 @@ public class AuthControllerTests : IDisposable
     private readonly Mock<IJwtService> _jwtMock;
     private readonly Mock<IConfiguration> _configMock;
     private readonly Mock<IEmailService> _emailMock;
+    private readonly Mock<IWebHostEnvironment> _envMock;
 
     public AuthControllerTests()
     {
@@ -28,14 +31,23 @@ public class AuthControllerTests : IDisposable
         _jwtMock = new Mock<IJwtService>();
         _configMock = new Mock<IConfiguration>();
         _emailMock = new Mock<IEmailService>();
+        _envMock = new Mock<IWebHostEnvironment>();
+        _envMock.Setup(e => e.EnvironmentName).Returns(Environments.Development);
     }
 
     public void Dispose() => _db.Dispose();
 
-    private AuthController BuildController(string? validUserId = "1")
+    private AuthController BuildController(string? validUserId = "1", bool development = true)
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(validUserId);
-        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance, _emailMock.Object);
+        _envMock.Setup(e => e.EnvironmentName).Returns(development ? Environments.Development : Environments.Production);
+        var controller = new AuthController(
+            _db,
+            _jwtMock.Object,
+            _configMock.Object,
+            NullLogger<AuthController>.Instance,
+            _emailMock.Object,
+            _envMock.Object);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
@@ -200,7 +212,13 @@ public class AuthControllerTests : IDisposable
     public async Task GetUser_WhenUserMissing_ReturnsNotFound()
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("42");
-        var controller = new AuthController(_db, _jwtMock.Object, _configMock.Object, NullLogger<AuthController>.Instance, _emailMock.Object);
+        var controller = new AuthController(
+            _db,
+            _jwtMock.Object,
+            _configMock.Object,
+            NullLogger<AuthController>.Instance,
+            _emailMock.Object,
+            _envMock.Object);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
@@ -220,6 +238,19 @@ public class AuthControllerTests : IDisposable
         Assert.Equal("Pat", doc.RootElement.GetProperty("name").GetString());
         Assert.Equal("Admin", doc.RootElement.GetProperty("role").GetString());
         Assert.Equal(7, doc.RootElement.GetProperty("chargingUserId").GetInt32());
+        Assert.True(doc.RootElement.GetProperty("devUserDeletionEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task GetUser_InProduction_DevUserDeletionDisabled()
+    {
+        await AddUser(1, "Pat", UserRole.Admin);
+        var controller = BuildController(development: false);
+        var result = await controller.GetUser();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.GetProperty("devUserDeletionEnabled").GetBoolean());
     }
 
     // ── GetUserById ────────────────────────────────────────────────────────────
@@ -249,6 +280,59 @@ public class AuthControllerTests : IDisposable
         var doc = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal("Alice", doc.RootElement.GetProperty("name").GetString());
         Assert.Equal("Admin", doc.RootElement.GetProperty("role").GetString());
+    }
+
+    // ── DeleteUser (Development only) ─────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteUser_InProduction_ReturnsNotFound()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Victim");
+        var result = await BuildController(development: false).DeleteUser(2);
+        Assert.IsType<NotFoundResult>(result);
+        Assert.NotNull(await _db.Users.FindAsync(2));
+    }
+
+    [Fact]
+    public async Task DeleteUser_NonAdmin_ReturnsForbid()
+    {
+        await AddUser(1, "Regular", UserRole.Base);
+        await AddUser(2, "Victim");
+        var result = await BuildController().DeleteUser(2);
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task DeleteUser_Self_ReturnsBadRequest()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Other", UserRole.Admin);
+        var result = await BuildController().DeleteUser(1);
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(bad.Value);
+        Assert.Contains("own account", json);
+    }
+
+    [Fact]
+    public async Task DeleteUser_SoleAdmin_ReturnsBadRequest()
+    {
+        await AddUser(1, "SoleAdmin", UserRole.Admin);
+        var result = await BuildController().DeleteUser(1);
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(bad.Value);
+        Assert.Contains("last administrator", json);
+    }
+
+    [Fact]
+    public async Task DeleteUser_AsAdmin_RemovesUser()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Goner");
+        var result = await BuildController().DeleteUser(2);
+        Assert.IsType<NoContentResult>(result);
+        Assert.Null(await _db.Users.FindAsync(2));
+        Assert.NotNull(await _db.Users.FindAsync(1));
     }
 
     // ── UpdateUser ─────────────────────────────────────────────────────────────
