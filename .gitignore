@@ -114,6 +114,10 @@ dist
 # Vite build output
 dist/
 
+# Playwright (Frontend E2E)
+Frontend/playwright-report/
+Frontend/test-results/
+
 # Rollup build output
 build/
 
