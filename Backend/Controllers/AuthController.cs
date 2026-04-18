@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,15 +21,23 @@ namespace Backend.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthController> _logger;
         private readonly IEmailService _emailService;
+        private readonly IWebHostEnvironment _environment;
         private static readonly PasswordHasher<User> PasswordHasher = new();
 
-        public AuthController(ApplicationDbContext context, IJwtService jwtService, IConfiguration configuration, ILogger<AuthController> logger, IEmailService emailService)
+        public AuthController(
+            ApplicationDbContext context,
+            IJwtService jwtService,
+            IConfiguration configuration,
+            ILogger<AuthController> logger,
+            IEmailService emailService,
+            IWebHostEnvironment environment)
         {
             _context = context;
             _jwtService = jwtService;
             _configuration = configuration;
             _logger = logger;
             _emailService = emailService;
+            _environment = environment;
         }
 
         [HttpPost("register")]
@@ -474,7 +483,8 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargingUserId = user.ChargingUserId
+                    chargingUserId = user.ChargingUserId,
+                    devUserDeletionEnabled = _environment.IsDevelopment()
                 });
             }
             catch (Exception ex)
@@ -805,6 +815,72 @@ namespace Backend.Controllers
             {
                 return BadRequest($"Update failed: {ex.Message}");
             }        }
+
+        /// <summary>
+        /// Permanently deletes an app user (invoices and password-reset tokens cascade). Development environment only.
+        /// </summary>
+        [Authorize(Roles = "Admin")]
+        [HttpDelete("users/{id:int}")]
+        public async Task<IActionResult> DeleteUser(int id)
+        {
+            if (!_environment.IsDevelopment())
+            {
+                _logger.LogWarning("Rejected user delete outside Development (target user {TargetId})", id);
+                return NotFound();
+            }
+
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FindAsync(currentUserId);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                var user = await _context.Users.FindAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found." });
+
+                if (user.Role == UserRole.Admin)
+                {
+                    var otherAdmins = await _context.Users.CountAsync(u => u.Id != id && u.Role == UserRole.Admin);
+                    if (otherAdmins == 0)
+                        return BadRequest(new { message = "Cannot delete the last administrator account." });
+                }
+
+                if (id == currentUserId)
+                    return BadRequest(new { message = "You cannot delete your own account." });
+
+                var targetLabel = $"{user.Name} ({user.Email})";
+                _context.Users.Remove(user);
+                await _context.SaveChangesAsync();
+
+                _logger.LogWarning(
+                    "Development: admin {AdminId} deleted user {DeletedId} ({Target})",
+                    currentUserId,
+                    id,
+                    targetLabel);
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"[Development] Deleted user account: {targetLabel}"
+                });
+                await _context.SaveChangesAsync();
+
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting user {UserId}", id);
+                return BadRequest(new { message = $"Delete failed: {ex.Message}" });
+            }
+        }
 
         [Authorize(Roles = "Admin")]
         [HttpPut("users/{id}/role")]

@@ -96,6 +96,15 @@
           >
             Edit User
           </router-link>
+          <button
+            v-if="currentUserRole === 'Admin' && devUserDeletionEnabled && user.id !== currentUserId"
+            type="button"
+            class="btn btn-delete"
+            :disabled="deletingUserId === user.id"
+            @click="confirmDeleteUser(user)"
+          >
+            {{ deletingUserId === user.id ? 'Deleting…' : 'Delete' }}
+          </button>
         </div>
       </div>
     </div>
@@ -118,6 +127,8 @@ export default {
     const inviting = ref(false)
     const inviteSuccess = ref('')
     const inviteError = ref('')
+    const devUserDeletionEnabled = ref(false)
+    const deletingUserId = ref(null)
 
     const fetchCurrentUser = async () => {
       try {
@@ -130,6 +141,7 @@ export default {
         
         currentUserRole.value = response.data.role
         currentUserId.value = response.data.id
+        devUserDeletionEnabled.value = Boolean(response.data.devUserDeletionEnabled)
       } catch (error) {
         console.error('Failed to fetch current user:', error)
       }
@@ -226,6 +238,37 @@ export default {
       }
     }
 
+    const confirmDeleteUser = async (user) => {
+      const ok = window.confirm(
+        `Delete user "${user.name}" (${user.email})? This cannot be undone.`
+      )
+      if (!ok) return
+
+      try {
+        deletingUserId.value = user.id
+        const token = localStorage.getItem('token')
+        if (!token) {
+          alert('You must be logged in.')
+          return
+        }
+
+        await axios.delete(`/api/auth/users/${user.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+
+        users.value = users.value.filter((u) => u.id !== user.id)
+      } catch (err) {
+        console.error('Failed to delete user:', err)
+        const msg =
+          err.response?.data?.message ??
+          (typeof err.response?.data === 'string' ? err.response.data : null) ??
+          'Failed to delete user.'
+        alert(msg)
+      } finally {
+        deletingUserId.value = null
+      }
+    }
+
     const formatDate = (dateString) => {
       return new Date(dateString).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -263,7 +306,10 @@ export default {
       formatDate,
       getUserInitials,
       updateUserRole,
-      inviteUserByEmail
+      inviteUserByEmail,
+      devUserDeletionEnabled,
+      deletingUserId,
+      confirmDeleteUser
     }
   }
 }
@@ -500,7 +546,9 @@ export default {
   padding-top: 1rem;
   border-top: 1px solid #f1f3f4;
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
+  gap: 0.5rem;
 }
 
 .btn {
@@ -525,6 +573,22 @@ export default {
 .btn-edit:hover {
   background-color: #0056b3;
   transform: translateY(-1px);
+}
+
+.btn-delete {
+  background-color: #dc3545;
+  color: white;
+}
+
+.btn-delete:hover:not(:disabled) {
+  background-color: #b02a37;
+  transform: translateY(-1px);
+}
+
+.btn-delete:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* Role management styles */
