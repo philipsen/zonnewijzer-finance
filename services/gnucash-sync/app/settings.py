@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     invoice_tax_table_name: str = "BTW hoog"
     invoice_post_account: str = ""
     invoice_tax_included: bool = False
+    invoice_auto_post: bool = True
     seq_server_url: str = ""
     seq_api_key: str = ""
     app_name: str = "gnucash-sync"
