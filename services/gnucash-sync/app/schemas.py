@@ -63,3 +63,9 @@ class CustomerEnsureResult(BaseModel):
     customerId: str
     status: str
     detail: str | None = None
+
+
+class GnucashWipeAppResponse(BaseModel):
+    dryRun: bool
+    invoicesRemoved: int
+    customersRemoved: int

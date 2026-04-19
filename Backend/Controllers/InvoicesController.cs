@@ -100,7 +100,7 @@ namespace Backend.Controllers
                 {
                     Timestamp = DateTime.UtcNow,
                     UserName = requestingUser.Name,
-                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
+                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "amount_verify_failed")} amount-verify-failed, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
                 });
                 await _context.SaveChangesAsync(cancellationToken);
 
@@ -174,6 +174,52 @@ namespace Backend.Controllers
             {
                 _logger.LogError(ex, "GnuCash ensure customer failed for app user {AppUserId}", appUserId);
                 return BadRequest($"GnuCash ensure customer failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Admin: remove app-created GnuCash data — invoices with id prefix INV- and customers with id prefix CU-
+        /// (via gnucash-sync). Does not touch other GnuCash business objects.
+        /// </summary>
+        [HttpPost("gnucash/wipe-app")]
+        public async Task<IActionResult> WipeGnucashAppBusiness([FromQuery] bool dryRun = false, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
+                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
+
+                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
+                    ?? $"{Guid.NewGuid():N}";
+                Response.Headers["X-Correlation-Id"] = correlationId;
+
+                var pyResponse = await _gnuCashSyncClient.WipeAppBusinessAsync(correlationId, dryRun, cancellationToken);
+                if (pyResponse == null)
+                    return BadRequest("GnuCash service did not return a response.");
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"GnuCash wipe-app (dryRun={dryRun}): {pyResponse.InvoicesRemoved} INV-* invoices, {pyResponse.CustomersRemoved} CU-* customers removed"
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(pyResponse);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GnuCash wipe-app failed");
+                return BadRequest($"GnuCash wipe-app failed: {ex.Message}");
             }
         }
 
