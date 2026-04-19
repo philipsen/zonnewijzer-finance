@@ -104,6 +104,11 @@ def _post_invoice(
 
     lot = Lot(title=f"Invoice {inv.id}", account=ar)
     book.add(lot)
+    # Link lot ↔ invoice like gncInvoiceAttachToLot (GnuCash expects this for business/AR views).
+    try:
+        lot["invoice"] = inv
+    except (TypeError, ValueError, KeyError):
+        _log.warning("Could not set invoice slot on lot for %s", inv.id, exc_info=True)
 
     splits: list[Split] = [
         Split(
@@ -135,6 +140,14 @@ def _post_invoice(
         splits=splits,
     )
     book.add(txn)
+    # Match gncInvoiceAttachToTxn + xaccTransSetTxnType: type "?" postings are not treated as
+    # invoice posts and can double-count with business logic in AR / income.
+    try:
+        txn["trans-txn-type"] = "I"
+        txn["invoice"] = inv
+        txn["trans-read-only"] = "Generated from an invoice. Try unposting the invoice."
+    except (TypeError, ValueError, KeyError):
+        _log.warning("Could not set invoice posting slots on transaction for %s", inv.id, exc_info=True)
 
     inv.post_txn = txn
     inv.post_acc = ar

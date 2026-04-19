@@ -4,9 +4,17 @@ namespace Backend.Services;
 
 public static class GnuCashInvoiceMapper
 {
+    /// <summary>Same convention as PDF invoices: energy rate and session amounts include 21% BTW.</summary>
+    private const decimal VatInclusiveMultiplier = 1.21m;
+
+    /// <summary>Per-kWh and line euros sent to GnuCash must be ex-VAT; BTW is applied via the book tax table.</summary>
+    private static decimal EnergyUnitPriceExclVat(decimal pricePerKwhInclVat) =>
+        Math.Round(pricePerKwhInclVat / VatInclusiveMultiplier, 6, MidpointRounding.AwayFromZero);
+
     public static GnuCashInvoiceDto ToDto(InvoiceData data, string? customerEmail)
     {
         var lastDay = new DateTime(data.Year, data.Month, DateTime.DaysInMonth(data.Year, data.Month));
+        var unitExclVat = EnergyUnitPriceExclVat(data.RatePerKwh);
         return new GnuCashInvoiceDto
         {
             InvoiceId = data.InvoiceNumber,
@@ -26,8 +34,8 @@ public static class GnuCashInvoiceMapper
             {
                 Description = SessionLineDescription(s),
                 Quantity = s.ChargedKwh,
-                UnitPrice = data.RatePerKwh,
-                LineAmount = s.Amount
+                UnitPrice = unitExclVat,
+                LineAmount = Math.Round(s.ChargedKwh * unitExclVat, 2, MidpointRounding.AwayFromZero)
             }).ToList()
         };
     }
