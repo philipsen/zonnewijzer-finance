@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     gnucash_postgres_url: str = ""
     sync_api_key: str = ""
     income_account: str = "Income:Charging"
+    invoice_tax_table_name: str = "BTW hoog"
+    invoice_post_account: str = ""
+    invoice_tax_included: bool = False
     seq_server_url: str = ""
     seq_api_key: str = ""
     app_name: str = "gnucash-sync"
