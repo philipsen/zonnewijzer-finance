@@ -2,6 +2,7 @@ using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Backend.Services.GnuCash;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,8 @@ public class InvoicesControllerTests : IDisposable
     private readonly Mock<IPdfService> _pdfMock;
     private readonly Mock<IMollieService> _mollieMock;
     private readonly Mock<IConfiguration> _configMock;
+    private readonly InvoiceComputationService _invoiceComputation;
+    private readonly Mock<IGnuCashSyncClient> _gnuCashSyncMock;
 
     public InvoicesControllerTests()
     {
@@ -31,6 +34,8 @@ public class InvoicesControllerTests : IDisposable
         _pdfMock = new Mock<IPdfService>();
         _mollieMock = new Mock<IMollieService>();
         _configMock = new Mock<IConfiguration>();
+        _invoiceComputation = new InvoiceComputationService(_db);
+        _gnuCashSyncMock = new Mock<IGnuCashSyncClient>();
     }
 
     public void Dispose() => _db.Dispose();
@@ -48,6 +53,8 @@ public class InvoicesControllerTests : IDisposable
             _jwtMock.Object,
             _pdfMock.Object,
             _mollieMock.Object,
+            _invoiceComputation,
+            _gnuCashSyncMock.Object,
             _configMock.Object,
             NullLogger<InvoicesController>.Instance)
         {
