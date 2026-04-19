@@ -100,7 +100,7 @@ namespace Backend.Controllers
                 {
                     Timestamp = DateTime.UtcNow,
                     UserName = requestingUser.Name,
-                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "amount_verify_failed")} amount-verify-failed, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
+                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "post_verify_failed")} post-verify-failed, {pyResponse.Results.Count(r => r.Status == "amount_verify_failed")} amount-verify-failed, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
                 });
                 await _context.SaveChangesAsync(cancellationToken);
 
