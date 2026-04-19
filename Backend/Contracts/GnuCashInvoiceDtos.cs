@@ -38,6 +38,16 @@ public sealed class GnuCashInsertResponse
     public List<GnuCashInsertResultItem> Results { get; set; } = new();
 }
 
+public sealed class GnuCashInvoicesExistRequest
+{
+    public List<string> InvoiceIds { get; set; } = new();
+}
+
+public sealed class GnuCashInvoicesExistResponse
+{
+    public List<string> ExistingInvoiceIds { get; set; } = new();
+}
+
 public sealed class GnuCashInsertResultItem
 {
     public string InvoiceId { get; set; } = string.Empty;

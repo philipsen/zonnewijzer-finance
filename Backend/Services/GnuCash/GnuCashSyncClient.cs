@@ -54,6 +54,36 @@ public sealed class GnuCashSyncClient : IGnuCashSyncClient
         return JsonSerializer.Deserialize<GnuCashInsertResponse>(body, JsonOptions);
     }
 
+    public async Task<GnuCashInvoicesExistResponse?> GetExistingInvoiceIdsAsync(
+        GnuCashInvoicesExistRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_options.BaseUrl))
+        {
+            _logger.LogWarning("GnuCashSync:BaseUrl is not configured; skipping invoice existence check");
+            return null;
+        }
+
+        if (request.InvoiceIds.Count == 0)
+            return new GnuCashInvoicesExistResponse { ExistingInvoiceIds = new List<string>() };
+
+        var baseUri = _options.BaseUrl.TrimEnd('/');
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUri}/invoices/exists");
+        req.Content = new StringContent(JsonSerializer.Serialize(request, JsonOptions), Encoding.UTF8, "application/json");
+        if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+            req.Headers.TryAddWithoutValidation("X-GnuCash-Sync-Key", _options.ApiKey);
+
+        using var resp = await _httpClient.SendAsync(req, cancellationToken);
+        var body = await resp.Content.ReadAsStringAsync(cancellationToken);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogError("GnuCash invoice exists HTTP {Status}: {Body}", (int)resp.StatusCode, body);
+            throw new InvalidOperationException($"GnuCash service returned {(int)resp.StatusCode}: {body}");
+        }
+
+        return JsonSerializer.Deserialize<GnuCashInvoicesExistResponse>(body, JsonOptions);
+    }
+
     public async Task<GnuCashEnsureCustomerResponse?> EnsureCustomerAsync(
         GnuCashEnsureCustomerRequest request,
         string? correlationId,

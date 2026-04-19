@@ -33,7 +33,8 @@
           <button
             type="button"
             class="btn-gnucash"
-            :disabled="gnucashBulkLoading"
+            :disabled="gnucashBulkLoading || !gnucashMonthHasInsertable"
+            :title="gnucashMonthHasInsertable ? '' : 'No sessions to insert, or every invoice for this period is already in GnuCash.'"
             @click="insertGnucashMonth"
           >
             {{ gnucashBulkLoading ? '…' : 'Insert month (all users)' }}
@@ -107,7 +108,8 @@
                       <button
                         type="button"
                         class="btn-gnucash-cell"
-                        :disabled="gnucashCellLoading[gnucashCellKey(userRow.user.id, monthData.year, monthData.month)]"
+                        :disabled="gnucashCellDisabled(userRow.user.id, monthData)"
+                        :title="gnucashCellTitle(monthData)"
                         @click="insertGnucashCell(userRow.user.id, monthData.year, monthData.month)"
                       >
                         {{ gnucashCellLoading[gnucashCellKey(userRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
@@ -182,7 +184,8 @@
                 <button
                   type="button"
                   class="btn-gnucash-cell mobile-gnucash"
-                  :disabled="gnucashCellLoading[gnucashCellKey(selectedUserRow.user.id, monthData.year, monthData.month)]"
+                  :disabled="gnucashCellDisabled(selectedUserRow.user.id, monthData)"
+                  :title="gnucashCellTitle(monthData)"
                   @click="insertGnucashCell(selectedUserRow.user.id, monthData.year, monthData.month)"
                 >
                   {{ gnucashCellLoading[gnucashCellKey(selectedUserRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
@@ -220,9 +223,23 @@ export default {
       return gridData.value.find(row => row.user.id === selectedUserId.value) || null
     })
 
-    const fetchInvoicesGrid = async () => {
+    const gnucashMonthHasInsertable = computed(() => {
+      const parts = gnucashPeriodKey.value.split('-')
+      if (parts.length !== 2 || !gridData.value?.length) return false
+      const y = parseInt(parts[0], 10)
+      const mo = parseInt(parts[1], 10)
+      if (Number.isNaN(y) || Number.isNaN(mo)) return false
+      for (const row of gridData.value) {
+        const inv = row.invoices.find(i => i.year === y && i.month === mo)
+        if (inv?.hasChargingSessions && !inv.gnucashInvoiceInserted) return true
+      }
+      return false
+    })
+
+    const fetchInvoicesGrid = async (options = {}) => {
+      const silent = options.silent === true
       try {
-        loading.value = true
+        if (!silent) loading.value = true
         const token = localStorage.getItem('token')
         
         if (!token) {
@@ -243,9 +260,11 @@ export default {
           gnucashPeriodKey.value = `${last.year}-${last.month}`
         }
 
-        // Pre-select first user for the mobile view
+        // Pre-select user for the mobile view (keep selection when refetching if still present)
         if (response.data.gridData && response.data.gridData.length > 0) {
-          selectedUserId.value = response.data.gridData[0].user.id
+          const prev = selectedUserId.value
+          const still = prev != null && response.data.gridData.some(r => r.user.id === prev)
+          selectedUserId.value = still ? prev : response.data.gridData[0].user.id
         }
         
       } catch (err) {
@@ -256,7 +275,7 @@ export default {
           error.value = 'Failed to load invoices. Please try again later.'
         }
       } finally {
-        loading.value = false
+        if (!silent) loading.value = false
       }
     }
 
@@ -339,6 +358,14 @@ export default {
 
     const gnucashCellKey = (userId, year, month) => `${userId}_${year}_${month}`
 
+    const gnucashCellDisabled = (userId, monthData) => {
+      const key = gnucashCellKey(userId, monthData.year, monthData.month)
+      return !!gnucashCellLoading.value[key] || !!monthData.gnucashInvoiceInserted
+    }
+
+    const gnucashCellTitle = (monthData) =>
+      monthData.gnucashInvoiceInserted ? 'This invoice is already in GnuCash.' : ''
+
     const insertGnucashMonth = async () => {
       const parts = gnucashPeriodKey.value.split('-')
       if (parts.length !== 2) {
@@ -358,6 +385,7 @@ export default {
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
+        await fetchInvoicesGrid({ silent: true })
       } catch (err) {
         console.error('GnuCash insert failed:', err)
         const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
@@ -380,6 +408,7 @@ export default {
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
+        await fetchInvoicesGrid({ silent: true })
       } catch (err) {
         console.error('GnuCash insert failed:', err)
         const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
@@ -437,6 +466,9 @@ export default {
       gnucashBulkLoading,
       gnucashCellLoading,
       gnucashCellKey,
+      gnucashMonthHasInsertable,
+      gnucashCellDisabled,
+      gnucashCellTitle,
       insertGnucashMonth,
       insertGnucashCell
     }
