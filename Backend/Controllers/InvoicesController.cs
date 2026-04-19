@@ -224,7 +224,7 @@ namespace Backend.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetInvoicesGrid()
+        public async Task<IActionResult> GetInvoicesGrid(CancellationToken cancellationToken)
         {
             try
             {
@@ -237,7 +237,7 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
-                var requestingUser = await _context.Users.FindAsync(currentUserId);
+                var requestingUser = await _context.Users.FindAsync(new object[] { currentUserId }, cancellationToken);
                 if (requestingUser == null || requestingUser.Role != UserRole.Admin)
                     return Forbid();
 
@@ -248,18 +248,18 @@ namespace Backend.Controllers
                     .Select(cs => cs.UserId)
                     .Distinct()
                     .OrderBy(uid => uid)
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Look up real user names via ChargingUserId links
                 var linkedUsers = await _context.Users
                     .Where(u => u.ChargingUserId != null && chargingSessionUsers.Contains(u.ChargingUserId!.Value))
                     .Select(u => new { u.ChargingUserId, u.Name, u.Email })
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Load display names for unlinked charging users
                 var profiles = await _context.ChargingUserProfiles
                     .Where(p => chargingSessionUsers.Contains(p.Id))
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Create user objects for grid display
                 var users = chargingSessionUsers.Select(uid => {
@@ -279,17 +279,17 @@ namespace Backend.Controllers
                     .OrderBy(d => d.Year)
                     .ThenBy(d => d.Month)
                     .Select(d => new { d.Year, d.Month })
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Pre-load all charging sessions for the relevant users/months to avoid N+1 queries
                 var allSessions = await _context.ChargingSessions
                     .Where(cs => chargingSessionUsers.Contains(cs.UserId))
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Pre-load all energy prices
                 var energyPrices = await _context.EnergyPrices
                     .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 // Helper: find last known price on or before a given year/month
                 decimal GetRate(int year, int month) =>
@@ -305,30 +305,71 @@ namespace Backend.Controllers
                     RatePerKwh = Math.Round(GetRate(d.Year, d.Month), 2)
                 }).ToList();
 
+                static string GnucashInvoiceId(int chargingUserId, int year, int month) =>
+                    $"INV-{year:D4}-{month:D2}-{chargingUserId:D4}";
+
+                var invoiceIdsToCheck = users
+                    .SelectMany(user => months
+                        .Where(m => allSessions.Any(cs =>
+                            cs.UserId == user.Id &&
+                            cs.Start.Year == m.Year &&
+                            cs.Start.Month == m.Month))
+                        .Select(m => GnucashInvoiceId(user.Id, m.Year, m.Month)))
+                    .Distinct()
+                    .ToList();
+
+                var existingInvoiceIds = new HashSet<string>(StringComparer.Ordinal);
+                if (invoiceIdsToCheck.Count > 0
+                    && !string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
+                {
+                    try
+                    {
+                        var existResponse = await _gnuCashSyncClient.GetExistingInvoiceIdsAsync(
+                            new GnuCashInvoicesExistRequest { InvoiceIds = invoiceIdsToCheck },
+                            cancellationToken);
+                        if (existResponse?.ExistingInvoiceIds != null)
+                        {
+                            foreach (var id in existResponse.ExistingInvoiceIds)
+                                existingInvoiceIds.Add(id);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Could not query GnuCash for existing invoices; GnuCash buttons are left enabled");
+                    }
+                }
+
                 // Create grid data with charging session info instead of stored invoices
                 var gridData = users.Select(user => new
                 {
                     User = user,
-                    Invoices = months.Select(m => new
+                    Invoices = months.Select(m =>
                     {
-                        Year = m.Year,
-                        Month = m.Month,
-                        MonthName = m.Name,
-                        HasChargingSessions = allSessions
+                        var hasCharging = allSessions
                             .Any(cs => cs.UserId == user.Id &&
                                       cs.Start.Year == m.Year &&
-                                      cs.Start.Month == m.Month),
-                        TotalKwh = Math.Round(allSessions
-                            .Where(cs => cs.UserId == user.Id &&
-                                        cs.Start.Year == m.Year &&
-                                        cs.Start.Month == m.Month)
-                            .Sum(cs => cs.ChargedKwh), 2),
-                        RatePerKwh = GetRate(m.Year, m.Month),
-                        TotalAmount = Math.Round(allSessions
-                            .Where(cs => cs.UserId == user.Id &&
-                                        cs.Start.Year == m.Year &&
-                                        cs.Start.Month == m.Month)
-                            .Sum(cs => cs.ChargedKwh) * GetRate(m.Year, m.Month), 2)
+                                      cs.Start.Month == m.Month);
+                        return new
+                        {
+                            Year = m.Year,
+                            Month = m.Month,
+                            MonthName = m.Name,
+                            HasChargingSessions = hasCharging,
+                            TotalKwh = Math.Round(allSessions
+                                .Where(cs => cs.UserId == user.Id &&
+                                            cs.Start.Year == m.Year &&
+                                            cs.Start.Month == m.Month)
+                                .Sum(cs => cs.ChargedKwh), 2),
+                            RatePerKwh = GetRate(m.Year, m.Month),
+                            TotalAmount = Math.Round(allSessions
+                                .Where(cs => cs.UserId == user.Id &&
+                                            cs.Start.Year == m.Year &&
+                                            cs.Start.Month == m.Month)
+                                .Sum(cs => cs.ChargedKwh) * GetRate(m.Year, m.Month), 2),
+                            GnucashInvoiceInserted = hasCharging
+                                && existingInvoiceIds.Contains(GnucashInvoiceId(user.Id, m.Year, m.Month))
+                        };
                     }).ToList()
                 }).ToList();
 

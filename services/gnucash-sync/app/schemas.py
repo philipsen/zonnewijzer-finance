@@ -46,6 +46,18 @@ class InsertResponse(BaseModel):
     results: list[ResultItem]
 
 
+class InvoiceExistsIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    invoice_ids: list[str] = Field(default_factory=list, alias="invoiceIds")
+
+
+class InvoiceExistsOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    existing_invoice_ids: list[str] = Field(default_factory=list, alias="existingInvoiceIds")
+
+
 class CustomerEnsureIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

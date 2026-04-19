@@ -9,9 +9,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from app.gnucash_customer import run_ensure_customer
+from app.gnucash_exists import run_invoice_ids_exist
 from app.gnucash_insert import run_insert
 from app.gnucash_wipe import run_wipe_app_business
-from app.schemas import CustomerEnsureIn, CustomerEnsureResult, GnucashWipeAppResponse, InsertBody, InsertResponse
+from app.schemas import (
+    CustomerEnsureIn,
+    CustomerEnsureResult,
+    GnucashWipeAppResponse,
+    InsertBody,
+    InsertResponse,
+    InvoiceExistsIn,
+    InvoiceExistsOut,
+)
 from app.seq_log import seq_emit
 from app.settings import Settings, get_settings
 from app.startup_db import verify_gnucash_database_or_die
@@ -90,6 +99,29 @@ def insert_invoices(
         Application=settings.app_name,
     )
     return InsertResponse(results=results)
+
+
+@app.post("/invoices/exists", response_model=InvoiceExistsOut)
+def invoices_exist(
+    body: InvoiceExistsIn,
+    request: Request,
+    x_gnucash_sync_key: str | None = Header(None, alias="X-GnuCash-Sync-Key"),
+    settings: Settings = Depends(get_app_settings),
+) -> InvoiceExistsOut:
+    if settings.sync_api_key and (x_gnucash_sync_key or "") != settings.sync_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-GnuCash-Sync-Key")
+
+    uri = (settings.gnucash_postgres_url or "").strip()
+    if not uri:
+        raise HTTPException(status_code=400, detail="GNUCASH_POSTGRES_URL is not set")
+
+    try:
+        found = run_invoice_ids_exist(uri, body.invoice_ids)
+    except Exception as e:  # noqa: BLE001
+        _log.exception("Invoice existence check failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return InvoiceExistsOut(existingInvoiceIds=found)
 
 
 @app.post("/customers/ensure", response_model=CustomerEnsureResult)
