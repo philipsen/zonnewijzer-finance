@@ -11,6 +11,7 @@ public sealed class GnuCashSyncClient : IGnuCashSyncClient
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
@@ -83,5 +84,32 @@ public sealed class GnuCashSyncClient : IGnuCashSyncClient
         }
 
         return JsonSerializer.Deserialize<GnuCashEnsureCustomerResponse>(body, JsonOptions);
+    }
+
+    public async Task<GnuCashWipeAppResponse?> WipeAppBusinessAsync(string? correlationId, bool dryRun, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_options.BaseUrl))
+        {
+            _logger.LogWarning("GnuCashSync:BaseUrl is not configured; skipping Python call");
+            return null;
+        }
+
+        var baseUri = _options.BaseUrl.TrimEnd('/');
+        var path = dryRun ? "/gnucash/wipe-app?dry_run=true" : "/gnucash/wipe-app";
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUri}{path}");
+        if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+            req.Headers.TryAddWithoutValidation("X-GnuCash-Sync-Key", _options.ApiKey);
+        if (!string.IsNullOrWhiteSpace(correlationId))
+            req.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+
+        using var resp = await _httpClient.SendAsync(req, cancellationToken);
+        var body = await resp.Content.ReadAsStringAsync(cancellationToken);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogError("GnuCash wipe-app HTTP {Status}: {Body}", (int)resp.StatusCode, body);
+            throw new InvalidOperationException($"GnuCash service returned {(int)resp.StatusCode}: {body}");
+        }
+
+        return JsonSerializer.Deserialize<GnuCashWipeAppResponse>(body, JsonOptions);
     }
 }

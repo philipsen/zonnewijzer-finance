@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TypeVar
@@ -14,13 +13,27 @@ from piecash.business import Customer
 from piecash.business.invoice import Entry, Invoice
 from piecash.business.person import PersonType
 from piecash.business.tax import Taxtable
-from piecash.core.transaction import Lot, Split, Transaction
 
 from app.schemas import InsertBody, ResultItem
 from app.seq_log import seq_emit
 from app.settings import get_settings
 
 _log = logging.getLogger(__name__)
+
+
+def _ensure_piecash_invoice_kvp_mapping() -> None:
+    """GnuCash stores the invoice pointer on txn/lot under slot name ``invoice``; piecash only mapped ``invoice-guid``."""
+    from piecash.kvp import SlotGUID
+
+    if "invoice" in SlotGUID._mapping_name_class:
+        return
+    SlotGUID._mapping_name_class = {
+        **dict(SlotGUID._mapping_name_class),
+        "invoice": "piecash.business.invoice.Invoice",
+    }
+
+
+_ensure_piecash_invoice_kvp_mapping()
 
 T = TypeVar("T")
 
@@ -33,13 +46,6 @@ def _piecash_new(cls: type[T]) -> T:
 def _find_account_by_fullname(book, fullname: str):
     for acc in book.accounts:
         if acc.fullname == fullname:
-            return acc
-    return None
-
-
-def _find_first_receivable(book):
-    for acc in book.accounts:
-        if acc.type == "RECEIVABLE" and not acc.placeholder:
             return acc
     return None
 
@@ -57,105 +63,71 @@ def _entry_line_net(entry) -> Decimal:
     return (q * p).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _tax_amounts_for_net(net: Decimal, taxtable: Taxtable) -> list[tuple[Decimal, object]]:
-    """Per tax-table row: (tax amount, liability account). Net is ex-VAT base."""
-    out: list[tuple[Decimal, object]] = []
-    for te in taxtable.entries:
-        acc = te.account
-        if te.type == "percentage":
-            rate = Decimal(str(te.amount))
-            amt = (net * (rate / Decimal(100))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        else:
-            amt = Decimal(str(te.amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        if amt != 0:
-            out.append((amt, acc))
-    return out
+def _payload_line_totals(inv_in) -> tuple[Decimal, Decimal]:
+    """(sum lineAmount, sum rounded qty*unitPrice) from JSON."""
+    s_la = Decimal(0)
+    s_qp = Decimal(0)
+    for line in inv_in.lines:
+        la = Decimal(str(line.line_amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        q = Decimal(str(line.quantity))
+        p = Decimal(str(line.unit_price))
+        s_la += la
+        s_qp += (q * p).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return s_la, s_qp
 
 
-def _post_invoice(
-    book,
-    inv: Invoice,
-    customer: Customer,
-    inc,
-    opened: datetime,
-    note: str,
-    taxtable: Taxtable | None,
-    ar,
-) -> None:
-    """Create posted transaction + lot (customer invoice → receivable)."""
-    eur = inv.currency
-    total_net = Decimal(0)
-    for entry in inv.entries:
-        total_net += _entry_line_net(entry)
+def _verify_saved_unposted_line_amounts(
+    uri: str,
+    invoice_id: str,
+    expected_lines: int,
+    payload_sum_line_amount: Decimal,
+    payload_sum_qty_price: Decimal,
+) -> tuple[bool, str, Decimal]:
+    """Reload invoice from DB; ensure line nets match payload (detect doubled storage)."""
+    with open_book(uri_conn=uri, readonly=True, open_if_lock=True, do_backup=False) as book:
+        inv = book.session.query(Invoice).filter_by(id=invoice_id).first()
+        if inv is None:
+            return False, "invoice missing after save", Decimal(0)
+        if inv.post_txn is not None:
+            return False, "expected unposted invoice but post_txn is set", Decimal(0)
+        entries = list(inv.entries)
+        if len(entries) != expected_lines:
+            return (
+                False,
+                f"entry count {len(entries)} != payload lines {expected_lines}",
+                Decimal(0),
+            )
+        db_net = sum((_entry_line_net(e) for e in entries), Decimal(0))
+        db_net = db_net.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    tax_by_acc: defaultdict[str, Decimal] = defaultdict(Decimal)
-    tax_accounts: dict[str, object] = {}
-    if taxtable is not None:
-        tax_rows = _tax_amounts_for_net(total_net, taxtable)
-        for amt, acc in tax_rows:
-            tax_by_acc[acc.guid] += amt
-            tax_accounts[acc.guid] = acc
+    ref = payload_sum_line_amount
+    if ref == 0:
+        ref = payload_sum_qty_price
+    if ref == 0:
+        return True, "", db_net
 
-    total_tax = sum(tax_by_acc.values(), Decimal(0))
-    total_gross = (total_net + total_tax).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    diff_la = abs(db_net - payload_sum_line_amount)
+    diff_qp = abs(db_net - payload_sum_qty_price)
+    cent = Decimal("0.02")
+    if diff_la <= cent or diff_qp <= cent:
+        return True, "", db_net
 
-    memo = (note or "")[:2046]
-    post_date = opened.date() if hasattr(opened, "date") else opened
+    if db_net >= ref * 2 - cent and ref > 0:
+        return (
+            False,
+            f"stored line net {db_net} is ~2x reference {ref} (doubled? lineAmount_sum={payload_sum_line_amount} q*price_sum={payload_sum_qty_price})",
+            db_net,
+        )
 
-    lot = Lot(title=f"Invoice {inv.id}", account=ar)
-    book.add(lot)
-    # Link lot ↔ invoice like gncInvoiceAttachToLot (GnuCash expects this for business/AR views).
-    try:
-        lot["invoice"] = inv
-    except (TypeError, ValueError, KeyError):
-        _log.warning("Could not set invoice slot on lot for %s", inv.id, exc_info=True)
-
-    splits: list[Split] = [
-        Split(
-            account=ar,
-            value=total_gross,
-            memo=memo,
-            action="",
-            lot=lot,
-        ),
-        Split(
-            account=inc,
-            value=-total_net,
-            memo=memo,
-            action="",
-        ),
-    ]
-    for guid, amt in tax_by_acc.items():
-        if amt == 0:
-            continue
-        acc = tax_accounts[guid]
-        label = f"Tax ({taxtable.name})" if taxtable is not None else "Tax"
-        splits.append(Split(account=acc, value=-amt, memo=label, action=""))
-
-    txn = Transaction(
-        currency=eur,
-        description=customer.name or inv.id,
-        post_date=post_date,
-        num=inv.id,
-        splits=splits,
+    return (
+        False,
+        f"stored line net {db_net} vs payload lineAmount_sum={payload_sum_line_amount} q*price_sum={payload_sum_qty_price}",
+        db_net,
     )
-    book.add(txn)
-    # Match gncInvoiceAttachToTxn + xaccTransSetTxnType: type "?" postings are not treated as
-    # invoice posts and can double-count with business logic in AR / income.
-    try:
-        txn["trans-txn-type"] = "I"
-        txn["invoice"] = inv
-        txn["trans-read-only"] = "Generated from an invoice. Try unposting the invoice."
-    except (TypeError, ValueError, KeyError):
-        _log.warning("Could not set invoice posting slots on transaction for %s", inv.id, exc_info=True)
-
-    inv.post_txn = txn
-    inv.post_acc = ar
-    inv.post_lot = lot
-    inv.date_posted = opened
 
 
 def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool) -> ResultItem:
+    """Create customer invoice and line entries only; GnuCash must post the invoice in the UI."""
     iid = inv_in.invoice_id
     with open_book(
         uri_conn=uri,
@@ -188,16 +160,6 @@ def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool)
                 invoiceId=iid,
                 status="error",
                 detail=f"Tax table not found in GnuCash (create or rename): {tax_name}",
-            )
-
-        post_full = (settings.invoice_post_account or "").strip()
-        ar = _find_account_by_fullname(book, post_full) if post_full else _find_first_receivable(book)
-        if ar is None:
-            return ResultItem(
-                invoiceId=iid,
-                status="error",
-                detail="No receivable account: set INVOICE_POST_ACCOUNT to a full account name "
-                "(e.g. Activa:Debiteuren) or create a non-placeholder RECEIVABLE account.",
             )
 
         customer = book.session.query(Customer).filter_by(id=inv_in.customer_id).first()
@@ -250,22 +212,55 @@ def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool)
 
         book.flush()
 
+        sum_la, sum_qp = _payload_line_totals(inv_in)
         if not dry_run:
-            try:
-                _post_invoice(book, inv, customer, inc, opened, note, taxtable, ar)
-            except Exception as ex:  # noqa: BLE001
-                return ResultItem(
-                    invoiceId=iid,
-                    status="error",
-                    detail=f"Posting invoice failed: {ex}"[:500],
-                )
+            _log.info(
+                "Invoice %s pre-save amounts: lines=%s payload sum(lineAmount)=%s sum(qty*unitPrice)=%s",
+                iid,
+                len(inv_in.lines),
+                sum_la,
+                sum_qp,
+            )
 
         if dry_run:
             book.cancel()
             return ResultItem(invoiceId=iid, status="dry_run_would_create", detail="rolled back, not saved")
 
         book.save()
-        return ResultItem(invoiceId=iid, status="created", detail=None)
+
+        ok, vmsg, db_net = _verify_saved_unposted_line_amounts(
+            uri,
+            iid,
+            len(inv_in.lines),
+            sum_la,
+            sum_qp,
+        )
+        if ok:
+            _log.info(
+                "Invoice %s post-save amount check OK: db_line_net_sum=%s (matches payload within 0.02), unposted",
+                iid,
+                db_net,
+            )
+        else:
+            _log.error("Invoice %s post-save amount check FAILED: %s", iid, vmsg)
+            seq_emit(
+                "Error",
+                "Invoice amount verify failed for {InvoiceId}: {Message}",
+                InvoiceId=iid,
+                Message=vmsg[:400],
+                Application=settings.app_name,
+            )
+            return ResultItem(
+                invoiceId=iid,
+                status="amount_verify_failed",
+                detail=vmsg[:500],
+            )
+
+        return ResultItem(
+            invoiceId=iid,
+            status="created",
+            detail="Saved as unposted invoice; post from GnuCash when ready.",
+        )
 
 
 def run_insert(body: InsertBody, dry_run: bool) -> list[ResultItem]:

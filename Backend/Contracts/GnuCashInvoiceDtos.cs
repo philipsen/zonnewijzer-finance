@@ -63,3 +63,10 @@ public sealed class GnuCashEnsureCustomerResponse
     public string Status { get; set; } = string.Empty;
     public string? Detail { get; set; }
 }
+
+public sealed class GnuCashWipeAppResponse
+{
+    public bool DryRun { get; set; }
+    public int InvoicesRemoved { get; set; }
+    public int CustomersRemoved { get; set; }
+}
