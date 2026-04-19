@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Backend.Contracts;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Backend.Services.GnuCash;
 
 namespace Backend.Controllers
 {
@@ -14,6 +16,8 @@ namespace Backend.Controllers
         private readonly IJwtService _jwtService;
         private readonly IPdfService _pdfService;
         private readonly IMollieService _mollieService;
+        private readonly IInvoiceComputationService _invoiceComputation;
+        private readonly IGnuCashSyncClient _gnuCashSyncClient;
         private readonly IConfiguration _configuration;
         private readonly ILogger<InvoicesController> _logger;
         private static readonly HashSet<string> FinalPaymentStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -23,14 +27,90 @@ namespace Backend.Controllers
             "canceled"
         };
 
-        public InvoicesController(ApplicationDbContext context, IJwtService jwtService, IPdfService pdfService, IMollieService mollieService, IConfiguration configuration, ILogger<InvoicesController> logger)
+        public InvoicesController(
+            ApplicationDbContext context,
+            IJwtService jwtService,
+            IPdfService pdfService,
+            IMollieService mollieService,
+            IInvoiceComputationService invoiceComputation,
+            IGnuCashSyncClient gnuCashSyncClient,
+            IConfiguration configuration,
+            ILogger<InvoicesController> logger)
         {
             _context = context;
             _jwtService = jwtService;
             _pdfService = pdfService;
             _mollieService = mollieService;
+            _invoiceComputation = invoiceComputation;
+            _gnuCashSyncClient = gnuCashSyncClient;
             _configuration = configuration;
             _logger = logger;
+        }
+
+        /// <summary>Admin: insert computed invoices into GnuCash via the Python service (insert-only).</summary>
+        [HttpPost("gnucash/insert")]
+        public async Task<IActionResult> InsertGnucashInvoices([FromBody] GnuCashInsertBody body, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                if (body.Month is < 1 or > 12 || body.Year < 2000 || body.Year > 2100)
+                    return BadRequest("Invalid year or month.");
+
+                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
+                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
+
+                var userIds = await _invoiceComputation.GetChargingUserIdsForMonthAsync(body.Year, body.Month, body.ChargingUserId, cancellationToken);
+                var linkedEmails = await _context.Users
+                    .Where(u => u.ChargingUserId != null && userIds.Contains(u.ChargingUserId!.Value))
+                    .Select(u => new { u.ChargingUserId, u.Email })
+                    .ToListAsync(cancellationToken);
+
+                var invoices = new List<GnuCashInvoiceDto>();
+                foreach (var uid in userIds)
+                {
+                    var data = await _invoiceComputation.BuildInvoiceDataReadOnlyAsync(uid, body.Year, body.Month, cancellationToken);
+                    if (data == null)
+                        continue;
+                    var email = linkedEmails.FirstOrDefault(x => x.ChargingUserId == uid)?.Email;
+                    invoices.Add(GnuCashInvoiceMapper.ToDto(data, email));
+                }
+
+                if (invoices.Count == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
+                    ?? $"{Guid.NewGuid():N}";
+                Response.Headers["X-Correlation-Id"] = correlationId;
+
+                var request = new GnuCashInsertRequest { SchemaVersion = 1, Invoices = invoices };
+                var pyResponse = await _gnuCashSyncClient.InsertInvoicesAsync(request, correlationId, cancellationToken);
+                if (pyResponse == null)
+                    return BadRequest("GnuCash service did not return a response.");
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"GnuCash insert {body.Year}-{body.Month:D2}: {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped"
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(pyResponse);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GnuCash insert failed for {Year}-{Month}", body.Year, body.Month);
+                return BadRequest($"GnuCash insert failed: {ex.Message}");
+            }
         }
 
         [HttpGet]
@@ -166,36 +246,9 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("Generating on-the-fly invoice for user {UserId}, {Year}-{Month}", userId, year, month);
 
-                // Get charging sessions for this user and month
-                var chargingSessions = await _context.ChargingSessions
-                    .Where(cs => cs.UserId == userId && 
-                                cs.Start.Year == year && 
-                                cs.Start.Month == month)
-                    .ToListAsync();
-
-                if (!chargingSessions.Any())
-                {
+                var invoiceData = await _invoiceComputation.BuildInvoiceDataReadOnlyAsync(userId, year, month);
+                if (invoiceData == null)
                     return NotFound("No charging sessions found for this user and month");
-                }
-
-                // Calculate total kWh and amount
-                var totalKwh = chargingSessions.Sum(cs => cs.ChargedKwh);
-
-                // Look up last known energy price on or before this month, fall back to 0.22
-                var ratePerKwh = await _context.EnergyPrices
-                    .Where(p => p.Year < year || (p.Year == year && p.Month <= month))
-                    .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
-                    .Select(p => (decimal?)p.PricePerKwh)
-                    .FirstOrDefaultAsync() ?? 0.22m;
-
-                var totalAmount = totalKwh * ratePerKwh;
-
-                // Resolve real user name if linked
-                var linkedUser = await _context.Users
-                    .FirstOrDefaultAsync(u => u.ChargingUserId == userId);
-                var profile = await _context.ChargingUserProfiles
-                    .FirstOrDefaultAsync(p => p.Id == userId);
-                var userName = linkedUser?.Name ?? profile?.DisplayName ?? $"Charging User {userId}";
 
                 var molliePayment = await _context.MolliePayments
                     .FirstOrDefaultAsync(p => p.ChargingUserId == userId && p.Year == year && p.Month == month);
@@ -205,9 +258,9 @@ namespace Backend.Controllers
                 {
                     try
                     {
-                        var invoiceNumber = $"INV-{year:D4}-{month:D2}-{userId:D4}";
+                        var invoiceNumber = invoiceData.InvoiceNumber;
                         var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-                        var description = $"Charging invoice {invoiceNumber} – {userName} – {monthName}";
+                        var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
 
                         var redirectUrl = _configuration["Mollie:RedirectUrl"];
                         if (string.IsNullOrWhiteSpace(redirectUrl))
@@ -219,7 +272,7 @@ namespace Backend.Controllers
                             : "";
 
                         var result = await _mollieService.CreatePaymentAsync(
-                            Math.Round(totalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
+                            Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
 
                         molliePayment = new MolliePayment
                         {
@@ -228,7 +281,7 @@ namespace Backend.Controllers
                             Month = month,
                             MolliePaymentId = result.PaymentId,
                             CheckoutUrl = result.CheckoutUrl,
-                            Amount = Math.Round(totalAmount, 2),
+                            Amount = Math.Round(invoiceData.TotalAmount, 2),
                             Status = result.Status,
                             CreatedAt = DateTime.UtcNow
                         };
@@ -241,39 +294,10 @@ namespace Backend.Controllers
                     }
                 }
 
-                var paymentUrl = molliePayment?.CheckoutUrl;
-                var invoiceIsPaid = molliePayment?.Status == "paid";
-
-                var invoiceData = new InvoiceData
-                {
-                    UserId = userId,
-                    UserName = userName,
-                    Street = profile?.Street,
-                    HouseNumber = profile?.HouseNumber,
-                    PostalCode = profile?.PostalCode,
-                    PlaceName = profile?.PlaceName,
-                    Year = year,
-                    Month = month,
-                    MonthName = new DateTime(year, month, 1).ToString("MMMM yyyy"),
-                    InvoiceNumber = $"INV-{year:D4}-{month:D2}-{userId:D4}",
-                    TotalKwh = Math.Round(totalKwh, 2),
-                    RatePerKwh = ratePerKwh,
-                    TotalAmount = Math.Round(totalAmount, 2),
-                    PaymentUrl = paymentUrl,
-                    IsPaid = invoiceIsPaid,
-                    Sessions = chargingSessions.Select(cs => new SessionData
-                    {
-                        Start = cs.Start,
-                        End = cs.End,
-                        StationId = cs.StationId,
-                        StationSerialNumber = cs.StationSerialNumber,
-                        Connector = cs.Connector,
-                        ChargingStationName = cs.ChargingStationName,
-                        ChargedKwh = Math.Round(cs.ChargedKwh, 2),
-                        Amount = Math.Round(cs.ChargedKwh * ratePerKwh, 2)
-                    }).ToList(),
-                    GeneratedAt = DateTime.UtcNow
-                };
+                molliePayment = await _context.MolliePayments
+                    .FirstOrDefaultAsync(p => p.ChargingUserId == userId && p.Year == year && p.Month == month);
+                invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
+                invoiceData.IsPaid = molliePayment?.Status == "paid";
 
                 // Generate PDF
                 var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
