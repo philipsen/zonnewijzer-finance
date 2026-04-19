@@ -33,7 +33,8 @@ try
         configuration
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
-            .Enrich.FromLogContext();
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Application", "backend");
     });
 
     // Add services to the container.
