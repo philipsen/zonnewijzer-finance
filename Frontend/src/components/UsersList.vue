@@ -86,9 +86,23 @@
               <span class="date-label">Last Login:</span>
               <span class="date-value">{{ formatDate(user.lastLoginAt) }}</span>
             </div>
+            <div v-if="user.chargingUserId != null" class="date-item">
+              <span class="date-label">Charging user:</span>
+              <span class="date-value mono">{{ user.chargingUserId }}</span>
+            </div>
           </div>
         </div>
         <div class="user-actions">
+          <button
+            v-if="currentUserRole === 'Admin'"
+            type="button"
+            class="btn btn-gnucash-customer"
+            :disabled="gnucashCustomerLoadingId === user.id || user.chargingUserId == null"
+            :title="user.chargingUserId == null ? 'Link this app user to a charging user first (Edit user).' : 'Create CU-' + user.chargingUserId + ' in GnuCash if missing.'"
+            @click="ensureGnucashCustomer(user)"
+          >
+            {{ gnucashCustomerLoadingId === user.id ? 'GnuCash…' : 'GnuCash customer' }}
+          </button>
           <router-link 
             v-if="currentUserRole === 'Admin'"
             :to="`/users/${user.id}/edit`" 
@@ -129,6 +143,7 @@ export default {
     const inviteError = ref('')
     const devUserDeletionEnabled = ref(false)
     const deletingUserId = ref(null)
+    const gnucashCustomerLoadingId = ref(null)
 
     const fetchCurrentUser = async () => {
       try {
@@ -238,6 +253,41 @@ export default {
       }
     }
 
+    const ensureGnucashCustomer = async (user) => {
+      if (user.chargingUserId == null) return
+      try {
+        gnucashCustomerLoadingId.value = user.id
+        const token = localStorage.getItem('token')
+        if (!token) {
+          alert('You must be logged in.')
+          return
+        }
+        const { data } = await axios.post(
+          `/api/invoices/gnucash/customer/${user.id}`,
+          {},
+          { params: { dryRun: false }, headers: { Authorization: `Bearer ${token}` } }
+        )
+        const msg =
+          data.status === 'created'
+            ? `GnuCash customer ${data.customerId} created.`
+            : data.status === 'already_exists'
+              ? `Customer ${data.customerId} already exists in GnuCash.`
+              : data.detail || data.status || 'Done'
+        alert(msg)
+      } catch (err) {
+        console.error('GnuCash ensure customer failed:', err)
+        const msg =
+          err.response?.data?.message ??
+          (typeof err.response?.data === 'string' ? err.response.data : null) ??
+          err.response?.data?.title ??
+          err.message ??
+          'GnuCash ensure customer failed.'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        gnucashCustomerLoadingId.value = null
+      }
+    }
+
     const confirmDeleteUser = async (user) => {
       const ok = window.confirm(
         `Delete user "${user.name}" (${user.email})? This cannot be undone.`
@@ -309,7 +359,9 @@ export default {
       inviteUserByEmail,
       devUserDeletionEnabled,
       deletingUserId,
-      confirmDeleteUser
+      confirmDeleteUser,
+      gnucashCustomerLoadingId,
+      ensureGnucashCustomer
     }
   }
 }
@@ -587,6 +639,27 @@ export default {
 
 .btn-delete:disabled {
   opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.btn-gnucash-customer {
+  background-color: #2d6a4f;
+  color: #fff;
+}
+
+.btn-gnucash-customer:hover:not(:disabled) {
+  background-color: #1b4332;
+  transform: translateY(-1px);
+}
+
+.btn-gnucash-customer:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
   transform: none;
 }

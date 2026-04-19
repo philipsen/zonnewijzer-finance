@@ -92,7 +92,7 @@ namespace Backend.Controllers
                 Response.Headers["X-Correlation-Id"] = correlationId;
 
                 var request = new GnuCashInsertRequest { SchemaVersion = 1, Invoices = invoices };
-                var pyResponse = await _gnuCashSyncClient.InsertInvoicesAsync(request, correlationId, cancellationToken);
+                var pyResponse = await _gnuCashSyncClient.InsertInvoicesAsync(request, correlationId, body.DryRun, cancellationToken);
                 if (pyResponse == null)
                     return BadRequest("GnuCash service did not return a response.");
 
@@ -100,7 +100,7 @@ namespace Backend.Controllers
                 {
                     Timestamp = DateTime.UtcNow,
                     UserName = requestingUser.Name,
-                    Action = $"GnuCash insert {body.Year}-{body.Month:D2}: {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped"
+                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
                 });
                 await _context.SaveChangesAsync(cancellationToken);
 
@@ -110,6 +110,70 @@ namespace Backend.Controllers
             {
                 _logger.LogError(ex, "GnuCash insert failed for {Year}-{Month}", body.Year, body.Month);
                 return BadRequest($"GnuCash insert failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>Admin: create the GnuCash customer for a linked app user (customer id CU-{chargingUserId}, same as invoices).</summary>
+        [HttpPost("gnucash/customer/{appUserId:int}")]
+        public async Task<IActionResult> EnsureGnucashCustomer(int appUserId, [FromQuery] bool dryRun = false, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                    return Forbid();
+
+                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
+                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
+
+                var target = await _context.Users.FirstOrDefaultAsync(u => u.Id == appUserId, cancellationToken);
+                if (target == null)
+                    return NotFound("User not found.");
+
+                if (target.ChargingUserId is null)
+                    return BadRequest("This user has no linked charging account. Link a charging user first so the GnuCash customer id matches invoices (CU-…).");
+
+                var profile = await _context.ChargingUserProfiles.FirstOrDefaultAsync(p => p.Id == target.ChargingUserId.Value, cancellationToken);
+                var customerId = $"CU-{target.ChargingUserId.Value}";
+                var pyRequest = new GnuCashEnsureCustomerRequest
+                {
+                    CustomerId = customerId,
+                    CustomerName = target.Name,
+                    Email = target.Email,
+                    Street = profile?.Street,
+                    HouseNumber = profile?.HouseNumber,
+                    PostalCode = profile?.PostalCode,
+                    PlaceName = profile?.PlaceName,
+                    Currency = "EUR"
+                };
+
+                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
+                    ?? $"{Guid.NewGuid():N}";
+                Response.Headers["X-Correlation-Id"] = correlationId;
+
+                var pyResponse = await _gnuCashSyncClient.EnsureCustomerAsync(pyRequest, correlationId, dryRun, cancellationToken);
+                if (pyResponse == null)
+                    return BadRequest("GnuCash service did not return a response.");
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"GnuCash ensure customer {customerId} for app user {appUserId} (dryRun={dryRun}): {pyResponse.Status}"
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(pyResponse);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GnuCash ensure customer failed for app user {AppUserId}", appUserId);
+                return BadRequest($"GnuCash ensure customer failed: {ex.Message}");
             }
         }
 
