@@ -1,5 +1,7 @@
 # gnucash-sync (Python)
 
+Full setup, Postgres, and backend configuration: **[docs/GNUCASH_DEV.md](../../docs/GNUCASH_DEV.md)**.
+
 Use a **local virtual environment** (do not install dependencies globally).
 
 ## One-time setup

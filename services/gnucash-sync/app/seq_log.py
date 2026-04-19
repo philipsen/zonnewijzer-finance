@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,13 +15,16 @@ _log = logging.getLogger("gnucash_sync")
 
 
 def _clef_event(level: str, message_template: str, **properties: Any) -> dict[str, Any]:
-    return {
+    exc = properties.get("exception")
+    base: dict[str, Any] = {
         "@t": datetime.now(timezone.utc).isoformat(),
         "@l": level,
         "@mt": message_template,
-        "@x": properties.get("exception"),
         **{k: v for k, v in properties.items() if k != "exception"},
     }
+    if exc is not None:
+        base["@x"] = exc if isinstance(exc, str) else str(exc)
+    return base
 
 
 def seq_emit(level: str, message: str, **properties: Any) -> None:
@@ -33,7 +35,7 @@ def seq_emit(level: str, message: str, **properties: Any) -> None:
     base = (settings.seq_server_url or "").strip().rstrip("/")
     if not base:
         return
-    url = f"{base}/api/events/raw"
+    url = f"{base}/ingest/clef"
     payload = json.dumps(_clef_event(level, message, **properties)) + "\n"
     headers = {"Content-Type": "application/vnd.serilog.clef"}
     if settings.seq_api_key:

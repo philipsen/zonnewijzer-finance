@@ -44,3 +44,22 @@ class ResultItem(BaseModel):
 
 class InsertResponse(BaseModel):
     results: list[ResultItem]
+
+
+class CustomerEnsureIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    customer_id: str = Field(alias="customerId")
+    customer_name: str = Field(alias="customerName")
+    street: str | None = None
+    house_number: str | None = Field(None, alias="houseNumber")
+    postal_code: str | None = Field(None, alias="postalCode")
+    place_name: str | None = Field(None, alias="placeName")
+    email: str | None = None
+    currency: str = "EUR"
+
+
+class CustomerEnsureResult(BaseModel):
+    customerId: str
+    status: str
+    detail: str | None = None

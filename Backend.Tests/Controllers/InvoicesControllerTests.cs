@@ -1,3 +1,4 @@
+using Backend.Contracts;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -419,5 +420,42 @@ public class InvoicesControllerTests : IDisposable
 
         var p = await _db.MolliePayments.FirstAsync();
         Assert.Equal("paid", p.Status);
+    }
+
+    [Fact]
+    public async Task EnsureGnucashCustomer_NoChargingLink_ReturnsBadRequest()
+    {
+        await SeedAdminAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base, ChargingUserId = null });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("charging", bad.Value!.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task EnsureGnucashCustomer_WithLink_CallsPython()
+    {
+        await SeedAdminAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X User", GoogleId = "g2", Role = UserRole.Base, ChargingUserId = 99 });
+        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 99, Street = "Main", HouseNumber = "1" });
+        await _db.SaveChangesAsync();
+
+        _gnuCashSyncMock
+            .Setup(g => g.EnsureCustomerAsync(It.IsAny<GnuCashEnsureCustomerRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GnuCashEnsureCustomerResponse { CustomerId = "CU-99", Status = "created" });
+
+        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(result);
+        _gnuCashSyncMock.Verify(
+            g => g.EnsureCustomerAsync(
+                It.Is<GnuCashEnsureCustomerRequest>(r => r.CustomerId == "CU-99" && r.CustomerName == "X User" && r.Street == "Main"),
+                It.IsAny<string?>(),
+                false,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }

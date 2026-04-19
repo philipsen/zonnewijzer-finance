@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
+from typing import TypeVar
 
+from sqlalchemy import inspect as sa_inspect
 from piecash import Address, open_book
 from piecash.business import Customer
 from piecash.business.invoice import Entry, Invoice
@@ -17,6 +19,13 @@ from app.settings import get_settings
 
 _log = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
+
+def _piecash_new(cls: type[T]) -> T:
+    """piecash blocks ``__init__`` on Invoice/Entry; use SQLAlchemy's supported factory."""
+    return sa_inspect(cls).class_manager.new_instance()
+
 
 def _find_account_by_fullname(book, fullname: str):
     for acc in book.accounts:
@@ -27,7 +36,12 @@ def _find_account_by_fullname(book, fullname: str):
 
 def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool) -> ResultItem:
     iid = inv_in.invoice_id
-    with open_book(uri_conn=uri, readonly=False, open_if_lock=True) as book:
+    with open_book(
+        uri_conn=uri,
+        readonly=False,
+        open_if_lock=True,
+        do_backup=False,  # piecash only auto-backs up SQLite; use pg_dump for Postgres
+    ) as book:
         existing = book.session.query(Invoice).filter_by(id=iid).first()
         if existing is not None:
             return ResultItem(invoiceId=iid, status="skipped_already_exists", detail="invoice id already in book")
@@ -61,7 +75,7 @@ def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool)
         opened = datetime.fromisoformat(inv_in.invoice_date_opened[:10])
         note = f"{inv_in.year}-{inv_in.month:02d} app; MolliePaid={inv_in.mollie_paid}"
 
-        inv = Invoice()
+        inv = _piecash_new(Invoice)
         inv.id = iid
         inv.notes = note
         inv.active = 1
@@ -73,7 +87,7 @@ def _insert_single_invoice(uri: str, income_account: str, inv_in, dry_run: bool)
         book.flush()
 
         for line in inv_in.lines:
-            entry = Entry()
+            entry = _piecash_new(Entry)
             entry.date = opened
             entry.description = (line.description or "")[:2046]
             entry.invoice = inv
@@ -98,7 +112,8 @@ def run_insert(body: InsertBody, dry_run: bool) -> list[ResultItem]:
     if not uri:
         raise ValueError("GNUCASH_POSTGRES_URL is not set")
 
-    income = (settings.income_account or "").strip()
+    # GnuCash full names use ":" (UI may show "Income / Charging"); accept "/" in env.
+    income = (settings.income_account or "").strip().replace("/", ":")
     if not income:
         raise ValueError("INCOME_ACCOUNT is not set")
 

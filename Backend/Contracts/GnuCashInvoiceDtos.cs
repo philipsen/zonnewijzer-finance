@@ -44,3 +44,22 @@ public sealed class GnuCashInsertResultItem
     public string Status { get; set; } = string.Empty;
     public string? Detail { get; set; }
 }
+
+public sealed class GnuCashEnsureCustomerRequest
+{
+    public string CustomerId { get; set; } = string.Empty;
+    public string CustomerName { get; set; } = string.Empty;
+    public string? Street { get; set; }
+    public string? HouseNumber { get; set; }
+    public string? PostalCode { get; set; }
+    public string? PlaceName { get; set; }
+    public string? Email { get; set; }
+    public string Currency { get; set; } = "EUR";
+}
+
+public sealed class GnuCashEnsureCustomerResponse
+{
+    public string CustomerId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string? Detail { get; set; }
+}

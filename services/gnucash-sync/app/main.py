@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from app.gnucash_customer import run_ensure_customer
 from app.gnucash_insert import run_insert
-from app.schemas import InsertBody, InsertResponse
+from app.schemas import CustomerEnsureIn, CustomerEnsureResult, InsertBody, InsertResponse
 from app.seq_log import seq_emit
 from app.settings import Settings, get_settings
+from app.startup_db import verify_gnucash_database_or_die
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +27,13 @@ def get_app_settings() -> Settings:
     return get_settings()
 
 
-app = FastAPI(title="gnucash-sync", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    verify_gnucash_database_or_die()
+    yield
+
+
+app = FastAPI(title="gnucash-sync", version="0.1.0", lifespan=_lifespan)
 
 
 @app.middleware("http")
@@ -79,3 +89,55 @@ def insert_invoices(
         Application=settings.app_name,
     )
     return InsertResponse(results=results)
+
+
+@app.post("/customers/ensure", response_model=CustomerEnsureResult)
+def ensure_customer(
+    body: CustomerEnsureIn,
+    request: Request,
+    dry_run: bool = Query(False),
+    x_gnucash_sync_key: str | None = Header(None, alias="X-GnuCash-Sync-Key"),
+    settings: Settings = Depends(get_app_settings),
+) -> CustomerEnsureResult:
+    if settings.sync_api_key and (x_gnucash_sync_key or "") != settings.sync_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-GnuCash-Sync-Key")
+
+    cid = getattr(request.state, "correlation_id", None)
+    seq_emit(
+        "Information",
+        "GnuCash ensure customer {CustomerId} (dry_run={DryRun})",
+        CustomerId=body.customer_id,
+        DryRun=dry_run,
+        CorrelationId=cid,
+        Application=settings.app_name,
+    )
+
+    uri = (settings.gnucash_postgres_url or "").strip()
+    if not uri:
+        raise HTTPException(status_code=400, detail="GNUCASH_POSTGRES_URL is not set")
+
+    try:
+        result = run_ensure_customer(uri, body, dry_run)
+    except Exception as e:  # noqa: BLE001
+        _log.exception("Ensure customer failed for %s", body.customer_id)
+        seq_emit(
+            "Error",
+            "GnuCash ensure customer failed",
+            exception=str(e),
+            CorrelationId=cid,
+            Application=settings.app_name,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if result.status == "error":
+        raise HTTPException(status_code=400, detail=result.detail or "error")
+
+    seq_emit(
+        "Information",
+        "GnuCash ensure customer finished {Status} for {CustomerId}",
+        Status=result.status,
+        CustomerId=result.customerId,
+        CorrelationId=cid,
+        Application=settings.app_name,
+    )
+    return result
