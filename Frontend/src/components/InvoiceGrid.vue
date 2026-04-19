@@ -30,10 +30,6 @@
               </option>
             </select>
           </label>
-          <label class="gnucash-dry">
-            <input v-model="gnucashDryRun" type="checkbox">
-            Dry run (no save)
-          </label>
           <button
             type="button"
             class="btn-gnucash"
@@ -216,7 +212,6 @@ export default {
     const selectedUserId = ref(null)
 
     const gnucashPeriodKey = ref('')
-    const gnucashDryRun = ref(true)
     const gnucashBulkLoading = ref(false)
     const gnucashCellLoading = ref({})
 
@@ -344,11 +339,6 @@ export default {
 
     const gnucashCellKey = (userId, year, month) => `${userId}_${year}_${month}`
 
-    const formatGnucashResults = (results) => {
-      if (!results?.length) return 'No result rows returned.'
-      return results.map((r) => `${r.invoiceId}: ${r.status}${r.detail ? ` — ${r.detail}` : ''}`).join('\n')
-    }
-
     const insertGnucashMonth = async () => {
       const parts = gnucashPeriodKey.value.split('-')
       if (parts.length !== 2) {
@@ -360,15 +350,14 @@ export default {
       gnucashBulkLoading.value = true
       try {
         const token = localStorage.getItem('token')
-        const { data } = await axios.post('/api/invoices/gnucash/insert', {
+        await axios.post('/api/invoices/gnucash/insert', {
           year,
           month,
           chargingUserId: null,
-          dryRun: gnucashDryRun.value
+          dryRun: false
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
-        alert(formatGnucashResults(data.results))
       } catch (err) {
         console.error('GnuCash insert failed:', err)
         const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
@@ -383,15 +372,14 @@ export default {
       gnucashCellLoading.value = { ...gnucashCellLoading.value, [key]: true }
       try {
         const token = localStorage.getItem('token')
-        const { data } = await axios.post('/api/invoices/gnucash/insert', {
+        await axios.post('/api/invoices/gnucash/insert', {
           year,
           month,
           chargingUserId: userId,
-          dryRun: gnucashDryRun.value
+          dryRun: false
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
-        alert(formatGnucashResults(data.results))
       } catch (err) {
         console.error('GnuCash insert failed:', err)
         const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
@@ -446,7 +434,6 @@ export default {
       isPaymentLinkLoading,
       handlePaymentLink,
       gnucashPeriodKey,
-      gnucashDryRun,
       gnucashBulkLoading,
       gnucashCellLoading,
       gnucashCellKey,
@@ -527,15 +514,6 @@ export default {
   border-radius: 4px;
   font-size: 0.9rem;
   background: white;
-}
-
-.gnucash-dry {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.9rem;
-  color: #333;
-  cursor: pointer;
 }
 
 .btn-gnucash {
