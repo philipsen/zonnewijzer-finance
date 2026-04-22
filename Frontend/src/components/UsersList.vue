@@ -8,7 +8,7 @@
     </div>
 
     <form
-      v-if="currentUserRole === 'Admin'"
+      v-if="isAppAdminView"
       class="invite-form"
       @submit.prevent="inviteUserByEmail"
     >
@@ -68,13 +68,14 @@
               <div class="role-management">
                 <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
                 <select 
-                  v-if="currentUserRole === 'Admin' && user.id !== currentUserId"
+                  v-if="isAppAdminView && user.id !== currentUserId"
                   :value="user.role"
                   @change="updateUserRole(user, $event.target.value)"
                   class="role-select"
                 >
                   <option value="Base">Base</option>
                   <option value="Admin">Admin</option>
+                  <option v-if="isOwnerView || (isAppAdminView && user.id === currentUserId)" value="Owner">Owner</option>
                 </select>
               </div>
             </div>
@@ -86,18 +87,32 @@
               <span class="date-label">Last Login:</span>
               <span class="date-value">{{ formatDate(user.lastLoginAt) }}</span>
             </div>
+            <div v-if="user.chargingUserId != null" class="date-item">
+              <span class="date-label">Charging user:</span>
+              <span class="date-value mono">{{ user.chargingUserId }}</span>
+            </div>
           </div>
         </div>
         <div class="user-actions">
+          <button
+            v-if="isOwnerView"
+            type="button"
+            class="btn btn-gnucash-customer"
+            :disabled="gnucashCustomerLoadingId === user.id || user.chargingUserId == null"
+            :title="user.chargingUserId == null ? 'Link this app user to a charging user first (Edit user).' : 'Create CU-' + user.chargingUserId + ' in GnuCash if missing.'"
+            @click="ensureGnucashCustomer(user)"
+          >
+            {{ gnucashCustomerLoadingId === user.id ? 'GnuCash…' : 'GnuCash customer' }}
+          </button>
           <router-link 
-            v-if="currentUserRole === 'Admin'"
+            v-if="isAppAdminView"
             :to="`/users/${user.id}/edit`" 
             class="btn btn-edit"
           >
             Edit User
           </router-link>
           <button
-            v-if="currentUserRole === 'Admin' && devUserDeletionEnabled && user.id !== currentUserId"
+            v-if="isAppAdminView && devUserDeletionEnabled && user.id !== currentUserId"
             type="button"
             class="btn btn-delete"
             :disabled="deletingUserId === user.id"
@@ -112,8 +127,9 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, isOwner } from '../utils/roles'
 
 export default {
   name: 'UsersList',
@@ -129,6 +145,10 @@ export default {
     const inviteError = ref('')
     const devUserDeletionEnabled = ref(false)
     const deletingUserId = ref(null)
+    const gnucashCustomerLoadingId = ref(null)
+
+    const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
+    const isOwnerView = computed(() => isOwner(currentUserRole.value))
 
     const fetchCurrentUser = async () => {
       try {
@@ -238,6 +258,41 @@ export default {
       }
     }
 
+    const ensureGnucashCustomer = async (user) => {
+      if (user.chargingUserId == null) return
+      try {
+        gnucashCustomerLoadingId.value = user.id
+        const token = localStorage.getItem('token')
+        if (!token) {
+          alert('You must be logged in.')
+          return
+        }
+        const { data } = await axios.post(
+          `/api/invoices/gnucash/customer/${user.id}`,
+          {},
+          { params: { dryRun: false }, headers: { Authorization: `Bearer ${token}` } }
+        )
+        const msg =
+          data.status === 'created'
+            ? `GnuCash customer ${data.customerId} created.`
+            : data.status === 'already_exists'
+              ? `Customer ${data.customerId} already exists in GnuCash.`
+              : data.detail || data.status || 'Done'
+        alert(msg)
+      } catch (err) {
+        console.error('GnuCash ensure customer failed:', err)
+        const msg =
+          err.response?.data?.message ??
+          (typeof err.response?.data === 'string' ? err.response.data : null) ??
+          err.response?.data?.title ??
+          err.message ??
+          'GnuCash ensure customer failed.'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        gnucashCustomerLoadingId.value = null
+      }
+    }
+
     const confirmDeleteUser = async (user) => {
       const ok = window.confirm(
         `Delete user "${user.name}" (${user.email})? This cannot be undone.`
@@ -298,6 +353,8 @@ export default {
       loading,
       error,
       currentUserRole,
+      isAppAdminView,
+      isOwnerView,
       currentUserId,
       inviteEmail,
       inviting,
@@ -309,7 +366,9 @@ export default {
       inviteUserByEmail,
       devUserDeletionEnabled,
       deletingUserId,
-      confirmDeleteUser
+      confirmDeleteUser,
+      gnucashCustomerLoadingId,
+      ensureGnucashCustomer
     }
   }
 }
@@ -591,6 +650,27 @@ export default {
   transform: none;
 }
 
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.btn-gnucash-customer {
+  background-color: #2d6a4f;
+  color: #fff;
+}
+
+.btn-gnucash-customer:hover:not(:disabled) {
+  background-color: #1b4332;
+  transform: translateY(-1px);
+}
+
+.btn-gnucash-customer:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
 /* Role management styles */
 .role-management {
   display: flex;
@@ -615,6 +695,11 @@ export default {
 .role-admin {
   background-color: #fff3e0;
   color: #e65100;
+}
+
+.role-owner {
+  background-color: #ede7f6;
+  color: #4527a0;
 }
 
 .role-select {

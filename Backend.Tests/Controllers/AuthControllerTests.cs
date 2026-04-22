@@ -378,6 +378,32 @@ public class AuthControllerTests : IDisposable
         Assert.Equal(UserRole.Admin, updated!.Role);
     }
 
+    [Fact]
+    public async Task UpdateUser_Admin_CanSetOwnRoleToOwner()
+    {
+        await AddUser(1, "Editor", UserRole.Admin);
+
+        var result = await BuildController().UpdateUser(1, new UpdateUserRequest { Role = "Owner" });
+
+        Assert.IsType<OkObjectResult>(result);
+        var updated = await _db.Users.FindAsync(1);
+        Assert.Equal(UserRole.Owner, updated!.Role);
+    }
+
+    [Fact]
+    public async Task UpdateUser_Admin_CannotSetAnotherUserToOwner()
+    {
+        await AddUser(1, "Editor", UserRole.Admin);
+        await AddUser(2, "Target", UserRole.Base);
+
+        var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Role = "Owner" });
+
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbidden.StatusCode);
+        var target = await _db.Users.FindAsync(2);
+        Assert.Equal(UserRole.Base, target!.Role);
+    }
+
     // ── UpdateUserRole ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -407,7 +433,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task UpdateUserRole_ChangesRole()
     {
-        await AddUser(1, "Editor");
+        await AddUser(1, "Editor", UserRole.Admin);
         await AddUser(2, "Target", UserRole.Base);
 
         var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "Admin" });
@@ -415,6 +441,30 @@ public class AuthControllerTests : IDisposable
         Assert.IsType<OkObjectResult>(result);
         var updated = await _db.Users.FindAsync(2);
         Assert.Equal(UserRole.Admin, updated!.Role);
+    }
+
+    [Fact]
+    public async Task UpdateUserRole_Admin_CanSetOwnRoleToOwner()
+    {
+        await AddUser(1, "Editor", UserRole.Admin);
+
+        var result = await BuildController().UpdateUserRole(1, new UpdateRoleRequest { Role = "Owner" });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(UserRole.Owner, (await _db.Users.FindAsync(1))!.Role);
+    }
+
+    [Fact]
+    public async Task UpdateUserRole_Admin_CannotSetAnotherUserToOwner()
+    {
+        await AddUser(1, "Editor", UserRole.Admin);
+        await AddUser(2, "Target", UserRole.Base);
+
+        var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "Owner" });
+
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbidden.StatusCode);
+        Assert.Equal(UserRole.Base, (await _db.Users.FindAsync(2))!.Role);
     }
 
     // ── GetChargingUsers ───────────────────────────────────────────────────────

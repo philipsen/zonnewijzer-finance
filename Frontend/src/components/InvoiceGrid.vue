@@ -16,6 +16,30 @@
         <p class="description">
           Click on any link to generate and download an invoice PDF based on charging session data.
         </p>
+        <div v-if="isOwnerRole && months.length" class="gnucash-toolbar">
+          <span class="gnucash-toolbar-title">GnuCash</span>
+          <label class="gnucash-field">
+            <span>Period</span>
+            <select v-model="gnucashPeriodKey" class="gnucash-select">
+              <option
+                v-for="m in months"
+                :key="`${m.year}-${m.month}`"
+                :value="`${m.year}-${m.month}`"
+              >
+                {{ m.name }}
+              </option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="btn-gnucash"
+            :disabled="gnucashBulkLoading || !gnucashMonthHasInsertable"
+            :title="gnucashMonthHasInsertable ? '' : 'No sessions to insert, or every invoice for this period is already in GnuCash.'"
+            @click="insertGnucashMonth"
+          >
+            {{ gnucashBulkLoading ? '…' : 'Insert month (all users)' }}
+          </button>
+        </div>
       </div>
 
       <!-- Desktop: table grid -->
@@ -80,6 +104,16 @@
                         @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
                       >
                         {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Payment link' }}
+                      </button>
+                      <button
+                        v-if="isOwnerRole"
+                        type="button"
+                        class="btn-gnucash-cell"
+                        :disabled="gnucashCellDisabled(userRow.user.id, monthData)"
+                        :title="gnucashCellTitle(monthData)"
+                        @click="insertGnucashCell(userRow.user.id, monthData.year, monthData.month)"
+                      >
+                        {{ gnucashCellLoading[gnucashCellKey(userRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
                       </button>
                     </div>
                   </template>
@@ -148,6 +182,16 @@
                 >
                   {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Pay' }}
                 </button>
+                <button
+                  v-if="isOwnerRole"
+                  type="button"
+                  class="btn-gnucash-cell mobile-gnucash"
+                  :disabled="gnucashCellDisabled(selectedUserRow.user.id, monthData)"
+                  :title="gnucashCellTitle(monthData)"
+                  @click="insertGnucashCell(selectedUserRow.user.id, monthData.year, monthData.month)"
+                >
+                  {{ gnucashCellLoading[gnucashCellKey(selectedUserRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
+                </button>
               </div>
             </template>
             <span v-else class="mobile-no-invoice">No sessions</span>
@@ -161,6 +205,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { isOwner, roleFromToken } from '../utils/roles'
 
 export default {
   name: 'InvoiceGrid',
@@ -172,14 +217,33 @@ export default {
     const error = ref('')
     const selectedUserId = ref(null)
 
+    const gnucashPeriodKey = ref('')
+    const gnucashBulkLoading = ref(false)
+    const gnucashCellLoading = ref({})
+    const isOwnerRole = ref(false)
+
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
       return gridData.value.find(row => row.user.id === selectedUserId.value) || null
     })
 
-    const fetchInvoicesGrid = async () => {
+    const gnucashMonthHasInsertable = computed(() => {
+      const parts = gnucashPeriodKey.value.split('-')
+      if (parts.length !== 2 || !gridData.value?.length) return false
+      const y = parseInt(parts[0], 10)
+      const mo = parseInt(parts[1], 10)
+      if (Number.isNaN(y) || Number.isNaN(mo)) return false
+      for (const row of gridData.value) {
+        const inv = row.invoices.find(i => i.year === y && i.month === mo)
+        if (inv?.hasChargingSessions && !inv.gnucashInvoiceInserted) return true
+      }
+      return false
+    })
+
+    const fetchInvoicesGrid = async (options = {}) => {
+      const silent = options.silent === true
       try {
-        loading.value = true
+        if (!silent) loading.value = true
         const token = localStorage.getItem('token')
         
         if (!token) {
@@ -195,9 +259,16 @@ export default {
         users.value = response.data.users
         months.value = response.data.months
 
-        // Pre-select first user for the mobile view
+        if (response.data.months?.length) {
+          const last = response.data.months[response.data.months.length - 1]
+          gnucashPeriodKey.value = `${last.year}-${last.month}`
+        }
+
+        // Pre-select user for the mobile view (keep selection when refetching if still present)
         if (response.data.gridData && response.data.gridData.length > 0) {
-          selectedUserId.value = response.data.gridData[0].user.id
+          const prev = selectedUserId.value
+          const still = prev != null && response.data.gridData.some(r => r.user.id === prev)
+          selectedUserId.value = still ? prev : response.data.gridData[0].user.id
         }
         
       } catch (err) {
@@ -208,7 +279,7 @@ export default {
           error.value = 'Failed to load invoices. Please try again later.'
         }
       } finally {
-        loading.value = false
+        if (!silent) loading.value = false
       }
     }
 
@@ -289,6 +360,70 @@ export default {
       }
     }
 
+    const gnucashCellKey = (userId, year, month) => `${userId}_${year}_${month}`
+
+    const gnucashCellDisabled = (userId, monthData) => {
+      const key = gnucashCellKey(userId, monthData.year, monthData.month)
+      return !!gnucashCellLoading.value[key] || !!monthData.gnucashInvoiceInserted
+    }
+
+    const gnucashCellTitle = (monthData) =>
+      monthData.gnucashInvoiceInserted ? 'This invoice is already in GnuCash.' : ''
+
+    const insertGnucashMonth = async () => {
+      const parts = gnucashPeriodKey.value.split('-')
+      if (parts.length !== 2) {
+        alert('Select a period.')
+        return
+      }
+      const year = parseInt(parts[0], 10)
+      const month = parseInt(parts[1], 10)
+      gnucashBulkLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        await axios.post('/api/invoices/gnucash/insert', {
+          year,
+          month,
+          chargingUserId: null,
+          dryRun: false
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        await fetchInvoicesGrid({ silent: true })
+      } catch (err) {
+        console.error('GnuCash insert failed:', err)
+        const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        gnucashBulkLoading.value = false
+      }
+    }
+
+    const insertGnucashCell = async (userId, year, month) => {
+      const key = gnucashCellKey(userId, year, month)
+      gnucashCellLoading.value = { ...gnucashCellLoading.value, [key]: true }
+      try {
+        const token = localStorage.getItem('token')
+        await axios.post('/api/invoices/gnucash/insert', {
+          year,
+          month,
+          chargingUserId: userId,
+          dryRun: false
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        await fetchInvoicesGrid({ silent: true })
+      } catch (err) {
+        console.error('GnuCash insert failed:', err)
+        const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        const next = { ...gnucashCellLoading.value }
+        delete next[key]
+        gnucashCellLoading.value = next
+      }
+    }
+
     const fetchExistingPayments = async () => {
       try {
         const token = localStorage.getItem('token')
@@ -311,6 +446,7 @@ export default {
     }
 
     onMounted(() => {
+      isOwnerRole.value = isOwner(roleFromToken(localStorage.getItem('token')))
       fetchInvoicesGrid()
       fetchExistingPayments()
     })
@@ -330,7 +466,17 @@ export default {
       canOpenPaymentLink,
       isPaymentPaid,
       isPaymentLinkLoading,
-      handlePaymentLink
+      handlePaymentLink,
+      gnucashPeriodKey,
+      gnucashBulkLoading,
+      gnucashCellLoading,
+      gnucashCellKey,
+      gnucashMonthHasInsertable,
+      gnucashCellDisabled,
+      gnucashCellTitle,
+      insertGnucashMonth,
+      insertGnucashCell,
+      isOwnerRole
     }
   }
 }
@@ -372,6 +518,85 @@ export default {
   border-radius: 4px;
   margin-bottom: 2rem;
   border: 1px solid #f5c6cb;
+}
+
+.gnucash-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: #f0f7ff;
+  border: 1px solid #b8daff;
+  border-radius: 8px;
+}
+
+.gnucash-toolbar-title {
+  font-weight: 700;
+  color: #004085;
+  margin-right: 0.25rem;
+}
+
+.gnucash-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.gnucash-select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  background: white;
+}
+
+.btn-gnucash {
+  padding: 0.45rem 0.85rem;
+  border: none;
+  border-radius: 4px;
+  background: #004085;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-gnucash:hover:not(:disabled) {
+  background: #002752;
+}
+
+.btn-gnucash:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-gnucash-cell {
+  margin-top: 0.35rem;
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid #004085;
+  border-radius: 4px;
+  background: white;
+  color: #004085;
+  cursor: pointer;
+}
+
+.btn-gnucash-cell:hover:not(:disabled) {
+  background: #e7f1ff;
+}
+
+.btn-gnucash-cell:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mobile-gnucash {
+  margin-top: 0.5rem;
 }
 
 .admin-controls {
@@ -650,6 +875,15 @@ export default {
 
   .grid-info .description {
     font-size: 0.9rem;
+  }
+
+  .gnucash-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-gnucash {
+    width: 100%;
   }
 
   .desktop-grid {

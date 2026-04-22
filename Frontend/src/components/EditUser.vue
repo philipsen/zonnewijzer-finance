@@ -13,7 +13,7 @@
       Loading user data...
     </div>
 
-    <div v-else-if="!isAdmin" class="access-denied">
+    <div v-else-if="!isAppAdmin" class="access-denied">
       <h2>Access Denied</h2>
       <p>Only administrators can edit users.</p>
     </div>
@@ -75,6 +75,7 @@
           >
             <option value="Base">Base</option>
             <option value="Admin">Admin</option>
+            <option v-if="isEditorOwner || (isAppAdmin && isEditingSelf)" value="Owner">Owner</option>
           </select>
         </div>
 
@@ -125,6 +126,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
+import { isAppAdmin as roleIsAppAdmin, isOwner, roleFromToken } from '../utils/roles'
 
 export default {
   name: 'EditUser',
@@ -137,18 +139,21 @@ export default {
     const saving = ref(false)
     const error = ref('')
     const currentUserRole = ref('')
-    // Decode role from JWT to guard the UI
-    const isAdmin = ref(false)
-    const token = localStorage.getItem('token')
-    if (token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
-        isAdmin.value = role === 'Admin'
-      } catch {
-        isAdmin.value = false
-      }
+    const currentUserId = ref(null)
+    const isAppAdmin = ref(false)
+    const isEditorOwner = ref(false)
+    {
+      const role = roleFromToken(localStorage.getItem('token'))
+      isAppAdmin.value = roleIsAppAdmin(role)
+      isEditorOwner.value = isOwner(role)
     }
+
+    const isEditingSelf = computed(
+      () =>
+        currentUserId.value != null &&
+        user.value != null &&
+        currentUserId.value === user.value.id
+    )
     
     const form = ref({
       name: '',
@@ -181,7 +186,8 @@ export default {
           headers: { Authorization: `Bearer ${token}` }
         })
         currentUserRole.value = currentUserResponse.data.role
-        
+        currentUserId.value = currentUserResponse.data.id
+
         // Get user to edit
         const response = await axios.get(`/api/auth/users/${userId}`, {
           headers: { Authorization: `Bearer ${token}` }
@@ -269,7 +275,9 @@ export default {
     })
 
     return {
-      isAdmin,
+      isAppAdmin,
+      isEditorOwner,
+      isEditingSelf,
       user,
       form,
       loading,
@@ -472,6 +480,11 @@ export default {
 
 .role-base {
   background-color: #6c757d;
+  color: white;
+}
+
+.role-owner {
+  background-color: #5e35b1;
   color: white;
 }
 

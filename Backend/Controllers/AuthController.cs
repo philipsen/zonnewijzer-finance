@@ -224,7 +224,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPost("users/invite")]
         public async Task<IActionResult> InviteUser([FromBody] InviteUserRequest request)
         {
@@ -240,7 +240,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var invitingUser = await _context.Users.FindAsync(currentUserId);
-                if (invitingUser == null || invitingUser.Role != UserRole.Admin)
+                if (invitingUser == null || !invitingUser.Role.IsAppAdministrator())
                     return Forbid();
 
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
@@ -509,7 +509,7 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                 {
                     _logger.LogWarning("Non-admin user {UserId} attempted to access users list", userId);
                     return Forbid();
@@ -572,7 +572,7 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                 {
                     _logger.LogWarning("Non-admin user {UserId} attempted database wipe", userId);
                     return Forbid();
@@ -674,7 +674,7 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                 {
                     _logger.LogWarning("Non-admin user {UserId} attempted clear charging data", userId);
                     return Forbid();
@@ -738,7 +738,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("users/{id}")]
         public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest request)
         {
@@ -776,11 +776,17 @@ namespace Backend.Controllers
                     user.Email = request.Email.Trim();
                 }
 
-                // Allow role changes for any authenticated user
                 if (!string.IsNullOrWhiteSpace(request.Role))
                 {
                     if (Enum.TryParse<UserRole>(request.Role, true, out var newRole) && newRole != user.Role)
                     {
+                        if (editor == null || !CanAssignUserRole(editor.Role, newRole, id, currentUserId))
+                            return StatusCode(403, new
+                            {
+                                message = newRole == UserRole.Owner
+                                    ? "Only an owner can grant Owner to another user, or you may set your own account to Owner while editing yourself."
+                                    : "Not allowed to assign this role."
+                            });
                         changes.Add($"Role: '{user.Role}' → '{newRole}'");
                         user.Role = newRole;
                         _logger.LogInformation("User {CurrentUserId} changed role of user {UserId} to {Role}", currentUserId, id, newRole);
@@ -819,7 +825,7 @@ namespace Backend.Controllers
         /// <summary>
         /// Permanently deletes an app user (invoices and password-reset tokens cascade). Development environment only.
         /// </summary>
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpDelete("users/{id:int}")]
         public async Task<IActionResult> DeleteUser(int id)
         {
@@ -838,18 +844,19 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FindAsync(currentUserId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                     return Forbid();
 
                 var user = await _context.Users.FindAsync(id);
                 if (user == null)
                     return NotFound(new { message = "User not found." });
 
-                if (user.Role == UserRole.Admin)
+                if (user.Role.IsAppAdministrator())
                 {
-                    var otherAdmins = await _context.Users.CountAsync(u => u.Id != id && u.Role == UserRole.Admin);
-                    if (otherAdmins == 0)
-                        return BadRequest(new { message = "Cannot delete the last administrator account." });
+                    var otherAppAdmins = await _context.Users.CountAsync(u =>
+                        u.Id != id && (u.Role == UserRole.Admin || u.Role == UserRole.Owner));
+                    if (otherAppAdmins == 0)
+                        return BadRequest(new { message = "Cannot delete the last administrator or owner account." });
                 }
 
                 if (id == currentUserId)
@@ -882,7 +889,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("users/{id}/role")]
         public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleRequest request)
         {
@@ -896,7 +903,6 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
-                // Allow any authenticated user to change user roles
                 var user = await _context.Users.FindAsync(id);
                 if (user == null)
                 {
@@ -905,11 +911,24 @@ namespace Backend.Controllers
 
                 if (!Enum.TryParse<UserRole>(request.Role, true, out var newRole))
                 {
-                    return BadRequest("Invalid role. Valid roles are: Base, Admin");
+                    return BadRequest("Invalid role. Valid roles are: Base, Admin, Owner");
                 }
 
                 var editor = await _context.Users.FindAsync(currentUserId);
-                var editorName = editor?.Name ?? $"User {currentUserId}";
+                if (editor == null)
+                    return Unauthorized();
+                if (!CanAssignUserRole(editor.Role, newRole, id, currentUserId))
+                {
+                    return newRole == UserRole.Owner
+                        ? StatusCode(403, new
+                        {
+                            message =
+                                "Only an owner can grant Owner to another user, or an administrator may set their own account to Owner."
+                        })
+                        : Forbid();
+                }
+
+                var editorName = editor.Name;
                 var oldRole = user.Role;
 
                 user.Role = newRole;
@@ -1014,7 +1033,7 @@ namespace Backend.Controllers
             });
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("charging-users/{id}")]
         public async Task<IActionResult> UpdateChargingUser(int id, [FromBody] UpdateChargingUserRequest request)
         {
@@ -1290,6 +1309,21 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "GitHub OAuth callback failed");
                 return Redirect($"{frontendUrl}?auth_error=github_error");
             }
+        }
+
+        /// <summary>
+        /// Owner may grant Owner to anyone. An Admin may grant Owner <em>only to themselves</em> (editing own user id).
+        /// </summary>
+        private static bool CanAssignUserRole(UserRole editor, UserRole newRole, int targetUserId, int currentUserId)
+        {
+            if (newRole == UserRole.Owner)
+            {
+                if (editor == UserRole.Owner)
+                    return true;
+                return editor == UserRole.Admin && targetUserId == currentUserId;
+            }
+
+            return editor.IsAppAdministrator();
         }
 
         private async Task NotifyAdminsOfNewSignupAsync(User newUser, string signupMethod)

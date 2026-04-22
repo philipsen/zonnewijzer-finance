@@ -60,6 +60,7 @@
 <script>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, roleFromToken } from '../utils/roles'
 
 export default {
   name: 'ChargingStationsPage',
@@ -70,15 +71,7 @@ export default {
 
     const isAdmin = ref(false)
     const token = localStorage.getItem('token')
-    if (token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
-        isAdmin.value = role === 'Admin'
-      } catch {
-        isAdmin.value = false
-      }
-    }
+    isAdmin.value = isAppAdmin(roleFromToken(token))
 
     const rowKey = (row, idx) =>
       `${row.stationId}-${row.stationSerialNumber ?? 'x'}-${row.connector ?? 'x'}-${idx}`

@@ -1,7 +1,9 @@
+using Backend.Contracts;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Backend.Services.GnuCash;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Moq;
+using System.Threading;
 
 namespace Backend.Tests.Controllers;
 
@@ -20,6 +23,8 @@ public class InvoicesControllerTests : IDisposable
     private readonly Mock<IPdfService> _pdfMock;
     private readonly Mock<IMollieService> _mollieMock;
     private readonly Mock<IConfiguration> _configMock;
+    private readonly InvoiceComputationService _invoiceComputation;
+    private readonly Mock<IGnuCashSyncClient> _gnuCashSyncMock;
 
     public InvoicesControllerTests()
     {
@@ -31,6 +36,8 @@ public class InvoicesControllerTests : IDisposable
         _pdfMock = new Mock<IPdfService>();
         _mollieMock = new Mock<IMollieService>();
         _configMock = new Mock<IConfiguration>();
+        _invoiceComputation = new InvoiceComputationService(_db);
+        _gnuCashSyncMock = new Mock<IGnuCashSyncClient>();
     }
 
     public void Dispose() => _db.Dispose();
@@ -48,6 +55,8 @@ public class InvoicesControllerTests : IDisposable
             _jwtMock.Object,
             _pdfMock.Object,
             _mollieMock.Object,
+            _invoiceComputation,
+            _gnuCashSyncMock.Object,
             _configMock.Object,
             NullLogger<InvoicesController>.Instance)
         {
@@ -62,10 +71,16 @@ public class InvoicesControllerTests : IDisposable
         await _db.SaveChangesAsync();
     }
 
+    private async Task SeedOwnerAsync()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "owner@test.com", Name = "Owner", GoogleId = "g1", Role = UserRole.Owner });
+        await _db.SaveChangesAsync();
+    }
+
     [Fact]
     public async Task GetInvoicesGrid_InvalidToken_ReturnsUnauthorized()
     {
-        var result = await BuildController(userId: null).GetInvoicesGrid();
+        var result = await BuildController(userId: null).GetInvoicesGrid(CancellationToken.None);
         Assert.IsType<UnauthorizedResult>(result);
     }
 
@@ -77,7 +92,7 @@ public class InvoicesControllerTests : IDisposable
         _db.Users.Add(regular);
         await _db.SaveChangesAsync();
 
-        var result = await BuildController(userId: "2").GetInvoicesGrid();
+        var result = await BuildController(userId: "2").GetInvoicesGrid(CancellationToken.None);
         Assert.IsType<ForbidResult>(result);
     }
 
@@ -90,7 +105,7 @@ public class InvoicesControllerTests : IDisposable
         _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 2, PricePerKwh = 0.3m });
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().GetInvoicesGrid();
+        var result = await BuildController().GetInvoicesGrid(CancellationToken.None);
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         using var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -412,5 +427,54 @@ public class InvoicesControllerTests : IDisposable
 
         var p = await _db.MolliePayments.FirstAsync();
         Assert.Equal("paid", p.Status);
+    }
+
+    [Fact]
+    public async Task EnsureGnucashCustomer_NoChargingLink_ReturnsBadRequest()
+    {
+        await SeedOwnerAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base, ChargingUserId = null });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("charging", bad.Value!.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task EnsureGnucashCustomer_WithLink_CallsPython()
+    {
+        await SeedOwnerAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X User", GoogleId = "g2", Role = UserRole.Base, ChargingUserId = 99 });
+        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 99, Street = "Main", HouseNumber = "1" });
+        await _db.SaveChangesAsync();
+
+        _gnuCashSyncMock
+            .Setup(g => g.EnsureCustomerAsync(It.IsAny<GnuCashEnsureCustomerRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GnuCashEnsureCustomerResponse { CustomerId = "CU-99", Status = "created" });
+
+        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(result);
+        _gnuCashSyncMock.Verify(
+            g => g.EnsureCustomerAsync(
+                It.Is<GnuCashEnsureCustomerRequest>(r => r.CustomerId == "CU-99" && r.CustomerName == "X User" && r.Street == "Main"),
+                It.IsAny<string?>(),
+                false,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureGnucashCustomer_Admin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base, ChargingUserId = 99 });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
+        Assert.IsType<ForbidResult>(result);
     }
 }

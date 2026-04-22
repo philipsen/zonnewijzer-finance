@@ -5,6 +5,7 @@ using Yarp.ReverseProxy.Configuration;
 using System.Text;
 using Backend.Data;
 using Backend.Services;
+using Backend.Services.GnuCash;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
@@ -32,7 +33,8 @@ try
         configuration
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
-            .Enrich.FromLogContext();
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Application", "backend");
     });
 
     // Add services to the container.
@@ -106,7 +108,14 @@ builder.Services.AddReverseProxy().LoadFromMemory(
     });
 
 // Add custom services
+builder.Services.Configure<GnuCashSyncOptions>(builder.Configuration.GetSection(GnuCashSyncOptions.SectionName));
+builder.Services.AddHttpClient<IGnuCashSyncClient, GnuCashSyncClient>(client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(5);
+});
+
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 builder.Services.AddHttpClient("Mollie");
 builder.Services.AddScoped<IMollieService, MollieService>();

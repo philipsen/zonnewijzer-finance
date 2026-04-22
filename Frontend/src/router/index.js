@@ -15,6 +15,7 @@ import ResetPassword from '../components/ResetPassword.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 import ChargingStationsPage from '../components/ChargingStationsPage.vue'
+import { isAppAdmin, roleFromToken } from '../utils/roles'
 
 const routes = [
   {
@@ -47,15 +48,9 @@ const routes = [
     name: 'ChargingStations',
     component: ChargingStationsPage,
     beforeEnter: () => {
-      try {
-        const token = localStorage.getItem('token')
-        if (!token) return '/'
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
-        if (role !== 'Admin') return '/'
-      } catch {
-        return '/'
-      }
+      const token = localStorage.getItem('token')
+      const role = roleFromToken(token)
+      if (!isAppAdmin(role)) return '/'
     }
   },
   {
@@ -78,15 +73,9 @@ const routes = [
     name: 'InvoiceGrid',
     component: InvoiceGrid,
     beforeEnter: () => {
-      try {
-        const token = localStorage.getItem('token')
-        if (!token) return '/'
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
-        if (role !== 'Admin') return '/'
-      } catch {
-        return '/'
-      }
+      const token = localStorage.getItem('token')
+      const role = roleFromToken(token)
+      if (!isAppAdmin(role)) return '/'
     }
   },
   {

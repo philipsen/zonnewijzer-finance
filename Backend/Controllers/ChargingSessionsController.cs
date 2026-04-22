@@ -27,7 +27,7 @@ namespace Backend.Controllers
             _logger = logger;
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPost]
         public async Task<IActionResult> AddSession([FromBody] AddSessionRequest request)
         {
@@ -101,7 +101,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPost("upload")]
         public async Task<IActionResult> UploadCsv(IFormFile file)
         {
@@ -318,7 +318,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateSession(int id, [FromBody] UpdateSessionRequest request)
         {
@@ -366,7 +366,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSession(int id)
         {
