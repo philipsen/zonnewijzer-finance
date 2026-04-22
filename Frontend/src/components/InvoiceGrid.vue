@@ -16,7 +16,7 @@
         <p class="description">
           Click on any link to generate and download an invoice PDF based on charging session data.
         </p>
-        <div v-if="months.length" class="gnucash-toolbar">
+        <div v-if="isOwnerRole && months.length" class="gnucash-toolbar">
           <span class="gnucash-toolbar-title">GnuCash</span>
           <label class="gnucash-field">
             <span>Period</span>
@@ -106,6 +106,7 @@
                         {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Payment link' }}
                       </button>
                       <button
+                        v-if="isOwnerRole"
                         type="button"
                         class="btn-gnucash-cell"
                         :disabled="gnucashCellDisabled(userRow.user.id, monthData)"
@@ -182,6 +183,7 @@
                   {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Pay' }}
                 </button>
                 <button
+                  v-if="isOwnerRole"
                   type="button"
                   class="btn-gnucash-cell mobile-gnucash"
                   :disabled="gnucashCellDisabled(selectedUserRow.user.id, monthData)"
@@ -203,6 +205,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { isOwner, roleFromToken } from '../utils/roles'
 
 export default {
   name: 'InvoiceGrid',
@@ -217,6 +220,7 @@ export default {
     const gnucashPeriodKey = ref('')
     const gnucashBulkLoading = ref(false)
     const gnucashCellLoading = ref({})
+    const isOwnerRole = ref(false)
 
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
@@ -442,6 +446,7 @@ export default {
     }
 
     onMounted(() => {
+      isOwnerRole.value = isOwner(roleFromToken(localStorage.getItem('token')))
       fetchInvoicesGrid()
       fetchExistingPayments()
     })
@@ -470,7 +475,8 @@ export default {
       gnucashCellDisabled,
       gnucashCellTitle,
       insertGnucashMonth,
-      insertGnucashCell
+      insertGnucashCell,
+      isOwnerRole
     }
   }
 }
