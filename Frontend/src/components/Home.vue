@@ -67,22 +67,30 @@
     </div>
 
     <div v-else class="dashboard">
-      <div v-if="appUser?.role === 'Admin' && !previewMode" class="admin-tools">
+      <div v-if="isAppAdminView && !previewMode" class="admin-tools">
         <p class="admin-tools-label">Administration</p>
         <button type="button" class="btn-wipe" @click="openWipeModal">
           Wipe all data…
+        </button>
+        <button
+          v-if="isOwnerView"
+          type="button"
+          class="btn-gnucash-wipe"
+          @click="openGnucashWipeModal"
+        >
+          Clear GnuCash app data…
         </button>
       </div>
       <p>Dashboard content will go here.</p>
       <div class="features">
         <div class="feature-card">
-          <router-link :to="appUser?.role === 'Admin' && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
+          <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
             <h3>Charging Sessions</h3>
             <p>View and manage charging sessions</p>
           </router-link>
         </div>
         <div class="feature-card">
-          <router-link :to="appUser?.role === 'Admin' && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
+          <router-link :to="isAppAdminView && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
             <h3>Invoices</h3>
             <p>Generate and download invoices</p>
           </router-link>
@@ -123,12 +131,52 @@
         </div>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="gnucashWipeModalOpen" class="modal-backdrop" @click.self="closeGnucashWipeModal">
+        <div
+          class="modal-panel modal-panel--gnucash"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="gnucash-wipe-modal-title"
+          tabindex="-1"
+          @keydown.esc="closeGnucashWipeModal"
+        >
+          <h2 id="gnucash-wipe-modal-title" class="modal-title">Clear GnuCash app data?</h2>
+          <p class="modal-warning">
+            This removes <strong>all invoices whose id starts with <code>INV-</code></strong> and
+            <strong>all customers whose id starts with <code>CU-</code></strong> from the GnuCash book
+            (posted transactions and lots are removed with those invoices). Other GnuCash data is not touched.
+            Requires a configured GnuCash sync service. This cannot be undone.
+          </p>
+          <label class="gnucash-wipe-dry">
+            <input v-model="gnucashWipeDryRun" type="checkbox">
+            Dry run only (count what would be removed, do not save)
+          </label>
+          <p v-if="gnucashWipeError" class="modal-error">{{ gnucashWipeError }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" :disabled="gnucashWipeLoading" @click="closeGnucashWipeModal">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn-confirm-gnucash-wipe"
+              :disabled="gnucashWipeLoading"
+              @click="executeGnucashWipe"
+            >
+              {{ gnucashWipeLoading ? 'Working…' : (gnucashWipeDryRun ? 'Dry run' : 'Clear GnuCash') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script>
 import { computed, ref, onMounted, onBeforeUnmount, inject, nextTick, watch } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, isOwner } from '../utils/roles'
 
 export default {
   name: 'Home',
@@ -136,6 +184,9 @@ export default {
     const isAuthenticated = computed(() => localStorage.getItem('token') !== null)
     const appUser = inject('appUser', ref(null))
     const previewMode = inject('previewMode', ref(false))
+
+    const isAppAdminView = computed(() => isAppAdmin(appUser.value?.role))
+    const isOwnerView = computed(() => isOwner(appUser.value?.role))
 
     const needsAccess = computed(() =>
       isAuthenticated.value &&
@@ -160,6 +211,11 @@ export default {
     const wipeLoading = ref(false)
     const wipeError = ref('')
 
+    const gnucashWipeModalOpen = ref(false)
+    const gnucashWipeLoading = ref(false)
+    const gnucashWipeError = ref('')
+    const gnucashWipeDryRun = ref(false)
+
     const openWipeModal = () => {
       wipeError.value = ''
       wipeModalOpen.value = true
@@ -169,6 +225,53 @@ export default {
       if (wipeLoading.value) return
       wipeModalOpen.value = false
       wipeError.value = ''
+    }
+
+    const openGnucashWipeModal = () => {
+      gnucashWipeError.value = ''
+      gnucashWipeDryRun.value = false
+      gnucashWipeModalOpen.value = true
+    }
+
+    const closeGnucashWipeModal = () => {
+      if (gnucashWipeLoading.value) return
+      gnucashWipeModalOpen.value = false
+      gnucashWipeError.value = ''
+    }
+
+    const executeGnucashWipe = async () => {
+      gnucashWipeError.value = ''
+      gnucashWipeLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        const { data } = await axios.post(
+          '/api/invoices/gnucash/wipe-app',
+          {},
+          {
+            params: { dryRun: gnucashWipeDryRun.value },
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        )
+        gnucashWipeLoading.value = false
+        closeGnucashWipeModal()
+        const dr = data.dryRun ? ' (dry run — nothing saved)' : ''
+        window.alert(
+          `GnuCash: removed ${data.invoicesRemoved} INV-* invoice(s) and ${data.customersRemoved} CU-* customer(s).${dr}`
+        )
+      } catch (err) {
+        console.error('GnuCash wipe failed:', err)
+        if (err.response?.status === 403) {
+          gnucashWipeError.value = 'Only the owner account can clear GnuCash app data.'
+        } else if (err.response?.data && typeof err.response.data === 'string') {
+          gnucashWipeError.value = err.response.data
+        } else if (err.response?.data?.message) {
+          gnucashWipeError.value = err.response.data.message
+        } else {
+          gnucashWipeError.value = err.response?.data?.detail || err.message || 'Request failed.'
+        }
+      } finally {
+        gnucashWipeLoading.value = false
+      }
     }
 
     const executeWipe = async () => {
@@ -339,6 +442,8 @@ export default {
       isAuthenticated,
       needsAccess,
       appUser,
+      isAppAdminView,
+      isOwnerView,
       previewMode,
       signinButtonEl,
       authError,
@@ -356,6 +461,13 @@ export default {
       openWipeModal,
       closeWipeModal,
       executeWipe,
+      gnucashWipeModalOpen,
+      gnucashWipeLoading,
+      gnucashWipeError,
+      gnucashWipeDryRun,
+      openGnucashWipeModal,
+      closeGnucashWipeModal,
+      executeGnucashWipe,
       submitEmailAuth,
       submitForgotPassword
     }
@@ -620,6 +732,54 @@ export default {
 
 .btn-wipe:hover {
   background: #f8d7da;
+}
+
+.btn-gnucash-wipe {
+  background: #fff;
+  color: #0d6efd;
+  border: 1px solid #9ec5fe;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-gnucash-wipe:hover {
+  background: #e7f1ff;
+}
+
+.modal-panel--gnucash .modal-title {
+  color: #084298;
+}
+
+.gnucash-wipe-dry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #333;
+  margin: 0 0 0.5rem 0;
+  cursor: pointer;
+}
+
+.btn-confirm-gnucash-wipe {
+  background: #0d6efd;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-confirm-gnucash-wipe:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-confirm-gnucash-wipe:not(:disabled):hover {
+  background: #0b5ed7;
 }
 
 .modal-backdrop {

@@ -1,10 +1,48 @@
 services:
+  gnucash-sync:
+    build:
+      context: ./services/gnucash-sync
+      dockerfile: Dockerfile
+    image: finance-gnucash-sync:local
+    container_name: finance-gnucash-sync
+    ports:
+      - "8787:8787"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - path: ../gnucash/.env
+        required: false
+    environment:
+      # `../gnucash/.env` provides POSTGRES_*; sync builds the DB URL. Override: add GNUCASH_POSTGRES_URL here or in an override file.
+      GNC_POSTGRES_HOST: host.docker.internal
+      SYNC_API_KEY: ${GNUCASH_SYNC_API_KEY:-change-me}
+      INCOME_ACCOUNT: ${GNUCASH_INCOME_ACCOUNT:-Income:Charging}
+      INVOICE_TAX_TABLE_NAME: ${GNUCASH_INVOICE_TAX_TABLE_NAME:-BTW hoog}
+      INVOICE_AUTO_POST: ${GNUCASH_INVOICE_AUTO_POST:-true}
+      INVOICE_POST_ACCOUNT: ${GNUCASH_INVOICE_POST_ACCOUNT:-}
+      INVOICE_TAX_INCLUDED: ${GNUCASH_INVOICE_TAX_INCLUDED:-false}
+    networks:
+      - finance-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8787/health\")"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   backend:
     build:
       context: .
       dockerfile: Backend/Dockerfile
     image: finance-backend:local
     container_name: finance-backend
+    depends_on:
+      - gnucash-sync
     ports:
       - "5000:5000"
     environment:
@@ -12,6 +50,10 @@ services:
       - ASPNETCORE_URLS=http://+:5000
       - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
       - Serilog__WriteTo__1__Args__serverUrl=http://host.docker.internal:5341
+      - GnuCashSync__BaseUrl=http://gnucash-sync:8787
+      - GnuCashSync__ApiKey=${GNUCASH_SYNC_API_KEY:-change-me}
+      # appsettings.Production.json sets Jwt:Key to empty; must override or JWT auth crashes (IDX10703)
+      - Jwt__Key=${JWT_KEY:-your-super-secret-jwt-key-that-should-be-at-least-256-bits-long}
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs

@@ -274,6 +274,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, roleFromToken } from '../utils/roles'
 
 export default {
   name: 'ChargingSessionsList',
@@ -431,15 +432,7 @@ export default {
     }
 
     const checkAdminRole = () => {
-      try {
-        const token = localStorage.getItem('token')
-        if (!token) return
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const role = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
-        isAdmin.value = role === 'Admin'
-      } catch {
-        isAdmin.value = false
-      }
+      isAdmin.value = isAppAdmin(roleFromToken(localStorage.getItem('token')))
     }
 
     const openAddModal = () => {
