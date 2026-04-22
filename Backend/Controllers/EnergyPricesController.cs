@@ -29,7 +29,7 @@ namespace Backend.Controllers
                 return null;
 
             var user = _context.Users.Find(userId);
-            if (user == null || user.Role != UserRole.Admin)
+            if (user == null || !user.Role.IsAppAdministrator())
                 return null;
 
             return userId;

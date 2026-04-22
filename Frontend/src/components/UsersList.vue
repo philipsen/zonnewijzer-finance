@@ -8,7 +8,7 @@
     </div>
 
     <form
-      v-if="currentUserRole === 'Admin'"
+      v-if="isAppAdminView"
       class="invite-form"
       @submit.prevent="inviteUserByEmail"
     >
@@ -68,13 +68,14 @@
               <div class="role-management">
                 <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
                 <select 
-                  v-if="currentUserRole === 'Admin' && user.id !== currentUserId"
+                  v-if="isAppAdminView && user.id !== currentUserId"
                   :value="user.role"
                   @change="updateUserRole(user, $event.target.value)"
                   class="role-select"
                 >
                   <option value="Base">Base</option>
                   <option value="Admin">Admin</option>
+                  <option v-if="isOwnerView || (isAppAdminView && user.id === currentUserId)" value="Owner">Owner</option>
                 </select>
               </div>
             </div>
@@ -94,7 +95,7 @@
         </div>
         <div class="user-actions">
           <button
-            v-if="currentUserRole === 'Admin'"
+            v-if="isOwnerView"
             type="button"
             class="btn btn-gnucash-customer"
             :disabled="gnucashCustomerLoadingId === user.id || user.chargingUserId == null"
@@ -104,14 +105,14 @@
             {{ gnucashCustomerLoadingId === user.id ? 'GnuCash…' : 'GnuCash customer' }}
           </button>
           <router-link 
-            v-if="currentUserRole === 'Admin'"
+            v-if="isAppAdminView"
             :to="`/users/${user.id}/edit`" 
             class="btn btn-edit"
           >
             Edit User
           </router-link>
           <button
-            v-if="currentUserRole === 'Admin' && devUserDeletionEnabled && user.id !== currentUserId"
+            v-if="isAppAdminView && devUserDeletionEnabled && user.id !== currentUserId"
             type="button"
             class="btn btn-delete"
             :disabled="deletingUserId === user.id"
@@ -126,8 +127,9 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, isOwner } from '../utils/roles'
 
 export default {
   name: 'UsersList',
@@ -144,6 +146,9 @@ export default {
     const devUserDeletionEnabled = ref(false)
     const deletingUserId = ref(null)
     const gnucashCustomerLoadingId = ref(null)
+
+    const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
+    const isOwnerView = computed(() => isOwner(currentUserRole.value))
 
     const fetchCurrentUser = async () => {
       try {
@@ -348,6 +353,8 @@ export default {
       loading,
       error,
       currentUserRole,
+      isAppAdminView,
+      isOwnerView,
       currentUserId,
       inviteEmail,
       inviting,
@@ -688,6 +695,11 @@ export default {
 .role-admin {
   background-color: #fff3e0;
   color: #e65100;
+}
+
+.role-owner {
+  background-color: #ede7f6;
+  color: #4527a0;
 }
 
 .role-select {

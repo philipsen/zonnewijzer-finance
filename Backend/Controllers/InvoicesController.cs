@@ -59,7 +59,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
                     return Forbid();
 
                 if (body.Month is < 1 or > 12 || body.Year < 2000 || body.Year > 2100)
@@ -125,7 +125,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
                     return Forbid();
 
                 if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
@@ -192,7 +192,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
                     return Forbid();
 
                 if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
@@ -238,7 +238,7 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(new object[] { currentUserId }, cancellationToken);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                     return Forbid();
 
                 _logger.LogInformation("User {UserId} requesting invoices grid", currentUserId);
@@ -645,7 +645,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FindAsync(requestingUserId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                     return Forbid();
 
                 var payments = await _context.MolliePayments
@@ -783,7 +783,7 @@ namespace Backend.Controllers
                     return Unauthorized();
 
                 var requestingUser = await _context.Users.FindAsync(requestingUserId);
-                if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                     return Forbid();
 
                 var payment = await _context.MolliePayments.FirstOrDefaultAsync(p => p.Id == id);

@@ -42,7 +42,7 @@ public class ChargingStationsController : ControllerBase
             }
 
             var requestingUser = await _context.Users.FindAsync(currentUserId);
-            if (requestingUser == null || requestingUser.Role != UserRole.Admin)
+            if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                 return Forbid();
 
             var withSerialAndConnector = await _context.ChargingSessions

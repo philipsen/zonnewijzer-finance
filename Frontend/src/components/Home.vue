@@ -67,25 +67,30 @@
     </div>
 
     <div v-else class="dashboard">
-      <div v-if="appUser?.role === 'Admin' && !previewMode" class="admin-tools">
+      <div v-if="isAppAdminView && !previewMode" class="admin-tools">
         <p class="admin-tools-label">Administration</p>
         <button type="button" class="btn-wipe" @click="openWipeModal">
           Wipe all data…
         </button>
-        <button type="button" class="btn-gnucash-wipe" @click="openGnucashWipeModal">
+        <button
+          v-if="isOwnerView"
+          type="button"
+          class="btn-gnucash-wipe"
+          @click="openGnucashWipeModal"
+        >
           Clear GnuCash app data…
         </button>
       </div>
       <p>Dashboard content will go here.</p>
       <div class="features">
         <div class="feature-card">
-          <router-link :to="appUser?.role === 'Admin' && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
+          <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
             <h3>Charging Sessions</h3>
             <p>View and manage charging sessions</p>
           </router-link>
         </div>
         <div class="feature-card">
-          <router-link :to="appUser?.role === 'Admin' && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
+          <router-link :to="isAppAdminView && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
             <h3>Invoices</h3>
             <p>Generate and download invoices</p>
           </router-link>
@@ -171,6 +176,7 @@
 <script>
 import { computed, ref, onMounted, onBeforeUnmount, inject, nextTick, watch } from 'vue'
 import axios from 'axios'
+import { isAppAdmin, isOwner } from '../utils/roles'
 
 export default {
   name: 'Home',
@@ -178,6 +184,9 @@ export default {
     const isAuthenticated = computed(() => localStorage.getItem('token') !== null)
     const appUser = inject('appUser', ref(null))
     const previewMode = inject('previewMode', ref(false))
+
+    const isAppAdminView = computed(() => isAppAdmin(appUser.value?.role))
+    const isOwnerView = computed(() => isOwner(appUser.value?.role))
 
     const needsAccess = computed(() =>
       isAuthenticated.value &&
@@ -252,7 +261,7 @@ export default {
       } catch (err) {
         console.error('GnuCash wipe failed:', err)
         if (err.response?.status === 403) {
-          gnucashWipeError.value = 'Only administrators can clear GnuCash app data.'
+          gnucashWipeError.value = 'Only the owner account can clear GnuCash app data.'
         } else if (err.response?.data && typeof err.response.data === 'string') {
           gnucashWipeError.value = err.response.data
         } else if (err.response?.data?.message) {
@@ -433,6 +442,8 @@ export default {
       isAuthenticated,
       needsAccess,
       appUser,
+      isAppAdminView,
+      isOwnerView,
       previewMode,
       signinButtonEl,
       authError,

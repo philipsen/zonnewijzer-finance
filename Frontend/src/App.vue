@@ -7,7 +7,7 @@
       </router-link>
       <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
-        <template v-if="user.role === 'Admin' && !previewMode">
+        <template v-if="isAppAdminUser && !previewMode">
           <router-link to="/users" class="nav-link">Users</router-link>
           <router-link to="/charging-users" class="nav-link">Charging Users</router-link>
           <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
@@ -18,7 +18,7 @@
           <router-link to="/energy-prices" class="nav-link">Prices</router-link>
           <router-link to="/event-log" class="nav-link">Events</router-link>
         </template>
-        <template v-else-if="user.role !== 'Admin' || previewMode">
+        <template v-else-if="!isAppAdminUser || previewMode">
           <router-link v-if="user.chargingUserId" to="/my-sessions" class="nav-link">My Sessions</router-link>
           <router-link v-if="user.chargingUserId" to="/my-invoices" class="nav-link">My Invoices</router-link>
         </template>
@@ -31,7 +31,7 @@
         </button>
         <div v-if="dropdownOpen" class="nav-dropdown">
           <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
-          <template v-if="user.role === 'Admin' && !previewMode">
+          <template v-if="isAppAdminUser && !previewMode">
             <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
             <router-link to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
             <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
@@ -42,7 +42,7 @@
             <router-link to="/energy-prices" class="dropdown-link" @click="dropdownOpen = false">Prices</router-link>
             <router-link to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
           </template>
-          <template v-else-if="user.role !== 'Admin' || previewMode">
+          <template v-else-if="!isAppAdminUser || previewMode">
             <router-link v-if="user.chargingUserId" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
             <router-link v-if="user.chargingUserId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
           </template>
@@ -54,7 +54,7 @@
           <!-- sign-in button is rendered on the Home page -->
         </template>
         <template v-else>
-          <button v-if="user.role === 'Admin'" @click="togglePreviewMode" :class="['preview-toggle-btn', { active: previewMode }]">
+          <button v-if="isAppAdminUser" @click="togglePreviewMode" :class="['preview-toggle-btn', { active: previewMode }]">
             {{ previewMode ? 'Admin view' : 'User view' }}
           </button>
           <div class="user-info">
@@ -72,9 +72,10 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, provide } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, provide, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { isAppAdmin } from './utils/roles'
 
 export default {
   name: 'App',
@@ -180,6 +181,8 @@ export default {
       window.location.href = '/'
     }
 
+    const isAppAdminUser = computed(() => isAppAdmin(user.value?.role))
+
     const checkAuthStatus = async () => {
       console.log('Checking authentication status...')
       const token = localStorage.getItem('token')
@@ -224,6 +227,7 @@ export default {
 
     return {
       user,
+      isAppAdminUser,
       previewMode,
       togglePreviewMode,
       googleClientId,
@@ -454,6 +458,11 @@ main {
 .role-admin {
   background-color: #fff3e0;
   color: #e65100;
+}
+
+.role-owner {
+  background-color: #ede7f6;
+  color: #4527a0;
 }
 
 .preview-toggle-btn {
