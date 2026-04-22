@@ -1,8 +1,6 @@
 services:
   gnucash-sync:
-    build:
-      context: ./services/gnucash-sync
-      dockerfile: Dockerfile
+    # Pushed by .github/workflows/build-and-push.yml (same pattern as finance-backend)
     image: philipsen/finance-gnucash-sync:latest
     container_name: finance-gnucash-sync
     ports:
