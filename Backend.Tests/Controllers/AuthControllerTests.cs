@@ -1,3 +1,4 @@
+using Backend;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -54,7 +55,7 @@ public class AuthControllerTests : IDisposable
         return controller;
     }
 
-    private async Task<User> AddUser(int id, string name, UserRole role = UserRole.Base, int? chargingUserId = null)
+    private async Task<User> AddUser(int id, string name, UserRole role = UserRole.Base, int? chargeCardId = null)
     {
         var user = new User
         {
@@ -63,11 +64,19 @@ public class AuthControllerTests : IDisposable
             Email = $"user{id}@test.com",
             Name = name,
             Role = role,
-            ChargingUserId = chargingUserId
+            ChargeCardId = chargeCardId
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
         return user;
+    }
+
+    private async Task<int> AddChargeCardAsync(string value = "RF-AUTH", string? comment = null)
+    {
+        var c = new ChargeCard { Value = value, Comment = comment };
+        _db.ChargeCards.Add(c);
+        await _db.SaveChangesAsync();
+        return c.Id;
     }
 
     [Fact]
@@ -178,25 +187,28 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllUsers_IncludesChargingUserId()
+    public async Task GetAllUsers_IncludesChargeCardId()
     {
         await AddUser(1, "Admin", UserRole.Admin);
-        await AddUser(2, "Alice", chargingUserId: 42);
+        var cardId = await AddChargeCardAsync("auth-alice-card");
+        await AddUser(2, "Alice", chargeCardId: cardId);
         var result = await BuildController().GetAllUsers();
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         var doc = System.Text.Json.JsonDocument.Parse(json);
         var alice = doc.RootElement.EnumerateArray().First(e => e.GetProperty("id").GetInt32() == 2);
-        Assert.Equal(42, alice.GetProperty("chargingUserId").GetInt32());
+        Assert.Equal(cardId, alice.GetProperty("chargeCardId").GetInt32());
     }
 
     [Fact]
-    public async Task GetAllUsers_NonAdmin_ReturnsForbid()
+    public async Task GetAllUsers_BaseUser_ReturnsAllUsers()
     {
         await AddUser(1, "Regular", UserRole.Base);
         await AddUser(2, "Other");
         var result = await BuildController().GetAllUsers();
-        Assert.IsType<ForbidResult>(result);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
+        Assert.Equal(2, list.Count);
     }
 
     // ── GetUser ────────────────────────────────────────────────────────────────
@@ -230,14 +242,15 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetUser_WhenFound_ReturnsProfile()
     {
-        await AddUser(1, "Pat", UserRole.Admin, chargingUserId: 7);
+        var cardId = await AddChargeCardAsync("auth-pat");
+        await AddUser(1, "Pat", UserRole.Admin, chargeCardId: cardId);
         var result = await BuildController().GetUser();
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         var doc = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal("Pat", doc.RootElement.GetProperty("name").GetString());
         Assert.Equal("Admin", doc.RootElement.GetProperty("role").GetString());
-        Assert.Equal(7, doc.RootElement.GetProperty("chargingUserId").GetInt32());
+        Assert.Equal(cardId, doc.RootElement.GetProperty("chargeCardId").GetInt32());
         Assert.True(doc.RootElement.GetProperty("devUserDeletionEnabled").GetBoolean());
     }
 
@@ -404,6 +417,33 @@ public class AuthControllerTests : IDisposable
         Assert.Equal(UserRole.Base, target!.Role);
     }
 
+    [Fact]
+    public async Task UpdateUser_BaseUser_CanPromoteToAdmin()
+    {
+        await AddUser(1, "BaseEditor", UserRole.Base);
+        await AddUser(2, "Target", UserRole.Base);
+
+        var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Role = "Admin" });
+
+        Assert.IsType<OkObjectResult>(result);
+        var target = await _db.Users.FindAsync(2);
+        Assert.Equal(UserRole.Admin, target!.Role);
+    }
+
+    [Fact]
+    public async Task UpdateUser_BaseUser_CannotGrantOwnerToAnother()
+    {
+        await AddUser(1, "BaseEditor", UserRole.Base);
+        await AddUser(2, "Target", UserRole.Base);
+
+        var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Role = "Owner" });
+
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbidden.StatusCode);
+        var target = await _db.Users.FindAsync(2);
+        Assert.Equal(UserRole.Base, target!.Role);
+    }
+
     // ── UpdateUserRole ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -434,6 +474,19 @@ public class AuthControllerTests : IDisposable
     public async Task UpdateUserRole_ChangesRole()
     {
         await AddUser(1, "Editor", UserRole.Admin);
+        await AddUser(2, "Target", UserRole.Base);
+
+        var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "Admin" });
+
+        Assert.IsType<OkObjectResult>(result);
+        var updated = await _db.Users.FindAsync(2);
+        Assert.Equal(UserRole.Admin, updated!.Role);
+    }
+
+    [Fact]
+    public async Task UpdateUserRole_BaseUser_CanPromoteToAdmin()
+    {
+        await AddUser(1, "BaseEditor", UserRole.Base);
         await AddUser(2, "Target", UserRole.Base);
 
         var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "Admin" });
@@ -479,10 +532,12 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetChargingUsers_ReturnsDistinctIds()
     {
+        var c1 = await AddChargeCardAsync("auth-cu-a");
+        var c2 = await AddChargeCardAsync("auth-cu-b");
         _db.ChargingSessions.AddRange(
-            new ChargingSession { UserId = 10, StationId = 1, Start = DateTime.UtcNow.AddHours(-2), End = DateTime.UtcNow.AddHours(-1), ChargedKwh = 5 },
-            new ChargingSession { UserId = 10, StationId = 2, Start = DateTime.UtcNow.AddHours(-3), End = DateTime.UtcNow.AddHours(-2), ChargedKwh = 3 },
-            new ChargingSession { UserId = 20, StationId = 1, Start = DateTime.UtcNow.AddHours(-1), End = DateTime.UtcNow, ChargedKwh = 7 }
+            TestData.Session(c1, 1, DateTime.UtcNow.AddHours(-2), DateTime.UtcNow.AddHours(-1), 5),
+            TestData.Session(c1, 2, DateTime.UtcNow.AddHours(-3), DateTime.UtcNow.AddHours(-2), 3),
+            TestData.Session(c2, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, 7)
         );
         await _db.SaveChangesAsync();
 
@@ -512,23 +567,23 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetChargingUserById_WhenExists_ReturnsData()
     {
-        _db.ChargingSessions.Add(new ChargingSession
-        {
-            UserId = 10, StationId = 1,
-            Start = DateTime.UtcNow.AddHours(-1), End = DateTime.UtcNow, ChargedKwh = 5
-        });
-        _db.ChargingUserProfiles.Add(new ChargingUserProfile
-        {
-            Id = 10, DisplayName = "Charlie", Street = "Main St", HouseNumber = "1", PostalCode = "1234AB", PlaceName = "Amsterdam"
-        });
+        var cardId = await AddChargeCardAsync("auth-charlie", comment: "Charlie");
+        var card = await _db.ChargeCards.FindAsync(cardId);
+        card!.Street = "Main St";
+        card.HouseNumber = "1";
+        card.PostalCode = "1234AB";
+        card.PlaceName = "Amsterdam";
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().GetChargingUserById(10);
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, 5));
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetChargingUserById(cardId);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal("Charlie", doc.RootElement.GetProperty("displayName").GetString());
+        Assert.Equal("Charlie", doc.RootElement.GetProperty("comment").GetString());
         Assert.Equal("Main St", doc.RootElement.GetProperty("street").GetString());
     }
 
@@ -552,23 +607,20 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateChargingUser_CreatesProfileIfMissing()
+    public async Task UpdateChargingUser_UpdatesCommentWhenCardExists()
     {
         await AddUser(1, "Editor");
-        _db.ChargingSessions.Add(new ChargingSession
-        {
-            UserId = 10, StationId = 1,
-            Start = DateTime.UtcNow.AddHours(-1), End = DateTime.UtcNow, ChargedKwh = 5
-        });
+        var cardId = await AddChargeCardAsync("auth-upd-comment");
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, 5));
         await _db.SaveChangesAsync();
 
         var result = await BuildController()
-            .UpdateChargingUser(10, new UpdateChargingUserRequest { DisplayName = "NewName" });
+            .UpdateChargingUser(cardId, new UpdateChargingUserRequest { DisplayName = "NewName" });
 
         Assert.IsType<OkObjectResult>(result);
-        var profile = await _db.ChargingUserProfiles.FindAsync(10);
+        var profile = await _db.ChargeCards.FindAsync(cardId);
         Assert.NotNull(profile);
-        Assert.Equal("NewName", profile.DisplayName);
+        Assert.Equal("NewName", profile!.Comment);
     }
 
     [Fact]
@@ -576,39 +628,33 @@ public class AuthControllerTests : IDisposable
     {
         await AddUser(1, "Editor");
         await AddUser(2, "AppUser");
-        _db.ChargingSessions.Add(new ChargingSession
-        {
-            UserId = 10, StationId = 1,
-            Start = DateTime.UtcNow.AddHours(-1), End = DateTime.UtcNow, ChargedKwh = 5
-        });
+        var cardId = await AddChargeCardAsync("auth-link");
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, 5));
         await _db.SaveChangesAsync();
 
         var result = await BuildController()
-            .UpdateChargingUser(10, new UpdateChargingUserRequest { LinkedUserId = 2 });
+            .UpdateChargingUser(cardId, new UpdateChargingUserRequest { LinkedUserId = 2 });
 
         Assert.IsType<OkObjectResult>(result);
         var appUser = await _db.Users.FindAsync(2);
-        Assert.Equal(10, appUser!.ChargingUserId);
+        Assert.Equal(cardId, appUser!.ChargeCardId);
     }
 
     [Fact]
     public async Task UpdateChargingUser_UnlinksAppUser()
     {
         await AddUser(1, "Editor");
-        await AddUser(2, "AppUser", chargingUserId: 10);
-        _db.ChargingSessions.Add(new ChargingSession
-        {
-            UserId = 10, StationId = 1,
-            Start = DateTime.UtcNow.AddHours(-1), End = DateTime.UtcNow, ChargedKwh = 5
-        });
+        var cardId = await AddChargeCardAsync("auth-unlink");
+        await AddUser(2, "AppUser", chargeCardId: cardId);
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, 5));
         await _db.SaveChangesAsync();
 
         var result = await BuildController()
-            .UpdateChargingUser(10, new UpdateChargingUserRequest { UnlinkUser = true });
+            .UpdateChargingUser(cardId, new UpdateChargingUserRequest { UnlinkUser = true });
 
         Assert.IsType<OkObjectResult>(result);
         var appUser = await _db.Users.FindAsync(2);
-        Assert.Null(appUser!.ChargingUserId);
+        Assert.Null(appUser!.ChargeCardId);
     }
 
     // ── WipeDatabase ───────────────────────────────────────────────────────────
@@ -641,16 +687,16 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task WipeDatabase_Admin_ClearsDataButPreservesUsers()
     {
-        await AddUser(1, "Admin", UserRole.Admin, chargingUserId: 10);
+        var cardId = await AddChargeCardAsync("auth-wipe-card", comment: "P");
+        await AddUser(1, "Admin", UserRole.Admin, chargeCardId: cardId);
         await AddUser(2, "Bob", UserRole.Base);
         var t = DateTime.UtcNow;
-        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 1 });
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, t, t.AddHours(1), 1));
         _db.EventLogs.Add(new EventLog { Timestamp = DateTime.UtcNow, UserName = "x", Action = "y" });
         _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 1, PricePerKwh = 0.2m });
-        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 10, DisplayName = "P" });
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargingUserId = 1,
+            ChargeCardId = cardId,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr",
@@ -675,7 +721,7 @@ public class AuthControllerTests : IDisposable
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(2, await _db.Users.CountAsync());
-        Assert.Null((await _db.Users.FindAsync(1))!.ChargingUserId);
+        Assert.Null((await _db.Users.FindAsync(1))!.ChargeCardId);
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
         Assert.Equal(0, await _db.EventLogs.CountAsync());
         Assert.Equal(0, await _db.Invoices.CountAsync());
@@ -704,10 +750,10 @@ public class AuthControllerTests : IDisposable
     public async Task ClearChargingData_Admin_ClearsSessionsProfilesUnlinksAndKeepsInvoices()
     {
         await AddUser(1, "Admin", UserRole.Admin);
-        await AddUser(2, "Bob", UserRole.Base, chargingUserId: 10);
+        var cardId = await AddChargeCardAsync("auth-clear-cc", comment: "Profile");
+        await AddUser(2, "Bob", UserRole.Base, chargeCardId: cardId);
         var t = DateTime.UtcNow;
-        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 2 });
-        _db.ChargingUserProfiles.Add(new ChargingUserProfile { Id = 10, DisplayName = "Profile" });
+        _db.ChargingSessions.Add(TestData.Session(cardId, 1, t, t.AddHours(1), 2));
         _db.Invoices.Add(new Invoice
         {
             UserId = 2,
@@ -725,8 +771,8 @@ public class AuthControllerTests : IDisposable
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
-        Assert.Equal(0, await _db.ChargingUserProfiles.CountAsync());
-        Assert.Null((await _db.Users.FindAsync(2))!.ChargingUserId);
+        Assert.Equal(0, await _db.ChargeCards.CountAsync());
+        Assert.Null((await _db.Users.FindAsync(2))!.ChargeCardId);
         Assert.Equal(1, await _db.Invoices.CountAsync());
     }
 }

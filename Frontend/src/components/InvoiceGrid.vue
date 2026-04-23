@@ -384,7 +384,7 @@ export default {
         await axios.post('/api/invoices/gnucash/insert', {
           year,
           month,
-          chargingUserId: null,
+          chargeCardId: null,
           dryRun: false
         }, {
           headers: { Authorization: `Bearer ${token}` }
@@ -407,7 +407,7 @@ export default {
         await axios.post('/api/invoices/gnucash/insert', {
           year,
           month,
-          chargingUserId: userId,
+          chargeCardId: userId,
           dryRun: false
         }, {
           headers: { Authorization: `Bearer ${token}` }
@@ -433,7 +433,7 @@ export default {
         })
         const map = {}
         for (const p of response.data) {
-          map[paymentLinkKey(p.chargingUserId, p.year, p.month)] = {
+          map[paymentLinkKey(p.chargeCardId, p.year, p.month)] = {
             checkoutUrl: p.checkoutUrl,
             paymentId: p.molliePaymentId,
             status: normalizePaymentStatus(p.status)

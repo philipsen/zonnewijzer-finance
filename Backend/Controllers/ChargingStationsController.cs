@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Backend;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
@@ -24,9 +25,6 @@ public class ChargingStationsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Lists distinct charging points seen in session data (admin only).
-    /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
@@ -45,39 +43,54 @@ public class ChargingStationsController : ControllerBase
             if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                 return Forbid();
 
-            var withSerialAndConnector = await _context.ChargingSessions
+            var withSerial = (await _context.ChargingSessions
                 .AsNoTracking()
-                .Where(s => s.StationSerialNumber != null && s.Connector != null)
-                .GroupBy(s => new { Serial = s.StationSerialNumber!, Conn = s.Connector! })
-                .Select(g => new ChargingStationListItemDto
+                .Where(s => s.SerialNumber != null && s.SerialNumber != "")
+                .GroupBy(s => s.SerialNumber!)
+                .Select(g => new
                 {
-                    StationSerialNumber = g.Key.Serial,
-                    Connector = g.Key.Conn,
+                    Serial = g.Key,
                     StationId = g.Max(s => s.StationId),
-                    ChargingStationName = g.OrderByDescending(s => s.Start).Select(s => s.ChargingStationName).FirstOrDefault(),
                     SessionCount = g.Count(),
-                    LastSessionStart = g.Max(s => s.Start),
+                    MaxTs = g.Max(s => s.FromTimestamp)
+                })
+                .ToListAsync())
+                .Select(x => new ChargingStationListItemDto
+                {
+                    StationSerialNumber = x.Serial,
+                    Connector = null,
+                    StationId = x.StationId,
+                    ChargingStationName = null,
+                    SessionCount = x.SessionCount,
+                    LastSessionStart = ChargingSessionEnergy.StartUtc(x.MaxTs),
                     IsLegacy = false
                 })
-                .ToListAsync();
+                .ToList();
 
-            var legacyOnly = await _context.ChargingSessions
+            var legacyOnly = (await _context.ChargingSessions
                 .AsNoTracking()
-                .Where(s => s.StationSerialNumber == null || s.Connector == null)
+                .Where(s => s.SerialNumber == null || s.SerialNumber == "")
                 .GroupBy(s => s.StationId)
-                .Select(g => new ChargingStationListItemDto
+                .Select(g => new
+                {
+                    StationId = g.Key,
+                    SessionCount = g.Count(),
+                    MaxTs = g.Max(s => s.FromTimestamp)
+                })
+                .ToListAsync())
+                .Select(x => new ChargingStationListItemDto
                 {
                     StationSerialNumber = null,
                     Connector = null,
-                    StationId = g.Key,
+                    StationId = x.StationId,
                     ChargingStationName = null,
-                    SessionCount = g.Count(),
-                    LastSessionStart = g.Max(s => s.Start),
+                    SessionCount = x.SessionCount,
+                    LastSessionStart = ChargingSessionEnergy.StartUtc(x.MaxTs),
                     IsLegacy = true
                 })
-                .ToListAsync();
+                .ToList();
 
-            var stations = withSerialAndConnector
+            var stations = withSerial
                 .Concat(legacyOnly)
                 .OrderByDescending(s => s.LastSessionStart)
                 .ToList();

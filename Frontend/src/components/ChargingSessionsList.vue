@@ -9,8 +9,11 @@
         <router-link to="/charging-stations" class="btn btn-secondary">
           Stations
         </router-link>
-        <router-link to="/upload-sessions" class="btn btn-primary">
-          Upload CSV
+        <button v-if="isAdmin" type="button" class="btn btn-primary" @click="openSyncModal">
+          Sync from Smappee
+        </button>
+        <router-link to="/upload-sessions" class="btn btn-secondary">
+          Charging data
         </router-link>
       </div>
     </div>
@@ -68,8 +71,8 @@
               <th>Start Time</th>
               <th>End Time</th>
               <th>Duration</th>
-              <th>Charging user</th>
-              <th>Station</th>
+              <th>Charge card</th>
+              <th>Point ID</th>
               <th>Serial</th>
               <th>Energy (kWh)</th>
               <th v-if="isAdmin">Actions</th>
@@ -83,19 +86,20 @@
                 <span v-else class="ongoing-label">Ongoing</span>
               </td>
               <td>
-                <span v-if="session.duration != null">{{ formatDuration(session.duration) }}</span>
+                <span v-if="session.durationMinutes != null">{{ formatDuration(session.durationMinutes) }}</span>
                 <span v-else class="ongoing-label">Ongoing</span>
               </td>
               <td>
                 <span class="user-badge">
-                  <template v-if="session.chargingUserDisplayName">{{ session.chargingUserDisplayName }}</template>
-                  <template v-else>User {{ session.userId }}</template>
+                  <template v-if="session.chargeCardDisplayName">{{ session.chargeCardDisplayName }}</template>
+                  <template v-else-if="session.rfid">{{ session.rfid }}</template>
+                  <template v-else>Card {{ session.chargeCardId }}</template>
                 </span>
               </td>
               <td class="station-cell">
-                <span class="station-name">{{ formatStationNameAndConnector(session) }}</span>
+                <span class="station-name">{{ session.stationId }}</span>
               </td>
-              <td class="mono-cell">{{ session.stationSerialNumber || '—' }}</td>
+              <td class="mono-cell">{{ session.serialNumber || '—' }}</td>
               <td class="energy-cell">{{ session.chargedKwh }} kWh</td>
               <td v-if="isAdmin" class="actions-cell">
                 <button class="btn-icon btn-edit" @click="openEditModal(session)" title="Edit">✏️</button>
@@ -131,10 +135,43 @@
       <div v-if="sessions.length === 0" class="no-sessions">
         <h3>No charging sessions found</h3>
         <p v-if="selectedMonth">No sessions found for {{ getFilterLabel() }}.</p>
-        <p v-else>Upload a CSV file to get started.</p>
-        <router-link to="/upload-sessions" class="btn btn-primary">
-          Upload Sessions
-        </router-link>
+        <p v-else>Use <strong>Sync from Smappee</strong> (admins) to import sessions, or open <router-link to="/upload-sessions">Charging data</router-link> for a full clear.</p>
+        <button v-if="isAdmin" type="button" class="btn btn-primary" @click="openSyncModal">
+          Sync from Smappee
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Smappee sync modal -->
+  <div v-if="showSyncModal" class="modal-overlay" @click.self="closeSyncModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Sync from Smappee</h2>
+        <button type="button" class="modal-close" @click="closeSyncModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">Imports whitelisted charge cards and charging sessions for the configured service location. Each day is interpreted in Europe/Brussels.</p>
+        <div class="form-group">
+          <label>From</label>
+          <input v-model="syncFrom" type="date" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label>To</label>
+          <input v-model="syncTo" type="date" class="form-input" required>
+        </div>
+        <div v-if="syncResult" class="sync-result-box">
+          <p><strong>{{ syncResult.message }}</strong></p>
+          <p>Charge cards: +{{ syncResult.chargeCards.added }} / ~{{ syncResult.chargeCards.updated }}</p>
+          <p>Sessions: +{{ syncResult.sessions.added }} / ~{{ syncResult.sessions.updated }}, skipped {{ syncResult.sessions.skipped }}, errors {{ syncResult.sessions.errors }}</p>
+        </div>
+        <div v-if="syncError" class="add-error">{{ syncError }}</div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" @click="closeSyncModal">Close</button>
+          <button type="button" class="btn btn-success" :disabled="syncLoading" @click="submitSync">
+            {{ syncLoading ? 'Syncing…' : 'Run sync' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -156,16 +193,12 @@
           <input type="datetime-local" v-model="editSession.end" class="form-input" />
         </div>
         <div class="form-group">
-          <label>User ID</label>
-          <input type="number" v-model.number="editSession.userId" required min="1" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label>Charging station name <span class="optional-label">(optional)</span></label>
-          <input type="text" v-model="editSession.chargingStationName" class="form-input" placeholder="e.g. Paal 2" />
+          <label>Charge card ID</label>
+          <input type="number" v-model.number="editSession.chargeCardId" required min="1" class="form-input" />
         </div>
         <div class="form-group">
           <label>Station serial number</label>
-          <input type="text" v-model="editSession.stationSerialNumber" class="form-input" placeholder="From CSV export" />
+          <input type="text" v-model="editSession.stationSerialNumber" class="form-input" placeholder="e.g. 6531001272" />
         </div>
         <div class="form-group">
           <label>Connector</label>
@@ -201,10 +234,9 @@
       <div class="modal-body">
         <p>Are you sure you want to delete this session?</p>
         <p class="delete-detail">
-          User {{ sessionToDelete?.userId }} ·
-          {{ sessionToDelete?.chargingStationName || '—' }} ·
-          S/N {{ sessionToDelete?.stationSerialNumber || '?' }} ·
-          conn {{ sessionToDelete?.connector != null && sessionToDelete?.connector !== '' ? sessionToDelete.connector : '?' }} ·
+          Card {{ sessionToDelete?.chargeCardId }} ·
+          point {{ sessionToDelete?.stationId }} ·
+          S/N {{ sessionToDelete?.serialNumber || '?' }} ·
           {{ sessionToDelete?.chargedKwh }} kWh
         </p>
         <div v-if="deleteError" class="add-error">{{ deleteError }}</div>
@@ -235,16 +267,12 @@
           <input type="datetime-local" v-model="newSession.end" class="form-input" />
         </div>
         <div class="form-group">
-          <label>User ID</label>
-          <input type="number" v-model.number="newSession.userId" required min="1" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label>Charging station name <span class="optional-label">(optional)</span></label>
-          <input type="text" v-model="newSession.chargingStationName" class="form-input" placeholder="e.g. Paal 2" />
+          <label>Charge card ID</label>
+          <input type="number" v-model.number="newSession.chargeCardId" required min="1" class="form-input" />
         </div>
         <div class="form-group">
           <label>Station serial number</label>
-          <input type="text" v-model="newSession.stationSerialNumber" class="form-input" placeholder="From CSV export" />
+          <input type="text" v-model="newSession.stationSerialNumber" class="form-input" placeholder="e.g. 6531001272" />
         </div>
         <div class="form-group">
           <label>Connector</label>
@@ -276,6 +304,13 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { isAppAdmin, roleFromToken } from '../utils/roles'
 
+const toIsoDateLocal = (d) => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export default {
   name: 'ChargingSessionsList',
   setup() {
@@ -292,14 +327,19 @@ export default {
     const availableMonths = ref([])
     const loadingMonths = ref(true)
     const isAdmin = ref(false)
+    const showSyncModal = ref(false)
+    const syncFrom = ref('')
+    const syncTo = ref('')
+    const syncLoading = ref(false)
+    const syncError = ref('')
+    const syncResult = ref(null)
     const showAddModal = ref(false)
     const addLoading = ref(false)
     const addError = ref('')
     const newSession = ref({
       start: '',
       end: '',
-      userId: '',
-      chargingStationName: '',
+      chargeCardId: '',
       stationSerialNumber: '',
       connector: '',
       stationId: '',
@@ -313,8 +353,7 @@ export default {
       id: null,
       start: '',
       end: '',
-      userId: '',
-      chargingStationName: '',
+      chargeCardId: '',
       stationSerialNumber: '',
       connector: '',
       stationId: '',
@@ -337,10 +376,9 @@ export default {
         id: session.id,
         start: toLocalDatetimeInput(session.start),
         end: session.end ? toLocalDatetimeInput(session.end) : '',
-        userId: session.userId,
-        chargingStationName: session.chargingStationName ?? '',
-        stationSerialNumber: session.stationSerialNumber ?? '',
-        connector: session.connector ?? '',
+        chargeCardId: session.chargeCardId,
+        stationSerialNumber: session.serialNumber ?? '',
+        connector: '',
         stationId: session.stationId,
         chargedKwh: session.chargedKwh
       }
@@ -348,12 +386,10 @@ export default {
       showEditModal.value = true
     }
 
-    const buildStationPayload = (sn, cn, name, legacyId) => {
+    const buildStationPayload = (sn, cn, legacyId) => {
       const serial = (sn || '').trim()
       const conn = (cn || '').trim()
-      const stationName = (name || '').trim()
       const payload = {}
-      if (stationName) payload.chargingStationName = stationName
       if (serial && conn) {
         payload.stationSerialNumber = serial
         payload.connector = conn
@@ -365,6 +401,46 @@ export default {
         if (conn) payload.connector = conn
       }
       return payload
+    }
+
+    const openSyncModal = () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 90)
+      syncFrom.value = toIsoDateLocal(start)
+      syncTo.value = toIsoDateLocal(end)
+      syncResult.value = null
+      syncError.value = ''
+      showSyncModal.value = true
+    }
+
+    const closeSyncModal = () => {
+      showSyncModal.value = false
+      syncLoading.value = false
+    }
+
+    const submitSync = async () => {
+      try {
+        syncLoading.value = true
+        syncError.value = ''
+        syncResult.value = null
+        const token = localStorage.getItem('token')
+        const { data } = await axios.post('/api/chargingsessions/sync-smappee', {
+          from: syncFrom.value,
+          to: syncTo.value
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        syncResult.value = data
+        await fetchSessions(pagination.value.page)
+        await fetchAvailableMonths()
+      } catch (err) {
+        syncError.value = typeof err.response?.data === 'string'
+          ? err.response.data
+          : err.response?.data?.message || err.message || 'Sync failed.'
+      } finally {
+        syncLoading.value = false
+      }
     }
 
     const closeEditModal = () => { showEditModal.value = false }
@@ -384,13 +460,12 @@ export default {
         const stationPayload = buildStationPayload(
           editSession.value.stationSerialNumber,
           editSession.value.connector,
-          editSession.value.chargingStationName,
           editSession.value.stationId
         )
         await axios.put(`/api/chargingsessions/${editSession.value.id}`, {
           start: new Date(editSession.value.start).toISOString(),
           end: editSession.value.end ? new Date(editSession.value.end).toISOString() : null,
-          userId: editSession.value.userId,
+          chargeCardId: editSession.value.chargeCardId,
           chargedKwh: editSession.value.chargedKwh,
           ...stationPayload
         }, {
@@ -439,8 +514,7 @@ export default {
       newSession.value = {
         start: '',
         end: '',
-        userId: '',
-        chargingStationName: '',
+        chargeCardId: '',
         stationSerialNumber: '',
         connector: '',
         stationId: '',
@@ -469,13 +543,12 @@ export default {
         const stationPayload = buildStationPayload(
           newSession.value.stationSerialNumber,
           newSession.value.connector,
-          newSession.value.chargingStationName,
           newSession.value.stationId
         )
         await axios.post('/api/chargingsessions', {
           start: new Date(newSession.value.start).toISOString(),
           end: newSession.value.end ? new Date(newSession.value.end).toISOString() : null,
-          userId: newSession.value.userId,
+          chargeCardId: newSession.value.chargeCardId,
           chargedKwh: newSession.value.chargedKwh,
           ...stationPayload
         }, {
@@ -523,9 +596,9 @@ export default {
     })
 
     const averageSessionDuration = computed(() => {
-      const completed = sessions.value.filter((s) => s.duration != null)
+      const completed = sessions.value.filter((s) => s.durationMinutes != null)
       if (completed.length === 0) return sessions.value.length > 0 ? '—' : '0m'
-      const totalMinutes = completed.reduce((total, session) => total + session.duration, 0)
+      const totalMinutes = completed.reduce((total, session) => total + session.durationMinutes, 0)
       const avgMinutes = Math.round(totalMinutes / completed.length)
       return formatDuration(avgMinutes)
     })
@@ -620,18 +693,6 @@ export default {
       return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
     }
 
-    const formatStationNameAndConnector = (session) => {
-      const name = (session.chargingStationName || '').trim()
-      const conn =
-        session.connector != null && String(session.connector).trim() !== ''
-          ? String(session.connector).trim()
-          : ''
-      if (!name && !conn) return '—'
-      if (!name) return `—, ${conn}`
-      if (!conn) return `${name}, —`
-      return `${name}, ${conn}`
-    }
-
     onMounted(() => {
       checkAdminRole()
       fetchAvailableMonths()
@@ -650,6 +711,15 @@ export default {
       totalEnergyDelivered,
       averageSessionDuration,
       isAdmin,
+      showSyncModal,
+      syncFrom,
+      syncTo,
+      syncLoading,
+      syncError,
+      syncResult,
+      openSyncModal,
+      closeSyncModal,
+      submitSync,
       showAddModal,
       addLoading,
       addError,
@@ -676,8 +746,7 @@ export default {
       clearFilter,
       getFilterLabel,
       formatDateTime,
-      formatDuration,
-      formatStationNameAndConnector
+      formatDuration
     }
   }
 }
@@ -1117,6 +1186,20 @@ export default {
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 1.25rem;
+}
+
+.sync-result-box {
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: #1b5e20;
+}
+
+.sync-result-box p {
+  margin: 0.25rem 0;
 }
 
 @media (max-width: 768px) {

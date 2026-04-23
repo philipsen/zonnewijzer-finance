@@ -1,17 +1,23 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Yarp.ReverseProxy.Configuration;
 using System.Text;
+using Backend.Configuration;
 using Backend.Data;
 using Backend.Services;
 using Backend.Services.GnuCash;
+using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
 
 // Configure Serilog early
 Directory.CreateDirectory("logs");
+
+if (LocalSecretsBootstrap.IsDevelopmentEnvironment())
+    LocalSecretsBootstrap.Apply();
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -109,9 +115,14 @@ builder.Services.AddReverseProxy().LoadFromMemory(
 
 // Add custom services
 builder.Services.Configure<GnuCashSyncOptions>(builder.Configuration.GetSection(GnuCashSyncOptions.SectionName));
+builder.Services.Configure<SmappeeOptions>(builder.Configuration.GetSection(SmappeeOptions.SectionName));
 builder.Services.AddHttpClient<IGnuCashSyncClient, GnuCashSyncClient>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
+});
+builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(2);
 });
 
 builder.Services.AddScoped<IJwtService, JwtService>();
@@ -142,8 +153,11 @@ var app = builder.Build();
     // Ensure database migrations are applied
     using (var scope = app.Services.CreateScope())
     {
+        TryBackupSqliteBeforeMigrate(app.Environment, builder.Configuration.GetConnectionString("DefaultConnection"));
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         context.Database.Migrate();
+        if (app.Environment.IsDevelopment())
+            DevelopmentAdminSeed.Apply(builder.Configuration, context);
     }
 
     // Configure the HTTP request pipeline.
@@ -171,8 +185,23 @@ var app = builder.Build();
         app.MapFallbackToFile("index.html");
     }
 
-    Log.Information("Finance App backend started successfully");
-    app.Run();
+    app.Lifetime.ApplicationStarted.Register(() =>
+        Log.Information("Finance App backend listening on {Urls}", string.Join(", ", app.Urls)));
+
+    try
+    {
+        app.Run();
+    }
+    catch (IOException ex) when (ex.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
+                                 || ex.InnerException?.Message?.Contains("address already in use", StringComparison.OrdinalIgnoreCase) == true)
+    {
+        Log.Fatal(
+            ex,
+            "HTTP port is already in use (often a leftover `dotnet` / Backend process). "
+            + "Stop other backend instances or run: lsof -nP -iTCP:5293 -sTCP:LISTEN");
+        Environment.ExitCode = 1;
+        return;
+    }
 }
 catch (Exception ex)
 {
@@ -181,4 +210,32 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+static void TryBackupSqliteBeforeMigrate(IHostEnvironment env, string? connectionString)
+{
+    if (!env.IsDevelopment() || string.IsNullOrWhiteSpace(connectionString))
+        return;
+
+    try
+    {
+        var cb = new SqliteConnectionStringBuilder(connectionString);
+        var path = cb.DataSource;
+        if (string.IsNullOrEmpty(path))
+            return;
+
+        if (!Path.IsPathRooted(path))
+            path = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
+
+        if (!File.Exists(path))
+            return;
+
+        var backupPath = path + ".pre-migrate.bak";
+        File.Copy(path, backupPath, overwrite: true);
+        Log.Information("Development: backed up SQLite to {BackupPath} before applying migrations", backupPath);
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Development: could not back up SQLite before migrations");
+    }
 }

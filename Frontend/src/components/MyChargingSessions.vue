@@ -57,8 +57,8 @@
               <th>Start Time</th>
               <th>End Time</th>
               <th>Duration</th>
-              <th>Charging user</th>
-              <th>Station</th>
+              <th>Charge card</th>
+              <th>Point ID</th>
               <th>Serial</th>
               <th>Energy (kWh)</th>
             </tr>
@@ -71,19 +71,20 @@
                 <span v-else class="ongoing-label">Ongoing</span>
               </td>
               <td>
-                <span v-if="session.duration != null">{{ formatDuration(session.duration) }}</span>
+                <span v-if="session.durationMinutes != null">{{ formatDuration(session.durationMinutes) }}</span>
                 <span v-else class="ongoing-label">Ongoing</span>
               </td>
               <td>
                 <span class="user-badge">
-                  <template v-if="session.chargingUserDisplayName">{{ session.chargingUserDisplayName }}</template>
+                  <template v-if="session.chargeCardDisplayName">{{ session.chargeCardDisplayName }}</template>
+                  <template v-else-if="session.rfid">{{ session.rfid }}</template>
                   <template v-else>—</template>
                 </span>
               </td>
               <td class="station-cell">
-                <span class="station-name">{{ formatStationNameAndConnector(session) }}</span>
+                <span class="station-name">{{ session.stationId }}</span>
               </td>
-              <td class="mono-cell">{{ session.stationSerialNumber || '—' }}</td>
+              <td class="mono-cell">{{ session.serialNumber || '—' }}</td>
               <td class="energy-cell">{{ session.chargedKwh }} kWh</td>
             </tr>
           </tbody>
@@ -146,9 +147,9 @@ export default {
     })
 
     const averageSessionDuration = computed(() => {
-      const completed = sessions.value.filter((s) => s.duration != null)
+      const completed = sessions.value.filter((s) => s.durationMinutes != null)
       if (completed.length === 0) return sessions.value.length > 0 ? '—' : '0m'
-      const totalMinutes = completed.reduce((total, session) => total + session.duration, 0)
+      const totalMinutes = completed.reduce((total, session) => total + session.durationMinutes, 0)
       const avgMinutes = Math.round(totalMinutes / completed.length)
       return formatDuration(avgMinutes)
     })
@@ -248,18 +249,6 @@ export default {
       return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
     }
 
-    const formatStationNameAndConnector = (session) => {
-      const name = (session.chargingStationName || '').trim()
-      const conn =
-        session.connector != null && String(session.connector).trim() !== ''
-          ? String(session.connector).trim()
-          : ''
-      if (!name && !conn) return '—'
-      if (!name) return `—, ${conn}`
-      if (!conn) return `${name}, —`
-      return `${name}, ${conn}`
-    }
-
     onMounted(() => {
       fetchAvailableMonths()
       fetchSessions()
@@ -281,7 +270,6 @@ export default {
       changePage,
       formatDateTime,
       formatDuration,
-      formatStationNameAndConnector
     }
   }
 }

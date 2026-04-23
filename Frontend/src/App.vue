@@ -7,20 +7,26 @@
       </router-link>
       <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
         <router-link to="/" class="nav-link">Home</router-link>
+        <router-link
+          v-if="canManageUserProfiles(user?.role) && !previewMode"
+          to="/users"
+          class="nav-link"
+        >
+          Users
+        </router-link>
         <template v-if="isAppAdminUser && !previewMode">
-          <router-link to="/users" class="nav-link">Users</router-link>
-          <router-link to="/charging-users" class="nav-link">Charging Users</router-link>
+          <router-link to="/charge-cards" class="nav-link">Charge cards</router-link>
           <router-link to="/charging-sessions" class="nav-link">Sessions</router-link>
           <router-link to="/charging-stations" class="nav-link">Stations</router-link>
-          <router-link to="/upload-sessions" class="nav-link">Upload</router-link>
+          <router-link to="/upload-sessions" class="nav-link">Charging data</router-link>
           <router-link to="/invoices" class="nav-link">Invoices</router-link>
           <router-link to="/payments" class="nav-link">Payments</router-link>
           <router-link to="/energy-prices" class="nav-link">Prices</router-link>
           <router-link to="/event-log" class="nav-link">Events</router-link>
         </template>
         <template v-else-if="!isAppAdminUser || previewMode">
-          <router-link v-if="user.chargingUserId" to="/my-sessions" class="nav-link">My Sessions</router-link>
-          <router-link v-if="user.chargingUserId" to="/my-invoices" class="nav-link">My Invoices</router-link>
+          <router-link v-if="user.chargeCardId" to="/my-sessions" class="nav-link">My Sessions</router-link>
+          <router-link v-if="user.chargeCardId" to="/my-invoices" class="nav-link">My Invoices</router-link>
         </template>
       </nav>
 
@@ -31,20 +37,27 @@
         </button>
         <div v-if="dropdownOpen" class="nav-dropdown">
           <router-link to="/" class="dropdown-link" @click="dropdownOpen = false">Home</router-link>
+          <router-link
+            v-if="canManageUserProfiles(user?.role) && !previewMode"
+            to="/users"
+            class="dropdown-link"
+            @click="dropdownOpen = false"
+          >
+            Users
+          </router-link>
           <template v-if="isAppAdminUser && !previewMode">
-            <router-link to="/users" class="dropdown-link" @click="dropdownOpen = false">Users</router-link>
-            <router-link to="/charging-users" class="dropdown-link" @click="dropdownOpen = false">Charging Users</router-link>
+            <router-link to="/charge-cards" class="dropdown-link" @click="dropdownOpen = false">Charge cards</router-link>
             <router-link to="/charging-sessions" class="dropdown-link" @click="dropdownOpen = false">Sessions</router-link>
             <router-link to="/charging-stations" class="dropdown-link" @click="dropdownOpen = false">Stations</router-link>
-            <router-link to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Upload</router-link>
+            <router-link to="/upload-sessions" class="dropdown-link" @click="dropdownOpen = false">Charging data</router-link>
             <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
             <router-link to="/payments" class="dropdown-link" @click="dropdownOpen = false">Payments</router-link>
             <router-link to="/energy-prices" class="dropdown-link" @click="dropdownOpen = false">Prices</router-link>
             <router-link to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
           </template>
           <template v-else-if="!isAppAdminUser || previewMode">
-            <router-link v-if="user.chargingUserId" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
-            <router-link v-if="user.chargingUserId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
+            <router-link v-if="user.chargeCardId" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
+            <router-link v-if="user.chargeCardId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
           </template>
         </div>
       </div>
@@ -75,7 +88,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, provide, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
-import { isAppAdmin } from './utils/roles'
+import { isAppAdmin, canManageUserProfiles } from './utils/roles'
 
 export default {
   name: 'App',
@@ -228,6 +241,7 @@ export default {
     return {
       user,
       isAppAdminUser,
+      canManageUserProfiles,
       previewMode,
       togglePreviewMode,
       googleClientId,
