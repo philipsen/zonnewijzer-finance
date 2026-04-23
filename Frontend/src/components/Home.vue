@@ -192,7 +192,7 @@ export default {
       isAuthenticated.value &&
       appUser.value &&
       appUser.value.role === 'Base' &&
-      !appUser.value.chargingUserId
+      !appUser.value.chargeCardId
     )
 
     const signinButtonEl = ref(null)

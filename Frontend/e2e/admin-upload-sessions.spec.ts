@@ -1,6 +1,4 @@
 /// <reference types="node" />
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { test, expect } from '@playwright/test'
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000'
@@ -14,24 +12,9 @@ function isLocalBaseUrl(url: string): boolean {
   }
 }
 
-function buildTwoSessionCsv(opts: {
-  stationSerial: string
-  stationName: string
-  from1: string
-  to1: string
-  from2: string
-  to2: string
-}): string {
-  const header =
-    'Station serial number,Charging station name,From,To,Duration [h:mm],kWh,Connector,Token'
-  const row1 = `${opts.stationSerial},${opts.stationName},${opts.from1},${opts.to1},00:10,"1,111",1,deadbeef0000e201 (E2E Import User A)`
-  const row2 = `${opts.stationSerial},${opts.stationName},${opts.from2},${opts.to2},00:10,"2,222",1,deadbeef0000e202 (E2E Import User B)`
-  return `${header}\n${row1}\n${row2}\n`
-}
-
 test.use({ viewport: { width: 1920, height: 1080 } })
 
-test.describe('Admin CSV upload → sessions list → delete (E2E_ADMIN_EMAIL)', () => {
+test.describe('Admin charging data page (E2E_ADMIN_EMAIL)', () => {
   test.beforeEach(async ({ page }) => {
     const email = (process.env.E2E_ADMIN_EMAIL ?? '').trim()
     const password = (
@@ -83,54 +66,10 @@ test.describe('Admin CSV upload → sessions list → delete (E2E_ADMIN_EMAIL)',
     )
   })
 
-  test('imports 2 sessions from CSV, lists them, then deletes both', async ({ page }, testInfo) => {
-    const runId = `${Date.now()}-${testInfo.workerIndex}-${Math.random().toString(36).slice(2, 8)}`
-    const stationSerial = `9${runId.replace(/\D/g, '').slice(-12).padStart(12, '0')}`.slice(0, 13)
-    const stationName = `E2E Import ${runId}`
-    const from1 = '2030-07-15 09:00:00'
-    const to1 = '2030-07-15 09:10:00'
-    const from2 = '2030-07-15 10:00:00'
-    const to2 = '2030-07-15 10:10:00'
-
-    const csvPath = path.join(testInfo.outputDir, `e2e-upload-${runId}.csv`)
-    await mkdir(testInfo.outputDir, { recursive: true })
-    await writeFile(
-      csvPath,
-      buildTwoSessionCsv({ stationSerial, stationName, from1, to1, from2, to2 }),
-      'utf8',
-    )
-
+  test('charging data page documents Smappee sync and has no CSV upload', async ({ page }) => {
     await page.goto('/upload-sessions')
-    await expect(page.getByRole('heading', { name: 'Upload Charging Sessions' })).toBeVisible()
-
-    await page.locator('.upload-page input[type="file"]').setInputFiles(csvPath)
-    await expect(page.getByText('Selected file:', { exact: false })).toBeVisible()
-    await page.getByRole('button', { name: 'Upload CSV' }).click()
-
-    await expect(page.getByRole('heading', { name: 'Upload Successful!' })).toBeVisible({
-      timeout: 60_000,
-    })
-    await expect(page.locator('.upload-result.success .stat-number').first()).toHaveText('2')
-
-    await page.goto('/charging-sessions')
-    await expect(page.getByRole('heading', { name: 'Charging Sessions' })).toBeVisible()
-    await expect(page.locator('.loading')).toBeHidden({ timeout: 30_000 })
-
-    const markerRows = page.locator('tr.session-row').filter({ hasText: stationName })
-    await expect(markerRows).toHaveCount(2)
-
-    const modalDelete = page
-      .locator('.modal-overlay')
-      .filter({ has: page.getByRole('heading', { name: 'Delete Session' }) })
-      .getByRole('button', { name: 'Delete' })
-
-    for (let i = 0; i < 2; i++) {
-      await markerRows.first().locator('.btn-delete').click()
-      await expect(page.getByRole('heading', { name: 'Delete Session' })).toBeVisible()
-      await modalDelete.click()
-      await expect(page.getByRole('heading', { name: 'Delete Session' })).toBeHidden()
-    }
-
-    await expect(markerRows).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Charging data' })).toBeVisible()
+    await expect(page.getByText(/Smappee Cloud/i)).toBeVisible()
+    await expect(page.locator('.upload-page input[type="file"]')).toHaveCount(0)
   })
 })

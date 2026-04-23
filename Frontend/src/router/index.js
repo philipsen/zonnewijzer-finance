@@ -15,7 +15,13 @@ import ResetPassword from '../components/ResetPassword.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 import ChargingStationsPage from '../components/ChargingStationsPage.vue'
-import { isAppAdmin, roleFromToken } from '../utils/roles'
+import { isAppAdmin, roleFromToken, canManageUserProfiles } from '../utils/roles'
+
+function requireManageUserProfiles () {
+  const token = localStorage.getItem('token')
+  const role = roleFromToken(token)
+  if (!canManageUserProfiles(role)) return '/'
+}
 
 const routes = [
   {
@@ -26,12 +32,14 @@ const routes = [
   {
     path: '/users',
     name: 'Users',
-    component: UsersList
+    component: UsersList,
+    beforeEnter: requireManageUserProfiles
   },
   {
     path: '/users/:id/edit',
     name: 'EditUser',
-    component: EditUser
+    component: EditUser,
+    beforeEnter: requireManageUserProfiles
   },
   {
     path: '/upload-sessions',
@@ -59,14 +67,22 @@ const routes = [
     component: MyChargingSessions
   },
   {
-    path: '/charging-users',
-    name: 'ChargingUsersList',
+    path: '/charge-cards',
+    name: 'ChargeCardsList',
     component: ChargingUsersList
   },
   {
-    path: '/charging-users/:id/edit',
-    name: 'EditChargingUser',
+    path: '/charge-cards/:id/edit',
+    name: 'EditChargeCard',
     component: EditChargingUser
+  },
+  {
+    path: '/charging-users',
+    redirect: '/charge-cards'
+  },
+  {
+    path: '/charging-users/:id/edit',
+    redirect: (to) => ({ path: `/charge-cards/${to.params.id}/edit` })
   },
   {
     path: '/invoices',

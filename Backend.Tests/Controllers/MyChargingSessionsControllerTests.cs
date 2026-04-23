@@ -1,3 +1,4 @@
+using Backend;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -44,7 +45,7 @@ public class MyChargingSessionsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAvailableMonths_NoChargingUserId_ReturnsForbid()
+    public async Task GetAvailableMonths_NoChargeCardId_ReturnsForbid()
     {
         _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1" });
         await _db.SaveChangesAsync();
@@ -56,11 +57,14 @@ public class MyChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetAvailableMonths_ReturnsDistinctMonths()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargingUserId = 10 });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-1" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
         var t = new DateTime(2024, 3, 15, 10, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.AddRange(
-            new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 5 },
-            new ChargingSession { UserId = 10, StationId = 2, Start = t.AddDays(1), End = t.AddDays(1).AddHours(1), ChargedKwh = 3 }
+            TestData.Session(cid, 1, t, t.AddHours(1), 5),
+            TestData.Session(cid, 2, t.AddDays(1), t.AddDays(1).AddHours(1), 3)
         );
         await _db.SaveChangesAsync();
 
@@ -78,7 +82,7 @@ public class MyChargingSessionsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetMySessions_NoChargingUserId_ReturnsForbid()
+    public async Task GetMySessions_NoChargeCardId_ReturnsForbid()
     {
         _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1" });
         await _db.SaveChangesAsync();
@@ -90,7 +94,10 @@ public class MyChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetMySessions_InvalidMonth_ReturnsBadRequest()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargingUserId = 10 });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-2" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
         await _db.SaveChangesAsync();
 
         var result = await BuildController().GetMySessions(year: 2024, month: 13);
@@ -100,9 +107,12 @@ public class MyChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetMySessions_ReturnsPagedSessions()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargingUserId = 10 });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-3" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
         var t = DateTime.UtcNow.AddDays(-1);
-        _db.ChargingSessions.Add(new ChargingSession { UserId = 10, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 4 });
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
         await _db.SaveChangesAsync();
 
         var result = await BuildController().GetMySessions(page: 1, pageSize: 10);

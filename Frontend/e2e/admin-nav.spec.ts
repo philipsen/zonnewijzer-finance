@@ -16,10 +16,10 @@ function isLocalBaseUrl(url: string): boolean {
 const adminNavLinks = [
   'Home',
   'Users',
-  'Charging Users',
+  'Charge cards',
   'Sessions',
   'Stations',
-  'Upload',
+  'Charging data',
   'Invoices',
   'Payments',
   'Prices',
@@ -100,9 +100,9 @@ test.describe('Admin navbar (E2E_ADMIN_EMAIL + UserAdminPassword)', () => {
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/users')
       await expect(page.getByRole('heading', { name: 'All Users' })).toBeVisible({ timeout: 20_000 })
 
-      await nav.getByRole('link', { name: 'Charging Users', exact: true }).click()
-      await expect(page).toHaveURL((url) => new URL(url).pathname === '/charging-users')
-      await expect(page.getByRole('heading', { name: 'Charging Users' })).toBeVisible({ timeout: 20_000 })
+      await nav.getByRole('link', { name: 'Charge cards', exact: true }).click()
+      await expect(page).toHaveURL((url) => new URL(url).pathname === '/charge-cards')
+      await expect(page.getByRole('heading', { name: 'Charge cards' })).toBeVisible({ timeout: 20_000 })
 
       await nav.getByRole('link', { name: 'Sessions', exact: true }).click()
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/charging-sessions')
@@ -112,9 +112,9 @@ test.describe('Admin navbar (E2E_ADMIN_EMAIL + UserAdminPassword)', () => {
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/charging-stations')
       await expect(page.getByRole('heading', { name: /Charging stations/i })).toBeVisible({ timeout: 20_000 })
 
-      await nav.getByRole('link', { name: 'Upload', exact: true }).click()
+      await nav.getByRole('link', { name: 'Charging data', exact: true }).click()
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/upload-sessions')
-      await expect(page.getByRole('heading', { name: 'Upload Charging Sessions' })).toBeVisible({ timeout: 20_000 })
+      await expect(page.getByRole('heading', { name: 'Charging data' })).toBeVisible({ timeout: 20_000 })
 
       await nav.getByRole('link', { name: 'Invoices', exact: true }).click()
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/invoices')

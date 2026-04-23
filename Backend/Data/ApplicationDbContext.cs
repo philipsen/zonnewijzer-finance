@@ -15,7 +15,7 @@ namespace Backend.Data
         public DbSet<Invoice> Invoices { get; set; }
         public DbSet<EventLog> EventLogs { get; set; }
         public DbSet<EnergyPrice> EnergyPrices { get; set; }
-        public DbSet<ChargingUserProfile> ChargingUserProfiles { get; set; }
+        public DbSet<ChargeCard> ChargeCards { get; set; }
         public DbSet<MolliePayment> MolliePayments { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
@@ -29,19 +29,33 @@ namespace Backend.Data
                 entity.Property(e => e.Name).IsRequired();
             });
 
+            modelBuilder.Entity<ChargeCard>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Value).HasMaxLength(256).IsRequired();
+                entity.Property(e => e.Comment).HasMaxLength(512);
+                entity.HasIndex(e => e.Value).IsUnique();
+                entity.HasIndex(e => e.SmappeeWhitelistId).IsUnique();
+            });
+
             modelBuilder.Entity<ChargingSession>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.Property(e => e.Start).IsRequired();
-                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.SerialNumber).HasMaxLength(64);
+                entity.Property(e => e.AuthenticationType).HasMaxLength(64);
+                entity.Property(e => e.Rfid).HasMaxLength(256);
+                entity.Property(e => e.CsmsTransactionId).HasMaxLength(128);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.StartReading).HasPrecision(18, 6);
+                entity.Property(e => e.StopReading).HasPrecision(18, 6);
+                entity.Property(e => e.ChargeCardId).IsRequired();
                 entity.Property(e => e.StationId).IsRequired();
-                entity.Property(e => e.ChargedKwh).HasPrecision(8, 2).IsRequired();
-                entity.Property(e => e.StationSerialNumber).HasMaxLength(64);
-                entity.Property(e => e.Connector).HasMaxLength(32);
-                entity.Property(e => e.ChargingStationName).HasMaxLength(255);
+                entity.HasIndex(e => e.SmappeeSessionId).IsUnique();
 
-                // Create unique index to prevent duplicates
-                entity.HasIndex(e => new { e.Start, e.UserId, e.StationId }).IsUnique();
+                entity.HasOne<ChargeCard>()
+                    .WithMany()
+                    .HasForeignKey(e => e.ChargeCardId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<Invoice>(entity =>
@@ -53,14 +67,12 @@ namespace Backend.Data
                 entity.Property(e => e.InvoiceNumber).HasMaxLength(255).IsRequired();
                 entity.Property(e => e.TotalAmount).HasPrecision(10, 2).IsRequired();
                 entity.Property(e => e.PdfPath).HasMaxLength(500);
-                
-                // Foreign key to User
+
                 entity.HasOne(e => e.User)
                       .WithMany()
                       .HasForeignKey(e => e.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
-                
-                // Unique constraint for user + year + month to prevent duplicate invoices
+
                 entity.HasIndex(e => new { e.UserId, e.Year, e.Month }).IsUnique();
             });
 
@@ -70,32 +82,20 @@ namespace Backend.Data
                 entity.Property(e => e.Year).IsRequired();
                 entity.Property(e => e.Month).IsRequired();
                 entity.Property(e => e.PricePerKwh).HasPrecision(8, 4).IsRequired();
-
-                // Unique constraint: one price per year+month
                 entity.HasIndex(e => new { e.Year, e.Month }).IsUnique();
-            });
-
-            modelBuilder.Entity<ChargingUserProfile>(entity =>
-            {
-                entity.HasKey(e => e.Id);
-                entity.Property(e => e.Id).ValueGeneratedNever();
-                entity.Property(e => e.RfidTokenKey).HasMaxLength(64);
-                entity.Property(e => e.DisplayName).HasMaxLength(255);
             });
 
             modelBuilder.Entity<MolliePayment>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.Property(e => e.ChargingUserId).IsRequired();
+                entity.Property(e => e.ChargeCardId).IsRequired();
                 entity.Property(e => e.Year).IsRequired();
                 entity.Property(e => e.Month).IsRequired();
                 entity.Property(e => e.MolliePaymentId).HasMaxLength(100).IsRequired();
                 entity.Property(e => e.CheckoutUrl).HasMaxLength(500).IsRequired();
                 entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
                 entity.Property(e => e.Status).HasMaxLength(50).IsRequired();
-
-                // Unique constraint: one payment per charging user + year + month
-                entity.HasIndex(e => new { e.ChargingUserId, e.Year, e.Month }).IsUnique();
+                entity.HasIndex(e => new { e.ChargeCardId, e.Year, e.Month }).IsUnique();
             });
 
             modelBuilder.Entity<PasswordResetToken>(entity =>

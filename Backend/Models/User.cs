@@ -21,7 +21,7 @@ namespace Backend.Models
         public string Name { get; set; } = string.Empty;
         public string? PictureUrl { get; set; }
         public UserRole Role { get; set; } = UserRole.Base;
-        public int? ChargingUserId { get; set; }
+        public int? ChargeCardId { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime LastLoginAt { get; set; } = DateTime.UtcNow;
     }

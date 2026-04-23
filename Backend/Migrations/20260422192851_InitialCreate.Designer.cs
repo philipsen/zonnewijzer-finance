@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Backend.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260413174835_ChargingSessionStationMetadata")]
-    partial class ChargingSessionStationMetadata
+    [Migration("20260422192851_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -20,59 +20,18 @@ namespace Backend.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
 
-            modelBuilder.Entity("Backend.Models.ChargingSession", b =>
+            modelBuilder.Entity("Backend.Models.ChargeCard", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<decimal>("ChargedKwh")
-                        .HasPrecision(8, 2)
+                    b.Property<string>("Comment")
+                        .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ChargingStationName")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Connector")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("End")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("Start")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("StationId")
+                    b.Property<long?>("ExpirationTimestamp")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("StationSerialNumber")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Start", "UserId", "StationId")
-                        .IsUnique();
-
-                    b.ToTable("ChargingSessions");
-                });
-
-            modelBuilder.Entity("Backend.Models.ChargingUserProfile", b =>
-                {
-                    b.Property<int>("Id")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("DisplayName")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("HouseNumber")
                         .HasColumnType("TEXT");
@@ -83,12 +42,97 @@ namespace Backend.Migrations
                     b.Property<string>("PostalCode")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("SmappeeWhitelistId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Street")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
-                    b.ToTable("ChargingUserProfiles");
+                    b.HasIndex("SmappeeWhitelistId")
+                        .IsUnique();
+
+                    b.HasIndex("Value")
+                        .IsUnique();
+
+                    b.ToTable("ChargeCards");
+                });
+
+            modelBuilder.Entity("Backend.Models.ChargingSession", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AuthenticationType")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ChargeCardId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CsmsTransactionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Duration")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("FromTimestamp")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Range")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Rfid")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SerialNumber")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SmappeeSessionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("StartReading")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("StopReading")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ToTimestamp")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChargeCardId");
+
+                    b.HasIndex("SmappeeSessionId")
+                        .IsUnique();
+
+                    b.ToTable("ChargingSessions");
                 });
 
             modelBuilder.Entity("Backend.Models.EnergyPrice", b =>
@@ -200,7 +244,7 @@ namespace Backend.Migrations
                         .HasPrecision(10, 2)
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("ChargingUserId")
+                    b.Property<int>("ChargeCardId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("CheckoutUrl")
@@ -232,10 +276,43 @@ namespace Backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ChargingUserId", "Year", "Month")
+                    b.HasIndex("ChargeCardId", "Year", "Month")
                         .IsUnique();
 
                     b.ToTable("MolliePayments");
+                });
+
+            modelBuilder.Entity("Backend.Models.PasswordResetToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("PasswordResetTokens");
                 });
 
             modelBuilder.Entity("Backend.Models.User", b =>
@@ -244,7 +321,7 @@ namespace Backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("ChargingUserId")
+                    b.Property<int?>("ChargeCardId")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAt")
@@ -267,6 +344,9 @@ namespace Backend.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PasswordHash")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PictureUrl")
                         .HasColumnType("TEXT");
 
@@ -281,7 +361,27 @@ namespace Backend.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Backend.Models.ChargingSession", b =>
+                {
+                    b.HasOne("Backend.Models.ChargeCard", null)
+                        .WithMany()
+                        .HasForeignKey("ChargeCardId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Backend.Models.Invoice", b =>
+                {
+                    b.HasOne("Backend.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Backend.Models.PasswordResetToken", b =>
                 {
                     b.HasOne("Backend.Models.User", "User")
                         .WithMany()

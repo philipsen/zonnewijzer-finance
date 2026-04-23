@@ -134,7 +134,7 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
     if ((await mySessions.count()) === 0) {
       test.skip(
         true,
-        'Navbar only shows My Sessions when the user has chargingUserId. Link the account to a charging user to run this check.',
+        'Navbar only shows My Sessions when the user has chargeCardId. Link the account to a charge card to run this check.',
       )
     }
     await expect(mySessions).toBeVisible()
@@ -142,10 +142,10 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
 
     const adminNavLabels = [
       'Users',
-      'Charging Users',
+      'Charge cards',
       'Sessions',
       'Stations',
-      'Upload',
+      'Charging data',
       'Invoices',
       'Payments',
       'Prices',
@@ -164,9 +164,9 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
       await page.goto('/users')
       await expect(page.locator('.users-page .error')).toBeVisible({ timeout: 15_000 })
 
-      // Backend allows any authenticated user to list charging users; admin-only UI is hidden.
-      await page.goto('/charging-users')
-      await expect(page.getByRole('heading', { name: 'Charging Users' })).toBeVisible({ timeout: 15_000 })
+      // Backend allows any authenticated user to list charge cards; admin-only UI is hidden.
+      await page.goto('/charge-cards')
+      await expect(page.getByRole('heading', { name: 'Charge cards' })).toBeVisible({ timeout: 15_000 })
       const cuTable = page.locator('.charging-users-table')
       if ((await cuTable.count()) > 0) {
         await expect(cuTable.locator('thead th', { hasText: 'Actions' })).toHaveCount(0)
