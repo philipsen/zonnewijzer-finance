@@ -649,7 +649,7 @@ namespace Backend.Controllers
 
         /// <summary>
         /// Removes all charging sessions and charging user profiles, and clears app users' ChargingUserId links.
-        /// Does not remove invoices, payments, or other tables. Admin only; requires confirmation phrase.
+        /// Does not remove invoices, payments, or other tables. Owner only; requires confirmation phrase.
         /// </summary>
         [HttpPost("admin/clear-charging-data")]
         public async Task<IActionResult> ClearChargingData([FromBody] WipeDatabaseRequest? request)
@@ -674,14 +674,14 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                if (requestingUser == null || !requestingUser.Role.CanClearChargingData())
                 {
-                    _logger.LogWarning("Non-admin user {UserId} attempted clear charging data", userId);
+                    _logger.LogWarning("Non-owner user {UserId} attempted clear charging data", userId);
                     return Forbid();
                 }
 
                 _logger.LogWarning(
-                    "Charging sessions and profiles cleared by admin {AdminId} ({Email})",
+                    "Charging sessions and profiles cleared by owner {UserId} ({Email})",
                     userId,
                     requestingUser.Email);
 

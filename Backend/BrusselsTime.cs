@@ -52,4 +52,21 @@ public static class BrusselsTime
         var (y, m) = BrusselsYearMonthFromUnixMilliseconds(fromTimestampMs);
         return y == year && m == month;
     }
+
+    /// <summary>Assumes <paramref name="unixMs"/> is <strong>milliseconds</strong> (EF / Smappee convention).</summary>
+    public static string DescribeUnixMilliseconds(long unixMs)
+    {
+        var utc = DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime;
+        var brussels = TimeZoneInfo.ConvertTimeFromUtc(utc, BrusselsTz);
+        return $"{unixMs} ms | UTC {utc:yyyy-MM-dd HH:mm:ss.fff}Z | Brussels {brussels:yyyy-MM-dd HH:mm:ss.fff}";
+    }
+
+    public static string DescribeUnixMilliseconds(long? unixMs) =>
+        unixMs.HasValue ? DescribeUnixMilliseconds(unixMs.Value) : "null";
+
+    /// <summary>
+    /// Values under ~year 2001 in <em>ms</em> are suspicious; Smappee may send <strong>seconds</strong> or the field may be mis-parsed.
+    /// </summary>
+    public static bool LooksLikeUnixSecondsInsteadOfMilliseconds(long unixMs) =>
+        unixMs is > 0 and < 10_000_000_000L;
 }

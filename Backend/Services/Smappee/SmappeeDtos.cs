@@ -41,9 +41,11 @@ public class SmappeeSessionDto
     [JsonPropertyName("csmsTransactionId")]
     public string? CsmsTransactionId { get; set; }
 
+    /// <summary>Start time; API sends Unix <strong>seconds</strong> (normalized to ms in <see cref="SmappeeSessionTimestamps"/>).</summary>
     [JsonPropertyName("from")]
     public long From { get; set; }
 
+    /// <summary>End time if finished; omitted/null while session is ongoing.</summary>
     [JsonPropertyName("to")]
     public long? To { get; set; }
 
