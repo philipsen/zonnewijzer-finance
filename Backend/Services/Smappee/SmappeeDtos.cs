@@ -32,6 +32,10 @@ public class SmappeeSessionDto
     [JsonConverter(typeof(StringOrNumberToStringConverter))]
     public string? SerialNumber { get; set; }
 
+    /// <summary>Connector index from Smappee (per session); combined with <see cref="SerialNumber"/> for charging point id.</summary>
+    [JsonPropertyName("connector")]
+    public int? Connector { get; set; }
+
     [JsonPropertyName("authenticationType")]
     public string? AuthenticationType { get; set; }
 
@@ -66,6 +70,10 @@ public class SmappeeSessionDto
 
     [JsonPropertyName("stopReading")]
     public decimal? StopReading { get; set; }
+
+    /// <summary>Delivered energy in kWh (Smappee v3); should match <c>stopReading - startReading</c> when start is zero.</summary>
+    [JsonPropertyName("energy")]
+    public decimal? Energy { get; set; }
 
     public string SerialNumberNormalized() => (SerialNumber ?? "").Trim();
 }

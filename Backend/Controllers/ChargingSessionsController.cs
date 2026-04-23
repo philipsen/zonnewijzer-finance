@@ -15,15 +15,18 @@ public class ChargingSessionsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
+    private readonly ISmappeeChargingSyncService _smappeeSync;
     private readonly ILogger<ChargingSessionsController> _logger;
 
     public ChargingSessionsController(
         ApplicationDbContext context,
         IJwtService jwtService,
+        ISmappeeChargingSyncService smappeeSync,
         ILogger<ChargingSessionsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
+        _smappeeSync = smappeeSync;
         _logger = logger;
     }
 
@@ -108,14 +111,11 @@ public class ChargingSessionsController : ControllerBase
 
     [Authorize(Roles = "Admin,Owner")]
     [HttpPost("sync-smappee")]
-    public async Task<IActionResult> SyncSmappee(
-        [FromBody] SyncSmappeeRequest body,
-        [FromServices] ISmappeeChargingSyncService smappeeSync,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> SyncSmappee([FromBody] SyncSmappeeRequest body, CancellationToken cancellationToken)
     {
         try
         {
-            var result = await smappeeSync.SyncSmappeeCalendarAsync(
+            var result = await _smappeeSync.SyncSmappeeCalendarAsync(
                 body.From,
                 body.To,
                 User.Identity?.Name ?? "Unknown",
