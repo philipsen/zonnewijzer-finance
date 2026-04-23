@@ -54,6 +54,12 @@ services:
       - GnuCashSync__ApiKey=${GNUCASH_SYNC_API_KEY:-change-me}
       # appsettings.Production.json sets Jwt:Key to empty; must override or JWT auth crashes (IDX10703)
       - Jwt__Key=${JWT_KEY:-your-super-secret-jwt-key-that-should-be-at-least-256-bits-long}
+      # Optional: same variables as Backend/smappee.env.example (SMAPPEE_* or Smappee__*)
+      - Smappee__ClientId=${SMAPPEE_CLIENT_ID:-}
+      - Smappee__ClientSecret=${SMAPPEE_CLIENT_SECRET:-}
+      - Smappee__Username=${SMAPPEE_USERNAME:-}
+      - Smappee__Password=${SMAPPEE_PASSWORD:-}
+      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-0}
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
