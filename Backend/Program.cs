@@ -124,6 +124,10 @@ builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =
 {
     client.Timeout = TimeSpan.FromMinutes(2);
 });
+builder.Services.Configure<SmappeeBackgroundSyncOptions>(
+    builder.Configuration.GetSection(SmappeeBackgroundSyncOptions.SectionName));
+builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
+builder.Services.AddHostedService<SmappeeHourlySyncBackgroundService>();
 
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();

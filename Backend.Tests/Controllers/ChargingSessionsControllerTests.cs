@@ -31,7 +31,7 @@ public class ChargingSessionsControllerTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private ChargingSessionsController BuildController(
+    private (ChargingSessionsController Controller, ISmappeeChargingSyncService Sync) BuildController(
         string? userId = "1",
         SmappeeOptions? smappeeOptions = null,
         Action<Mock<ISmappeeCloudClient>>? configureSmappee = null)
@@ -60,16 +60,19 @@ public class ChargingSessionsControllerTests : IDisposable
             DefaultConnector = "1"
         };
 
+        var sync = new SmappeeChargingSyncService(
+            _db,
+            _smappeeMock.Object,
+            Options.Create(opts),
+            NullLogger<SmappeeChargingSyncService>.Instance);
         var controller = new ChargingSessionsController(
             _db,
             _jwtMock.Object,
-            _smappeeMock.Object,
-            Options.Create(opts),
             NullLogger<ChargingSessionsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
-        return controller;
+        return (controller, sync);
     }
 
     private async Task<int> SeedChargeCardAsync(string value = "RFID1", string? comment = "User1")
@@ -92,7 +95,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WithValidData_ReturnsOkAndPersists()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new AddSessionRequest
         {
             Start = DateTime.UtcNow.AddHours(-2),
@@ -115,7 +118,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WhenEndBeforeStart_ReturnsBadRequest()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new AddSessionRequest
         {
             Start = DateTime.UtcNow,
@@ -135,7 +138,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WhenEndNull_Ongoing_ReturnsOk()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var start = DateTime.UtcNow.AddHours(-1);
         var request = new AddSessionRequest
         {
@@ -158,7 +161,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WhenSameStartUserStation_ReplacesExistingRow()
     {
         var cardId = await SeedChargeCardAsync("RFID7", "U7");
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var start = new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc);
         var first = new AddSessionRequest
         {
@@ -192,7 +195,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WithNegativeKwh_ReturnsBadRequest()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new AddSessionRequest
         {
             Start = DateTime.UtcNow.AddHours(-1),
@@ -211,7 +214,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task AddSession_WithSerialAndConnector_DerivesStationId()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new AddSessionRequest
         {
             Start = DateTime.UtcNow.AddHours(-2),
@@ -236,9 +239,10 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_WhenServiceLocationNotConfigured_ReturnsBadRequest()
     {
-        var controller = BuildController(smappeeOptions: new SmappeeOptions { ServiceLocationId = 0 });
+        var (controller, sync) = BuildController(smappeeOptions: new SmappeeOptions { ServiceLocationId = 0 });
         var result = await controller.SyncSmappee(
             new SyncSmappeeRequest { From = new DateOnly(2026, 1, 1), To = new DateOnly(2026, 1, 2) },
+            sync,
             CancellationToken.None);
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -246,9 +250,10 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_WhenToBeforeFrom_ReturnsBadRequest()
     {
-        var controller = BuildController();
+        var (controller, sync) = BuildController();
         var result = await controller.SyncSmappee(
             new SyncSmappeeRequest { From = new DateOnly(2026, 2, 5), To = new DateOnly(2026, 2, 4) },
+            sync,
             CancellationToken.None);
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -261,7 +266,7 @@ public class ChargingSessionsControllerTests : IDisposable
         var fromMs = rangeStart + 3_600_000;
         var toMs = rangeStart + 7_200_000;
 
-        var controller = BuildController(configureSmappee: m =>
+        var (controller, sync) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeRfidDto>
@@ -294,7 +299,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     }
                 });
         });
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
+        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(ok.Value);
@@ -315,7 +320,7 @@ public class ChargingSessionsControllerTests : IDisposable
         var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
         const long fromUnixSeconds = 1_776_936_253L;
 
-        var controller = BuildController(configureSmappee: m =>
+        var (controller, sync) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeRfidDto>
@@ -343,7 +348,7 @@ public class ChargingSessionsControllerTests : IDisposable
                 });
         });
 
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
+        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None);
         Assert.IsType<OkObjectResult>(result);
 
         var sess = await _db.ChargingSessions.SingleAsync(s => s.SmappeeSessionId == 28_480_919);
@@ -371,7 +376,7 @@ public class ChargingSessionsControllerTests : IDisposable
             StopReading = 1.5m
         };
 
-        var controller = BuildController(configureSmappee: m =>
+        var (controller, sync) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<SmappeeRfidDto>());
@@ -383,12 +388,12 @@ public class ChargingSessionsControllerTests : IDisposable
                 .Returns(() => Task.FromResult<IReadOnlyList<SmappeeSessionDto>>(new List<SmappeeSessionDto> { dto }));
         });
 
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None));
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         Assert.Equal(1.5m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
 
         dto.StopReading = 9m;
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None));
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         Assert.Equal(9m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
     }
@@ -398,7 +403,8 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetAllSessions_WithInvalidToken_ReturnsUnauthorized()
     {
-        var result = await BuildController(userId: null).GetAllSessions();
+        var (c, _) = BuildController(userId: null);
+        var result = await c.GetAllSessions();
         Assert.IsType<UnauthorizedResult>(result);
     }
 
@@ -410,7 +416,8 @@ public class ChargingSessionsControllerTests : IDisposable
             MakeSession(cardId, start: DateTime.UtcNow.AddHours(-i))));
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().GetAllSessions(page: 1, pageSize: 3);
+        var (c, _) = BuildController();
+        var result = await c.GetAllSessions(page: 1, pageSize: 3);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
@@ -431,7 +438,8 @@ public class ChargingSessionsControllerTests : IDisposable
         );
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().GetAllSessions(year: 2026, month: 1);
+        var (c, _) = BuildController();
+        var result = await c.GetAllSessions(year: 2026, month: 1);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
@@ -443,7 +451,8 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetAllSessions_WithInvalidMonth_ReturnsBadRequest()
     {
-        var result = await BuildController().GetAllSessions(year: 2026, month: 13);
+        var (c, _) = BuildController();
+        var result = await c.GetAllSessions(year: 2026, month: 13);
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
@@ -452,7 +461,8 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task GetAvailableMonths_WithInvalidToken_ReturnsUnauthorized()
     {
-        var result = await BuildController(userId: null).GetAvailableMonths();
+        var (c, _) = BuildController(userId: null);
+        var result = await c.GetAvailableMonths();
         Assert.IsType<UnauthorizedResult>(result);
     }
 
@@ -469,7 +479,8 @@ public class ChargingSessionsControllerTests : IDisposable
         );
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().GetAvailableMonths();
+        var (c, _) = BuildController();
+        var result = await c.GetAvailableMonths();
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
@@ -482,7 +493,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task UpdateSession_WhenNotFound_ReturnsNotFound()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new UpdateSessionRequest
         {
             Start = DateTime.UtcNow.AddHours(-2),
@@ -505,7 +516,7 @@ public class ChargingSessionsControllerTests : IDisposable
         _db.ChargingSessions.Add(session);
         await _db.SaveChangesAsync();
 
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new UpdateSessionRequest
         {
             Start = ChargingSessionEnergy.StartUtc(session.FromTimestamp),
@@ -528,7 +539,7 @@ public class ChargingSessionsControllerTests : IDisposable
     public async Task UpdateSession_WhenEndBeforeStart_ReturnsBadRequest()
     {
         var cardId = await SeedChargeCardAsync();
-        var controller = BuildController();
+        var (controller, _) = BuildController();
         var request = new UpdateSessionRequest
         {
             Start = DateTime.UtcNow,
@@ -547,7 +558,8 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task DeleteSession_WhenNotFound_ReturnsNotFound()
     {
-        var result = await BuildController().DeleteSession(999);
+        var (c, _) = BuildController();
+        var result = await c.DeleteSession(999);
         Assert.IsType<NotFoundObjectResult>(result);
     }
 
@@ -559,7 +571,8 @@ public class ChargingSessionsControllerTests : IDisposable
         _db.ChargingSessions.Add(session);
         await _db.SaveChangesAsync();
 
-        var result = await BuildController().DeleteSession(session.Id);
+        var (c, _) = BuildController();
+        var result = await c.DeleteSession(session.Id);
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
