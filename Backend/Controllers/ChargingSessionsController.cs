@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Backend;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
@@ -129,6 +130,15 @@ public class ChargingSessionsController : ControllerBase
             var rangeStartMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(from);
             var rangeEndMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(to.AddDays(1));
 
+            _logger.LogInformation(
+                "Smappee sync calendar From={From} To={To} (request); API range query startMs={StartMs} ({StartDesc}) endMs={EndMs} ({EndDesc}) (end is exclusive: start of Brussels day after To)",
+                from,
+                to,
+                rangeStartMs,
+                BrusselsTime.DescribeUnixMilliseconds(rangeStartMs),
+                rangeEndMs,
+                BrusselsTime.DescribeUnixMilliseconds(rangeEndMs));
+
             var rfids = await _smappee.GetWhitelistedRfidsAsync(_smappeeOptions.ServiceLocationId, cancellationToken);
             var (cardsAdded, cardsUpdated) = await UpsertChargeCardsFromWhitelistAsync(rfids, cancellationToken);
 
@@ -137,6 +147,26 @@ public class ChargingSessionsController : ControllerBase
                 rangeStartMs,
                 rangeEndMs,
                 cancellationToken);
+
+            _logger.LogInformation("Smappee sync: received {Count} session DTOs in range", sessionsDto.Count);
+            if (sessionsDto.Count > 0)
+            {
+                var s0 = sessionsDto[0];
+                var s0FromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(s0.From);
+                var s0ToMs = SmappeeSessionTimestamps.ToStoredMilliseconds(s0.To);
+                _logger.LogInformation(
+                    "Smappee sync: first session id={Id} FromRaw={FromRaw} {FromStored} ToRaw={ToRaw} {ToStored} Duration={Duration}s Status={Status} " +
+                    "FromLooksLikeSecondsNotMs={FromSecHint} ToLooksLikeSecondsNotMs={ToSecHint}",
+                    s0.Id,
+                    s0.From,
+                    BrusselsTime.DescribeUnixMilliseconds(s0FromMs),
+                    s0.To,
+                    s0ToMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(s0ToMs.Value) : "null (ongoing)",
+                    s0.Duration,
+                    s0.Status,
+                    BrusselsTime.LooksLikeUnixSecondsInsteadOfMilliseconds(s0.From),
+                    s0.To.HasValue && BrusselsTime.LooksLikeUnixSecondsInsteadOfMilliseconds(s0.To.Value));
+            }
 
             var (sessAdded, sessUpdated, sessSkipped, sessErrors) =
                 await UpsertSessionsFromSmappeeAsync(sessionsDto, cancellationToken);
@@ -456,6 +486,19 @@ public class ChargingSessionsController : ControllerBase
             {
                 if (string.IsNullOrWhiteSpace(dto.Rfid))
                 {
+                    var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+                    var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
+                    _logger.LogWarning(
+                        "Smappee session id={SessionId}: error (missing RFID); FromRaw={FromRaw} {FromDesc} ToRaw={ToRaw} {ToDesc} " +
+                        "FromLooksLikeSecondsNotMs={FromSecHint} Serial={Serial} Status={Status}",
+                        dto.Id,
+                        dto.From,
+                        BrusselsTime.DescribeUnixMilliseconds(fromMs),
+                        dto.To,
+                        toMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(toMs.Value) : "null (ongoing)",
+                        BrusselsTime.LooksLikeUnixSecondsInsteadOfMilliseconds(dto.From),
+                        dto.SerialNumber,
+                        dto.Status);
                     errors++;
                     continue;
                 }
@@ -478,6 +521,19 @@ public class ChargingSessionsController : ControllerBase
                 var serial = dto.SerialNumberNormalized();
                 if (string.IsNullOrEmpty(serial))
                 {
+                    var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+                    var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
+                    _logger.LogWarning(
+                        "Smappee session id={SessionId}: error (missing serial); FromRaw={FromRaw} {FromDesc} ToRaw={ToRaw} {ToDesc} " +
+                        "Rfid={Rfid} RawSerial={RawSerial} FromLooksLikeSecondsNotMs={FromSecHint}",
+                        dto.Id,
+                        dto.From,
+                        BrusselsTime.DescribeUnixMilliseconds(fromMs),
+                        dto.To,
+                        toMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(toMs.Value) : "null (ongoing)",
+                        dto.Rfid,
+                        dto.SerialNumber,
+                        BrusselsTime.LooksLikeUnixSecondsInsteadOfMilliseconds(dto.From));
                     errors++;
                     continue;
                 }
@@ -485,8 +541,41 @@ public class ChargingSessionsController : ControllerBase
                 var stationId = ChargingPointIds.ChargingPointIdFromSerialAndConnector(serial, defaultConn);
                 var startRead = dto.StartReading;
                 var stopRead = dto.StopReading;
-                if (!startRead.HasValue || !stopRead.HasValue)
+                if (!startRead.HasValue)
                 {
+                    var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+                    var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
+                    _logger.LogWarning(
+                        "Smappee session id={SessionId}: error (missing start reading); FromRaw={FromRaw} {FromDesc} ToRaw={ToRaw} {ToDesc} " +
+                        "StopReading={StopReading} Rfid={Rfid} Serial={Serial}",
+                        dto.Id,
+                        dto.From,
+                        BrusselsTime.DescribeUnixMilliseconds(fromMs),
+                        dto.To,
+                        toMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(toMs.Value) : "null (ongoing)",
+                        stopRead,
+                        dto.Rfid,
+                        serial);
+                    errors++;
+                    continue;
+                }
+
+                // Ongoing session: no "to" → no stop meter reading yet
+                if (dto.To.HasValue && !stopRead.HasValue)
+                {
+                    var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+                    var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
+                    _logger.LogWarning(
+                        "Smappee session id={SessionId}: error (ended session missing stop reading); FromRaw={FromRaw} {FromDesc} ToRaw={ToRaw} {ToDesc} " +
+                        "StartReading={StartReading} Rfid={Rfid} Serial={Serial}",
+                        dto.Id,
+                        dto.From,
+                        BrusselsTime.DescribeUnixMilliseconds(fromMs),
+                        dto.To,
+                        toMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(toMs.Value) : "null",
+                        startRead,
+                        dto.Rfid,
+                        serial);
                     errors++;
                     continue;
                 }
@@ -510,7 +599,20 @@ public class ChargingSessionsController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Skipping Smappee session row");
+                var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+                var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
+                _logger.LogWarning(
+                    ex,
+                    "Smappee session id={SessionId}: exception while mapping; FromRaw={FromRaw} {FromDesc} ToRaw={ToRaw} {ToDesc} " +
+                    "Rfid={Rfid} Serial={Serial} FromLooksLikeSecondsNotMs={FromSecHint}",
+                    dto.Id,
+                    dto.From,
+                    BrusselsTime.DescribeUnixMilliseconds(fromMs),
+                    dto.To,
+                    toMs.HasValue ? BrusselsTime.DescribeUnixMilliseconds(toMs.Value) : "null (ongoing)",
+                    dto.Rfid,
+                    dto.SerialNumber,
+                    BrusselsTime.LooksLikeUnixSecondsInsteadOfMilliseconds(dto.From));
                 errors++;
             }
         }
@@ -532,8 +634,8 @@ public class ChargingSessionsController : ControllerBase
         session.AuthenticationType = dto.AuthenticationType;
         session.Rfid = ChargeCardImportIds.NormalizeTokenKey(dto.Rfid ?? "");
         session.CsmsTransactionId = string.IsNullOrWhiteSpace(dto.CsmsTransactionId) ? null : dto.CsmsTransactionId;
-        session.FromTimestamp = dto.From;
-        session.ToTimestamp = dto.To;
+        session.FromTimestamp = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
+        session.ToTimestamp = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
         session.Status = dto.Status;
         session.Range = dto.Range;
         session.Duration = dto.Duration;

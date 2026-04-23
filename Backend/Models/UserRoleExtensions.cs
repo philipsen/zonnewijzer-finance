@@ -11,4 +11,7 @@ public static class UserRoleExtensions
 
     /// <summary>GnuCash insert / customer / wipe and related UI — owner only.</summary>
     public static bool CanUseGnucash(this UserRole role) => role == UserRole.Owner;
+
+    /// <summary>Clear all charging sessions and charge cards (keep invoices) — owner only.</summary>
+    public static bool CanClearChargingData(this UserRole role) => role == UserRole.Owner;
 }

@@ -2,7 +2,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../components/Home.vue'
 import UsersList from '../components/UsersList.vue'
 import EditUser from '../components/EditUser.vue'
-import UploadChargingSessions from '../components/UploadChargingSessions.vue'
 import ChargingSessionsList from '../components/ChargingSessionsList.vue'
 import MyChargingSessions from '../components/MyChargingSessions.vue'
 import ChargingUsersList from '../components/ChargingUsersList.vue'
@@ -43,8 +42,7 @@ const routes = [
   },
   {
     path: '/upload-sessions',
-    name: 'UploadChargingSessions',
-    component: UploadChargingSessions
+    redirect: '/'
   },
   {
     path: '/charging-sessions',

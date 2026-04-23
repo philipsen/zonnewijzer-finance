@@ -732,7 +732,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task ClearChargingData_WrongPhrase_ReturnsBadRequest()
     {
-        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(1, "Owner", UserRole.Owner);
         var result = await BuildController().ClearChargingData(new WipeDatabaseRequest { Confirmation = "wrong" });
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -747,9 +747,18 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ClearChargingData_Admin_ClearsSessionsProfilesUnlinksAndKeepsInvoices()
+    public async Task ClearChargingData_Admin_ReturnsForbid()
     {
         await AddUser(1, "Admin", UserRole.Admin);
+        var result = await BuildController().ClearChargingData(
+            new WipeDatabaseRequest { Confirmation = AuthController.ClearChargingDataConfirmationPhrase });
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task ClearChargingData_Owner_ClearsSessionsProfilesUnlinksAndKeepsInvoices()
+    {
+        await AddUser(1, "Owner", UserRole.Owner);
         var cardId = await AddChargeCardAsync("auth-clear-cc", comment: "Profile");
         await AddUser(2, "Bob", UserRole.Base, chargeCardId: cardId);
         var t = DateTime.UtcNow;

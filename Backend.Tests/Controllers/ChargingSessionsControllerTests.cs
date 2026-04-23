@@ -309,6 +309,52 @@ public class ChargingSessionsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task SyncSmappee_OngoingSession_SecondsTimestamp_NoStopReading()
+    {
+        var day = new DateOnly(2026, 4, 22);
+        var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
+        const long fromUnixSeconds = 1_776_936_253L;
+
+        var controller = BuildController(configureSmappee: m =>
+        {
+            m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<SmappeeRfidDto>
+                {
+                    new() { Id = 1, Value = "047D9322B62290", Comment = "Card" }
+                });
+            m.Setup(s => s.GetChargingSessionsAsync(
+                    1,
+                    rangeStart,
+                    BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<SmappeeSessionDto>
+                {
+                    new()
+                    {
+                        Id = 28_480_919,
+                        SerialNumber = "6531001272",
+                        Rfid = "047D9322B62290",
+                        From = fromUnixSeconds,
+                        To = null,
+                        Status = "CHARGING",
+                        StartReading = 178.972m,
+                        StopReading = null
+                    }
+                });
+        });
+
+        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(result);
+
+        var sess = await _db.ChargingSessions.SingleAsync(s => s.SmappeeSessionId == 28_480_919);
+        Assert.Equal(fromUnixSeconds * 1000L, sess.FromTimestamp);
+        Assert.Null(sess.ToTimestamp);
+        Assert.Equal(178.972m, sess.StartReading);
+        Assert.Null(sess.StopReading);
+        Assert.Equal(0m, ChargingSessionEnergy.ChargedKwh(sess));
+    }
+
+    [Fact]
     public async Task SyncSmappee_IdempotentBySmappeeSessionId()
     {
         var day = new DateOnly(2026, 6, 1);

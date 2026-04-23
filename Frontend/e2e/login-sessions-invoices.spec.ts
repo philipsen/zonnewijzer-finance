@@ -145,7 +145,6 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
       'Charge cards',
       'Sessions',
       'Stations',
-      'Charging data',
       'Invoices',
       'Payments',
       'Prices',
@@ -179,7 +178,7 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/')
 
       await page.goto('/upload-sessions')
-      await expect(page.locator('.upload-page .access-denied')).toBeVisible()
+      await expect(page).toHaveURL((url) => new URL(url).pathname === '/')
 
       await page.goto('/event-log')
       await expect(page.locator('.event-log-page .access-denied')).toBeVisible()

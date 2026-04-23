@@ -14,7 +14,7 @@ function isLocalBaseUrl(url: string): boolean {
 
 test.use({ viewport: { width: 1920, height: 1080 } })
 
-test.describe('Admin charging data page (E2E_ADMIN_EMAIL)', () => {
+test.describe('Admin charging sessions / legacy upload URL (E2E_ADMIN_EMAIL)', () => {
   test.beforeEach(async ({ page }) => {
     const email = (process.env.E2E_ADMIN_EMAIL ?? '').trim()
     const password = (
@@ -66,10 +66,13 @@ test.describe('Admin charging data page (E2E_ADMIN_EMAIL)', () => {
     )
   })
 
-  test('charging data page documents Smappee sync and has no CSV upload', async ({ page }) => {
+  test('sessions page has Smappee sync and no CSV upload; legacy /upload-sessions redirects home', async ({ page }) => {
+    await page.goto('/charging-sessions')
+    await expect(page.getByRole('heading', { name: 'Charging Sessions' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /Sync from Smappee/i })).toBeVisible()
+    await expect(page.locator('.sessions-page input[type="file"]')).toHaveCount(0)
+
     await page.goto('/upload-sessions')
-    await expect(page.getByRole('heading', { name: 'Charging data' })).toBeVisible()
-    await expect(page.getByText(/Smappee Cloud/i)).toBeVisible()
-    await expect(page.locator('.upload-page input[type="file"]')).toHaveCount(0)
+    await expect(page).toHaveURL((url) => new URL(url).pathname === '/')
   })
 })

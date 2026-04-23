@@ -125,6 +125,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { formatLocalYmdHm } from '../utils/formatLocalDateTime'
 
 export default {
   name: 'MyChargingSessionsList',
@@ -230,16 +231,7 @@ export default {
       }
     }
 
-    const formatDateTime = (dateString) => {
-      if (dateString == null || dateString === '') return ''
-      return new Date(dateString).toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    }
+    const formatDateTime = (dateString) => formatLocalYmdHm(dateString)
 
     const formatDuration = (minutes) => {
       if (minutes == null) return ''

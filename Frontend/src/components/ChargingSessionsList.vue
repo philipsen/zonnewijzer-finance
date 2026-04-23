@@ -12,9 +12,6 @@
         <button v-if="isAdmin" type="button" class="btn btn-primary" @click="openSyncModal">
           Sync from Smappee
         </button>
-        <router-link to="/upload-sessions" class="btn btn-secondary">
-          Charging data
-        </router-link>
       </div>
     </div>
 
@@ -135,7 +132,7 @@
       <div v-if="sessions.length === 0" class="no-sessions">
         <h3>No charging sessions found</h3>
         <p v-if="selectedMonth">No sessions found for {{ getFilterLabel() }}.</p>
-        <p v-else>Use <strong>Sync from Smappee</strong> (admins) to import sessions, or open <router-link to="/upload-sessions">Charging data</router-link> for a full clear.</p>
+        <p v-else>Use <strong>Sync from Smappee</strong> (admins) to import sessions. The app owner can clear all sessions and charge cards from the <router-link to="/">home</router-link> page.</p>
         <button v-if="isAdmin" type="button" class="btn btn-primary" @click="openSyncModal">
           Sync from Smappee
         </button>
@@ -303,6 +300,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { isAppAdmin, roleFromToken } from '../utils/roles'
+import { formatLocalYmdHm } from '../utils/formatLocalDateTime'
 
 const toIsoDateLocal = (d) => {
   const y = d.getFullYear()
@@ -672,16 +670,7 @@ export default {
       }
     }
 
-    const formatDateTime = (dateString) => {
-      if (dateString == null || dateString === '') return ''
-      return new Date(dateString).toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    }
+    const formatDateTime = (dateString) => formatLocalYmdHm(dateString)
 
     const formatDuration = (minutes) => {
       if (minutes == null) return ''
