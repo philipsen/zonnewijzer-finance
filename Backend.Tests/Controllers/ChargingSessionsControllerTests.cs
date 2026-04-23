@@ -68,6 +68,7 @@ public class ChargingSessionsControllerTests : IDisposable
         var controller = new ChargingSessionsController(
             _db,
             _jwtMock.Object,
+            sync,
             NullLogger<ChargingSessionsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
@@ -239,10 +240,9 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_WhenServiceLocationNotConfigured_ReturnsBadRequest()
     {
-        var (controller, sync) = BuildController(smappeeOptions: new SmappeeOptions { ServiceLocationId = 0 });
+        var (controller, _) = BuildController(smappeeOptions: new SmappeeOptions { ServiceLocationId = 0 });
         var result = await controller.SyncSmappee(
             new SyncSmappeeRequest { From = new DateOnly(2026, 1, 1), To = new DateOnly(2026, 1, 2) },
-            sync,
             CancellationToken.None);
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -250,10 +250,9 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_WhenToBeforeFrom_ReturnsBadRequest()
     {
-        var (controller, sync) = BuildController();
+        var (controller, _) = BuildController();
         var result = await controller.SyncSmappee(
             new SyncSmappeeRequest { From = new DateOnly(2026, 2, 5), To = new DateOnly(2026, 2, 4) },
-            sync,
             CancellationToken.None);
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -266,7 +265,7 @@ public class ChargingSessionsControllerTests : IDisposable
         var fromMs = rangeStart + 3_600_000;
         var toMs = rangeStart + 7_200_000;
 
-        var (controller, sync) = BuildController(configureSmappee: m =>
+        var (controller, _) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeRfidDto>
@@ -299,7 +298,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     }
                 });
         });
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None);
+        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(ok.Value);
@@ -320,7 +319,7 @@ public class ChargingSessionsControllerTests : IDisposable
         var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
         const long fromUnixSeconds = 1_776_936_253L;
 
-        var (controller, sync) = BuildController(configureSmappee: m =>
+        var (controller, _) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeRfidDto>
@@ -348,7 +347,7 @@ public class ChargingSessionsControllerTests : IDisposable
                 });
         });
 
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None);
+        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
         Assert.IsType<OkObjectResult>(result);
 
         var sess = await _db.ChargingSessions.SingleAsync(s => s.SmappeeSessionId == 28_480_919);
@@ -376,7 +375,7 @@ public class ChargingSessionsControllerTests : IDisposable
             StopReading = 1.5m
         };
 
-        var (controller, sync) = BuildController(configureSmappee: m =>
+        var (controller, _) = BuildController(configureSmappee: m =>
         {
             m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<SmappeeRfidDto>());
@@ -388,12 +387,12 @@ public class ChargingSessionsControllerTests : IDisposable
                 .Returns(() => Task.FromResult<IReadOnlyList<SmappeeSessionDto>>(new List<SmappeeSessionDto> { dto }));
         });
 
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         Assert.Equal(1.5m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
 
         dto.StopReading = 9m;
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, sync, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
         Assert.Equal(1, await _db.ChargingSessions.CountAsync());
         Assert.Equal(9m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
     }

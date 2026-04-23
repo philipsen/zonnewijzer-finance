@@ -243,10 +243,14 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
                     continue;
                 }
 
-                var stationId = ChargingPointIds.ChargingPointIdFromSerialAndConnector(serial, defaultConn);
+                var connectorForPoint = dto.Connector is >= 0
+                    ? dto.Connector.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : defaultConn;
+                var stationId = ChargingPointIds.ChargingPointIdFromSerialAndConnector(serial, connectorForPoint);
                 var startRead = dto.StartReading;
                 var stopRead = dto.StopReading;
-                if (!startRead.HasValue)
+                var hasEnergy = dto.Energy is > 0m;
+                if (!startRead.HasValue && !hasEnergy)
                 {
                     var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
                     var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
@@ -265,7 +269,7 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
                     continue;
                 }
 
-                if (dto.To.HasValue && !stopRead.HasValue)
+                if (dto.To.HasValue && !stopRead.HasValue && !hasEnergy)
                 {
                     var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.From);
                     var toMs = SmappeeSessionTimestamps.ToStoredMilliseconds(dto.To);
@@ -344,8 +348,7 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         session.Range = dto.Range;
         session.Duration = dto.Duration;
         session.Priority = dto.Priority;
-        session.StartReading = dto.StartReading;
-        session.StopReading = dto.StopReading;
+        ChargingSessionEnergy.SetReadingsFromSmappeeDto(session, dto.StartReading, dto.StopReading, dto.Energy);
         session.ChargeCardId = chargeCardId;
         session.StationId = stationId;
     }
