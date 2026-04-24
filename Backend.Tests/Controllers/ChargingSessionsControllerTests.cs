@@ -50,6 +50,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     It.IsAny<int>(),
                     It.IsAny<long>(),
                     It.IsAny<long?>(),
+                    It.IsAny<bool?>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<SmappeeSessionDto>());
         }
@@ -293,6 +294,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     1,
                     rangeStart,
                     BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
+                    It.IsAny<bool?>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeSessionDto>
                 {
@@ -342,6 +344,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     1,
                     rangeStart,
                     BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
+                    It.IsAny<bool?>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<SmappeeSessionDto>
                 {
@@ -395,6 +398,7 @@ public class ChargingSessionsControllerTests : IDisposable
                     1,
                     rangeStart,
                     BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
+                    It.IsAny<bool?>(),
                     It.IsAny<CancellationToken>()))
                 .Returns(() => Task.FromResult<IReadOnlyList<SmappeeSessionDto>>(new List<SmappeeSessionDto> { dto }));
         });

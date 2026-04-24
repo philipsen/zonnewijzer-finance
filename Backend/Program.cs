@@ -48,6 +48,7 @@ try
     });
 
     // Add services to the container.
+    builder.Services.AddMemoryCache();
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
 // Temporarily commented out due to .NET 10 compatibility issue
@@ -133,7 +134,8 @@ builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =
 });
 builder.Services.Configure<SmappeeBackgroundSyncOptions>(
     builder.Configuration.GetSection(SmappeeBackgroundSyncOptions.SectionName));
-builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
+    builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
+    builder.Services.AddScoped<ISmappeeChargingLiveService, SmappeeChargingLiveService>();
 builder.Services.AddHostedService<SmappeeHourlySyncBackgroundService>();
 
 builder.Services.AddScoped<IJwtService, JwtService>();

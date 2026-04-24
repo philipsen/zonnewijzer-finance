@@ -32,4 +32,13 @@ public class SmappeeOptions
     public int ServiceLocationId { get; set; }
     /// <summary>Connector index when Smappee session payload has no connector (serial + this → StationId).</summary>
     public string DefaultConnector { get; set; } = "1";
+
+    /// <summary>Optional friendly names for the live charging view, keyed by charger serial (Smappee / export).</summary>
+    public Dictionary<string, string>? StationDisplayNamesBySerial { get; set; }
+
+    /// <summary>
+    /// Optional list of every charger serial at the park. Used so units that never had a session (not in DB / API window) still show as Available.
+    /// Names still come from <see cref="StationDisplayNamesBySerial"/> when present.
+    /// </summary>
+    public List<string>? ExpectedChargerSerials { get; set; }
 }

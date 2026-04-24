@@ -7,8 +7,11 @@ using Backend.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
+using Backend.Services.Smappee;
 
 namespace Backend.Tests.Controllers;
 
@@ -31,7 +34,18 @@ public class ChargingStationsControllerTests : IDisposable
     private ChargingStationsController BuildController(string? userId = "1")
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(userId);
-        var controller = new ChargingStationsController(_db, _jwtMock.Object, NullLogger<ChargingStationsController>.Instance);
+        var smappeeLive = new Mock<ISmappeeChargingLiveService>(MockBehavior.Loose);
+        var smappeeCloud = new Mock<ISmappeeCloudClient>(MockBehavior.Loose);
+        var memoryCache = new MemoryCache(new MemoryCacheOptions());
+        var smappeeOpt = Microsoft.Extensions.Options.Options.Create(new SmappeeOptions { ServiceLocationId = 0 });
+        var controller = new ChargingStationsController(
+            _db,
+            _jwtMock.Object,
+            smappeeLive.Object,
+            smappeeCloud.Object,
+            memoryCache,
+            smappeeOpt,
+            NullLogger<ChargingStationsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer t";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
@@ -113,5 +127,64 @@ public class ChargingStationsControllerTests : IDisposable
         var first = doc.RootElement.GetProperty("stations").EnumerateArray().First();
         Assert.True(first.GetProperty("isLegacy").GetBoolean());
         Assert.Equal(99, first.GetProperty("stationId").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_FiltersTypeAndCapsAtFive()
+    {
+        var now = DateTime.UtcNow;
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson =
+                """[{"id":1,"name":"Paal A","type":"Charging station","sourceType":"CT"},{"id":2,"name":"PV","type":"Solar","sourceType":"x"}]"""
+        });
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 2,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":3,"name":"Paal B","type":"Charging station","sourceType":"CT"}]"""
+        });
+        await _db.SaveChangesAsync();
+
+        var c = BuildController();
+        var result = await c.GetSmappeeChargingStationDisplayNames(default);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(2, squares.GetArrayLength());
+        Assert.Equal("Paal A", squares[0].GetProperty("name").GetString());
+        Assert.Equal("Paal B", squares[1].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_OrdersByNameCaseInsensitive()
+    {
+        var now = DateTime.UtcNow;
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 2,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":1,"name":"zebra","type":"Charging station","sourceType":"CT"}]"""
+        });
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":2,"name":"Alpha","type":"Charging station","sourceType":"CT"}]"""
+        });
+        await _db.SaveChangesAsync();
+
+        var c = BuildController();
+        var result = await c.GetSmappeeChargingStationDisplayNames(default);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(2, squares.GetArrayLength());
+        Assert.Equal("Alpha", squares[0].GetProperty("name").GetString());
+        Assert.Equal("zebra", squares[1].GetProperty("name").GetString());
     }
 }
