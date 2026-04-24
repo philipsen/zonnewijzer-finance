@@ -89,7 +89,19 @@
           Clear charging sessions &amp; charge cards…
         </button>
       </div>
-      <p>Dashboard content will go here.</p>
+      <section
+        v-if="chargingStationNames.length"
+        class="charging-station-squares"
+        aria-label="Charging stations"
+      >
+        <div
+          v-for="(name, idx) in chargingStationNames"
+          :key="`${idx}-${name}`"
+          class="charging-station-square"
+        >
+          {{ name }}
+        </div>
+      </section>
       <div class="features">
         <div class="feature-card">
           <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
@@ -275,6 +287,28 @@ export default {
     const clearChargingLoading = ref(false)
     const clearChargingError = ref('')
     const clearChargingConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
+
+    const chargingStationNames = ref([])
+
+    const loadChargingStationDisplayNames = async () => {
+      if (!isAuthenticated.value || needsAccess.value) {
+        chargingStationNames.value = []
+        return
+      }
+      const token = localStorage.getItem('token')
+      if (!token) {
+        chargingStationNames.value = []
+        return
+      }
+      try {
+        const { data } = await axios.get('/api/chargingstations/smappee-charging-station-display-names', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        chargingStationNames.value = Array.isArray(data.names) ? data.names : []
+      } catch {
+        chargingStationNames.value = []
+      }
+    }
 
     const openClearChargingModal = () => {
       clearChargingError.value = ''
@@ -538,6 +572,14 @@ export default {
       { flush: 'post', immediate: true }
     )
 
+    watch(
+      () => [isAuthenticated.value, needsAccess.value, appUser.value?.chargeCardId, appUser.value?.role],
+      () => {
+        loadChargingStationDisplayNames()
+      },
+      { immediate: true }
+    )
+
     return {
       isAuthenticated,
       needsAccess,
@@ -577,7 +619,8 @@ export default {
       closeClearChargingModal,
       executeClearCharging,
       submitEmailAuth,
-      submitForgotPassword
+      submitForgotPassword,
+      chargingStationNames
     }
   }
 }
@@ -770,6 +813,33 @@ export default {
 .pending-access p {
   margin: 0.4rem 0;
   color: #5d4037;
+}
+
+.charging-station-squares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0.25rem;
+}
+
+.charging-station-square {
+  width: 6.5rem;
+  height: 6.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #343a40;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  word-break: break-word;
+  hyphens: auto;
 }
 
 .features {

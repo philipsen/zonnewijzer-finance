@@ -1,9 +1,16 @@
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using Backend;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Backend.Services.Smappee;
 
 namespace Backend.Controllers;
 
@@ -11,18 +18,111 @@ namespace Backend.Controllers;
 [Route("api/[controller]")]
 public class ChargingStationsController : ControllerBase
 {
+    private static readonly TimeSpan SmappeeServiceLocationsCooldown = TimeSpan.FromMinutes(2);
+
+    private static readonly JsonSerializerOptions SmappeeAppliancesJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
+    private readonly ISmappeeChargingLiveService _smappeeLive;
+    private readonly ISmappeeCloudClient _smappeeCloud;
+    private readonly IMemoryCache _memoryCache;
+    private readonly SmappeeOptions _smappeeOptions;
     private readonly ILogger<ChargingStationsController> _logger;
 
     public ChargingStationsController(
         ApplicationDbContext context,
         IJwtService jwtService,
+        ISmappeeChargingLiveService smappeeLive,
+        ISmappeeCloudClient smappeeCloud,
+        IMemoryCache memoryCache,
+        IOptions<SmappeeOptions> smappeeOptions,
         ILogger<ChargingStationsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
+        _smappeeLive = smappeeLive;
+        _smappeeCloud = smappeeCloud;
+        _memoryCache = memoryCache;
+        _smappeeOptions = smappeeOptions.Value;
         _logger = logger;
+    }
+
+    [Authorize(Roles = "Base,Admin,Owner")]
+    [HttpGet("smappee-live")]
+    public async Task<IActionResult> GetSmappeeLive(CancellationToken cancellationToken = default)
+    {
+        if (_smappeeOptions.ServiceLocationId <= 0 || !_smappeeOptions.HasAllCredentials)
+        {
+            return StatusCode(503, new { error = "Live charging data is not configured." });
+        }
+
+        try
+        {
+            return Ok(await _smappeeLive.GetLiveAsync(cancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Smappee live snapshot failed");
+            return StatusCode(502, new { error = "Could not load live data from the charging system." });
+        }
+    }
+
+    /// <summary>Up to five appliance <c>name</c> values from stored Smappee <c>…/info</c> where <c>type</c> is charging station.</summary>
+    [Authorize(Roles = "Base,Admin,Owner")]
+    [HttpGet("smappee-charging-station-display-names")]
+    public async Task<IActionResult> GetSmappeeChargingStationDisplayNames(CancellationToken cancellationToken = default)
+    {
+        const string chargingStationType = "charging station";
+        var jsonRows = await _context.SmappeeServiceLocations.AsNoTracking()
+            .Where(s => s.AppliancesJson != null && s.AppliancesJson != "")
+            .OrderBy(s => s.ServiceLocationId)
+            .Select(s => s.AppliancesJson!)
+            .ToListAsync(cancellationToken);
+
+        var names = new List<string>();
+        foreach (var json in jsonRows)
+        {
+            List<SmappeeServiceLocationApplianceDto>? appliances;
+            try
+            {
+                appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceDto>>(json, SmappeeAppliancesJson);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (appliances == null)
+                continue;
+
+            foreach (var a in appliances)
+            {
+                if (string.IsNullOrWhiteSpace(a.Type) ||
+                    !string.Equals(a.Type.Trim(), chargingStationType, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var name = SmappeeApplianceDisplayName.NormalizeName(a.Name);
+                if (name == null)
+                    continue;
+                names.Add(name);
+            }
+        }
+
+        var ordered = names
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
+
+        return Ok(new { names = ordered });
     }
 
     [HttpGet]
@@ -103,6 +203,263 @@ public class ChargingStationsController : ControllerBase
         {
             _logger.LogError(ex, "Error listing charging stations");
             return BadRequest($"Failed to list charging stations: {ex.Message}");
+        }
+    }
+
+    /// <summary>Stored Smappee service locations (devices + last <c>…/info</c> snapshot). No Smappee call.</summary>
+    [HttpGet("smappee-servicelocations")]
+    public async Task<IActionResult> GetSmappeeServiceLocations(CancellationToken cancellationToken = default)
+    {
+        var (auth, _) = await RequireAdminForSmappeeServiceLocationsAsync(cancellationToken);
+        if (auth != null)
+            return auth;
+
+        try
+        {
+            var (serviceLocations, fetchedAt) = await LoadSmappeeServiceLocationsFromDbAsync(cancellationToken);
+            return Ok(new
+            {
+                appName = (string?)null,
+                serviceLocations,
+                fetchedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading stored Smappee service locations");
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>Pull from Smappee (<c>servicelocation</c> + <c>…/info</c>), replace DB snapshot. Rate-limited per admin user.</summary>
+    [HttpPost("smappee-servicelocations/refresh")]
+    public async Task<IActionResult> PostSmappeeServiceLocationsRefresh(CancellationToken cancellationToken = default)
+    {
+        var (auth, currentUserId) = await RequireAdminForSmappeeServiceLocationsAsync(cancellationToken);
+        if (auth != null)
+            return auth;
+
+        try
+        {
+            if (!_smappeeOptions.HasAllCredentials)
+                return StatusCode(503, new { error = "Smappee API credentials are not configured." });
+
+            var rateKey = $"smappee-servicelocations:{currentUserId!.Value}";
+            if (_memoryCache.TryGetValue(rateKey, out _))
+            {
+                return StatusCode(429, new
+                {
+                    error = "Smappee service locations can only be refreshed once every 2 minutes."
+                });
+            }
+
+            var (appName, rows) = await _smappeeCloud.GetServiceLocationsListAsync(cancellationToken);
+            var serviceLocations = rows
+                .Select(r => new SmappeeServiceLocationListItemResponse
+                {
+                    ServiceLocationId = r.ServiceLocationId,
+                    Name = string.IsNullOrWhiteSpace(r.Name) ? null : r.Name.Trim(),
+                    ServiceLocationUuid = string.IsNullOrWhiteSpace(r.ServiceLocationUuid) ? null : r.ServiceLocationUuid.Trim(),
+                    DeviceSerialNumber = string.IsNullOrWhiteSpace(r.DeviceSerialNumber) ? null : r.DeviceSerialNumber.Trim()
+                })
+                .ToList();
+
+            await PersistSmappeeServiceLocationsAsync(serviceLocations, cancellationToken);
+
+            _memoryCache.Set(
+                rateKey,
+                1,
+                new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = SmappeeServiceLocationsCooldown });
+
+            _logger.LogInformation(
+                "Admin {UserId} refreshed {Count} Smappee service location row(s) from cloud",
+                currentUserId!.Value,
+                serviceLocations.Count);
+
+            return Ok(new
+            {
+                appName = string.IsNullOrWhiteSpace(appName) ? null : appName.Trim(),
+                serviceLocations,
+                fetchedAt = DateTimeOffset.UtcNow
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "Smappee servicelocation refresh failed");
+            return StatusCode(502, new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error refreshing Smappee service locations");
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    private async Task<(IActionResult? Error, int? UserId)> RequireAdminForSmappeeServiceLocationsAsync(
+        CancellationToken cancellationToken)
+    {
+        var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+        var userIdString = _jwtService.ValidateToken(token);
+
+        if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+        {
+            _logger.LogWarning("Unauthorized attempt to access Smappee service locations");
+            return (Unauthorized(), null);
+        }
+
+        var requestingUser = await _context.Users.FindAsync(new object[] { currentUserId }, cancellationToken);
+        if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+            return (Forbid(), null);
+
+        return (null, currentUserId);
+    }
+
+    private async Task<(List<SmappeeServiceLocationListItemResponse> Items, DateTimeOffset? FetchedAt)> LoadSmappeeServiceLocationsFromDbAsync(
+        CancellationToken cancellationToken)
+    {
+        var devices = await _context.SmappeeServiceLocationDevices.AsNoTracking()
+            .OrderBy(d => d.ServiceLocationId)
+            .ThenBy(d => d.DeviceSerialNumber)
+            .ToListAsync(cancellationToken);
+
+        if (devices.Count == 0)
+            return (new List<SmappeeServiceLocationListItemResponse>(), null);
+
+        var locIds = devices.Select(d => d.ServiceLocationId).Distinct().ToList();
+        var locs = await _context.SmappeeServiceLocations.AsNoTracking()
+            .Where(s => locIds.Contains(s.ServiceLocationId))
+            .ToDictionaryAsync(s => s.ServiceLocationId, cancellationToken);
+
+        var items = new List<SmappeeServiceLocationListItemResponse>(devices.Count);
+        foreach (var d in devices)
+        {
+            var item = new SmappeeServiceLocationListItemResponse
+            {
+                ServiceLocationId = d.ServiceLocationId,
+                Name = d.Name,
+                ServiceLocationUuid = d.ServiceLocationUuid,
+                DeviceSerialNumber = string.IsNullOrWhiteSpace(d.DeviceSerialNumber) ? null : d.DeviceSerialNumber
+            };
+            if (locs.TryGetValue(d.ServiceLocationId, out var loc))
+                EnrichListItemFromStoredLocation(item, loc);
+            items.Add(item);
+        }
+
+        var tDev = devices.Max(x => x.UpdatedAtUtc);
+        DateTime? tLoc = null;
+        if (locs.Count > 0)
+            tLoc = locs.Values.Max(l => l.UpdatedAtUtc);
+        var latest = tLoc.HasValue && tLoc.Value > tDev ? tLoc.Value : tDev;
+        var fetchedAt = new DateTimeOffset(DateTime.SpecifyKind(latest, DateTimeKind.Utc));
+
+        return (items, fetchedAt);
+    }
+
+    private void EnrichListItemFromStoredLocation(SmappeeServiceLocationListItemResponse item, SmappeeServiceLocation loc)
+    {
+        item.Longitude = loc.Longitude;
+        item.Latitude = loc.Latitude;
+        item.ElectricityCost = loc.ElectricityCost;
+        item.ElectricityCurrency = loc.ElectricityCurrency;
+        item.Timezone = loc.Timezone;
+        if (string.IsNullOrEmpty(loc.AppliancesJson))
+            return;
+        try
+        {
+            item.Appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceItemResponse>>(
+                loc.AppliancesJson,
+                SmappeeAppliancesJson);
+            if (item.Appliances != null)
+            {
+                foreach (var a in item.Appliances)
+                    a.Name = SmappeeApplianceDisplayName.NormalizeName(a.Name);
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Stored appliances JSON invalid for service location {Id}", item.ServiceLocationId);
+        }
+    }
+
+    private async Task PersistSmappeeServiceLocationsAsync(
+        List<SmappeeServiceLocationListItemResponse> serviceLocations,
+        CancellationToken cancellationToken)
+    {
+        var idSet = serviceLocations.Select(s => s.ServiceLocationId).Distinct().ToHashSet();
+        var now = DateTime.UtcNow;
+
+        var orphanLocs = await _context.SmappeeServiceLocations
+            .Where(s => !idSet.Contains(s.ServiceLocationId))
+            .ToListAsync(cancellationToken);
+        _context.SmappeeServiceLocations.RemoveRange(orphanLocs);
+
+        var oldDevices = await _context.SmappeeServiceLocationDevices
+            .Where(d => idSet.Contains(d.ServiceLocationId))
+            .ToListAsync(cancellationToken);
+        _context.SmappeeServiceLocationDevices.RemoveRange(oldDevices);
+
+        foreach (var row in serviceLocations)
+        {
+            _context.SmappeeServiceLocationDevices.Add(new SmappeeServiceLocationDevice
+            {
+                ServiceLocationId = row.ServiceLocationId,
+                DeviceSerialNumber = string.IsNullOrWhiteSpace(row.DeviceSerialNumber) ? "" : row.DeviceSerialNumber.Trim(),
+                Name = row.Name,
+                ServiceLocationUuid = row.ServiceLocationUuid,
+                UpdatedAtUtc = now
+            });
+        }
+
+        var accessToken = await _smappeeCloud.GetAccessTokenAsync(cancellationToken);
+        var parkById = new Dictionary<int, SmappeeServiceLocation>();
+        foreach (var slId in idSet.OrderBy(x => x))
+        {
+            SmappeeServiceLocationInfoDto? info = null;
+            try
+            {
+                info = await _smappeeCloud.GetServiceLocationInfoAsync(accessToken, slId, cancellationToken);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or TaskCanceledException)
+            {
+                _logger.LogWarning(ex, "Smappee servicelocation info failed for {ServiceLocationId}", slId);
+            }
+
+            var loc = await _context.SmappeeServiceLocations.FindAsync(new object[] { slId }, cancellationToken);
+            if (loc == null)
+            {
+                loc = new SmappeeServiceLocation { ServiceLocationId = slId };
+                _context.SmappeeServiceLocations.Add(loc);
+            }
+
+            if (info != null)
+            {
+                loc.Longitude = info.Lon;
+                loc.Latitude = info.Lat;
+                loc.ElectricityCost = (decimal)info.ElectricityCost;
+                loc.ElectricityCurrency = string.IsNullOrWhiteSpace(info.ElectricityCurrency)
+                    ? null
+                    : info.ElectricityCurrency.Trim();
+                loc.Timezone = string.IsNullOrWhiteSpace(info.Timezone) ? null : info.Timezone.Trim();
+                loc.AppliancesJson = info.Appliances is { Count: > 0 }
+                    ? JsonSerializer.Serialize(info.Appliances, SmappeeAppliancesJson)
+                    : null;
+                loc.InfoFetchedAtUtc = now;
+            }
+
+            loc.UpdatedAtUtc = now;
+            parkById[slId] = loc;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        foreach (var item in serviceLocations)
+        {
+            if (parkById.TryGetValue(item.ServiceLocationId, out var loc))
+                EnrichListItemFromStoredLocation(item, loc);
         }
     }
 }

@@ -312,6 +312,76 @@ namespace Backend.Migrations
                     b.ToTable("PasswordResetTokens");
                 });
 
+            modelBuilder.Entity("Backend.Models.SmappeeServiceLocation", b =>
+                {
+                    b.Property<string>("AppliancesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("ElectricityCost")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ElectricityCurrency")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("InfoFetchedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("ServiceLocationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Timezone")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ServiceLocationId");
+
+                    b.ToTable("SmappeeServiceLocations");
+                });
+
+            modelBuilder.Entity("Backend.Models.SmappeeServiceLocationDevice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DeviceSerialNumber")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ServiceLocationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ServiceLocationUuid")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceLocationId", "DeviceSerialNumber")
+                        .IsUnique();
+
+                    b.ToTable("SmappeeServiceLocationDevices");
+                });
+
             modelBuilder.Entity("Backend.Models.User", b =>
                 {
                     b.Property<int>("Id")
