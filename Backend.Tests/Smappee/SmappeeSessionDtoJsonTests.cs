@@ -125,4 +125,76 @@ public class SmappeeSessionDtoJsonTests
             dto.Connector!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal(expected, fromDto);
     }
+
+    [Fact]
+    public void ServiceLocationsList_Deserializes_MultipleRowsSamePark()
+    {
+        const string json =
+            """
+            {
+              "appName": "t",
+              "serviceLocations": [
+                { "name": "EV Dual", "serviceLocationId": 42, "deviceSerialNumber": "5822000001" },
+                { "name": "EV Dual", "serviceLocationId": 42, "deviceSerialNumber": "5822000002" },
+                { "name": "Other", "serviceLocationId": 1, "deviceSerialNumber": "5010000022" }
+              ]
+            }
+            """;
+        var root = JsonSerializer.Deserialize<SmappeeServiceLocationsListResponse>(json, JsonOptions);
+        Assert.NotNull(root?.ServiceLocations);
+        var chargers = SmappeeServiceLocationChargerSerials.SelectForChargingPark(root!.ServiceLocations!, 42);
+        Assert.Equal(2, chargers.Count);
+        Assert.Contains("5822000001", chargers);
+        Assert.Contains("5822000002", chargers);
+    }
+
+    [Fact]
+    public void ServiceLocationsList_IncludesNameAndAppName()
+    {
+        const string json =
+            """
+            {
+              "appName": "MyApp",
+              "serviceLocations": [
+                { "name": "Home", "serviceLocationId": 1, "deviceSerialNumber": "5010000022" }
+              ]
+            }
+            """;
+        var root = JsonSerializer.Deserialize<SmappeeServiceLocationsListResponse>(json, JsonOptions);
+        Assert.Equal("MyApp", root?.AppName);
+        Assert.NotNull(root?.ServiceLocations);
+        Assert.Equal("Home", root.ServiceLocations![0].Name);
+        Assert.Equal(1, root.ServiceLocations[0].ServiceLocationId);
+    }
+
+    [Fact]
+    public void ServiceLocationInfo_Deserializes_AppliancesAndGeo()
+    {
+        const string json =
+            """
+            {
+              "lon": 4.326991396720978,
+              "lat": 52.01402246211571,
+              "electricityCost": 0.0,
+              "electricityCurrency": "EUR",
+              "timezone": "Europe/Amsterdam",
+              "appliances": [
+                {
+                  "id": 1,
+                  "name": "Paal 2 - 1",
+                  "type": "Charging station",
+                  "sourceType": "CT"
+                }
+              ]
+            }
+            """;
+        var dto = JsonSerializer.Deserialize<SmappeeServiceLocationInfoDto>(json, JsonOptions);
+        Assert.NotNull(dto);
+        Assert.Equal("EUR", dto.ElectricityCurrency);
+        Assert.Equal("Europe/Amsterdam", dto.Timezone);
+        Assert.NotNull(dto.Appliances);
+        Assert.Single(dto.Appliances);
+        Assert.Equal("Paal 2 - 1", dto.Appliances![0].Name);
+        Assert.Equal("Charging station", dto.Appliances[0].Type);
+    }
 }

@@ -18,6 +18,8 @@ namespace Backend.Data
         public DbSet<ChargeCard> ChargeCards { get; set; }
         public DbSet<MolliePayment> MolliePayments { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+        public DbSet<SmappeeServiceLocation> SmappeeServiceLocations { get; set; }
+        public DbSet<SmappeeServiceLocationDevice> SmappeeServiceLocationDevices { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -111,6 +113,24 @@ namespace Backend.Data
                       .WithMany()
                       .HasForeignKey(e => e.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<SmappeeServiceLocation>(entity =>
+            {
+                entity.HasKey(e => e.ServiceLocationId);
+                entity.Property(e => e.ServiceLocationId).ValueGeneratedNever();
+                entity.Property(e => e.ElectricityCost).HasPrecision(18, 6);
+                entity.Property(e => e.ElectricityCurrency).HasMaxLength(16);
+                entity.Property(e => e.Timezone).HasMaxLength(128);
+            });
+
+            modelBuilder.Entity<SmappeeServiceLocationDevice>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.DeviceSerialNumber).HasMaxLength(64).IsRequired();
+                entity.Property(e => e.Name).HasMaxLength(512);
+                entity.Property(e => e.ServiceLocationUuid).HasMaxLength(128);
+                entity.HasIndex(e => new { e.ServiceLocationId, e.DeviceSerialNumber }).IsUnique();
             });
         }
     }

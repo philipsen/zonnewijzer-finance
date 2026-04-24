@@ -77,3 +77,66 @@ public class SmappeeSessionDto
 
     public string SerialNumberNormalized() => (SerialNumber ?? "").Trim();
 }
+
+/// <summary>GET <c>servicelocation</c> — see Smappee "Get Servicelocations" (v3).</summary>
+public class SmappeeServiceLocationsListResponse
+{
+    [JsonPropertyName("appName")]
+    public string? AppName { get; set; }
+
+    [JsonPropertyName("serviceLocations")]
+    public List<SmappeeServiceLocationRowDto>? ServiceLocations { get; set; }
+}
+
+public class SmappeeServiceLocationRowDto
+{
+    [JsonPropertyName("serviceLocationId")]
+    public int ServiceLocationId { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("serviceLocationUuid")]
+    public string? ServiceLocationUuid { get; set; }
+
+    [JsonPropertyName("deviceSerialNumber")]
+    [JsonConverter(typeof(StringOrNumberToStringConverter))]
+    public string? DeviceSerialNumber { get; set; }
+}
+
+/// <summary>GET <c>servicelocation/{{id}}/info</c> (v3).</summary>
+public class SmappeeServiceLocationInfoDto
+{
+    [JsonPropertyName("lon")]
+    public double Lon { get; set; }
+
+    [JsonPropertyName("lat")]
+    public double Lat { get; set; }
+
+    [JsonPropertyName("electricityCost")]
+    public double ElectricityCost { get; set; }
+
+    [JsonPropertyName("electricityCurrency")]
+    public string? ElectricityCurrency { get; set; }
+
+    [JsonPropertyName("timezone")]
+    public string? Timezone { get; set; }
+
+    [JsonPropertyName("appliances")]
+    public List<SmappeeServiceLocationApplianceDto>? Appliances { get; set; }
+}
+
+public class SmappeeServiceLocationApplianceDto
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    [JsonPropertyName("sourceType")]
+    public string? SourceType { get; set; }
+}
