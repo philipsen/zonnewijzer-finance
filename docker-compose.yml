@@ -43,6 +43,11 @@ services:
     container_name: finance-backend
     depends_on:
       - gnucash-sync
+    # Loads FINANCE_BOOTSTRAP_ADMIN_PASSWORD and optional local secrets (same as Backend dev); do not
+    # duplicate FINANCE_BOOTSTRAP_ADMIN_PASSWORD in `environment` or an empty default overrides this.
+    env_file:
+      - path: Backend/.env
+        required: false
     ports:
       - "5000:5000"
     environment:
@@ -59,7 +64,7 @@ services:
       - Smappee__ClientSecret=${SMAPPEE_CLIENT_SECRET:-}
       - Smappee__Username=${SMAPPEE_USERNAME:-}
       - Smappee__Password=${SMAPPEE_PASSWORD:-}
-      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-0}
+      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-307785}
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs

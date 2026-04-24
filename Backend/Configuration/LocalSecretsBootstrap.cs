@@ -3,6 +3,7 @@ namespace Backend.Configuration;
 /// <summary>
 /// In Development, loads optional <c>.env</c> files and maps <c>SMAPPEE_*</c> variables to ASP.NET configuration keys
 /// without relying on direnv. Prefer <c>Backend/.env</c> or repo-root <c>.env</c> for Smappee (see <c>smappee.env.example</c>).
+/// <see cref="MapSmappeeAliases"/> also runs in non-Development (e.g. Docker) so the same <c>SMAPPEE_*</c> names work when set via <c>env_file</c>.
 /// </summary>
 public static class LocalSecretsBootstrap
 {
@@ -22,6 +23,42 @@ public static class LocalSecretsBootstrap
         }
 
         MapSmappeeAliases();
+    }
+
+    /// <summary>
+    /// Maps <c>SMAPPEE_CLIENT_ID</c> (etc.) to <c>Smappee__*</c> so <see cref="Smappee.SmappeeOptions"/> binds. Safe to call when
+    /// <c>Smappee__*</c> is already set (e.g. production compose). Skips a target if it is non-empty; empty string is treated as unset.
+    /// </summary>
+    public static void MapSmappeeAliases() => MapSmappeeAliasesCore();
+
+    private static void MapSmappeeAliasesCore()
+    {
+        void Alias(string configurationKey, string legacyKey)
+        {
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(configurationKey)))
+                return;
+            var v = Environment.GetEnvironmentVariable(legacyKey);
+            if (!string.IsNullOrEmpty(v))
+                Environment.SetEnvironmentVariable(configurationKey, v);
+        }
+
+        Alias("Smappee__ClientId", "SMAPPEE_CLIENT_ID");
+        Alias("Smappee__ClientSecret", "SMAPPEE_CLIENT_SECRET");
+        Alias("Smappee__Username", "SMAPPEE_USERNAME");
+        Alias("Smappee__Password", "SMAPPEE_PASSWORD");
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Smappee__BaseUrl")))
+        {
+            var baseUrl = Environment.GetEnvironmentVariable("SMAPPEE_BASE_URL");
+            var ver = Environment.GetEnvironmentVariable("SMAPPEE_API_VERSION");
+            if (!string.IsNullOrEmpty(baseUrl) && !string.IsNullOrEmpty(ver))
+            {
+                var combined = $"{baseUrl.TrimEnd('/')}/dev/{ver.Trim('/')}";
+                Environment.SetEnvironmentVariable("Smappee__BaseUrl", combined);
+            }
+        }
+
+        Alias("Smappee__ServiceLocationId", "SMAPPEE_SERVICE_LOCATION_ID");
     }
 
     private static IEnumerable<string> EnumerateDotEnvCandidatePaths()
@@ -84,33 +121,4 @@ public static class LocalSecretsBootstrap
         }
     }
 
-    private static void MapSmappeeAliases()
-    {
-        void Alias(string configurationKey, string legacyKey)
-        {
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(configurationKey)))
-                return;
-            var v = Environment.GetEnvironmentVariable(legacyKey);
-            if (!string.IsNullOrEmpty(v))
-                Environment.SetEnvironmentVariable(configurationKey, v);
-        }
-
-        Alias("Smappee__ClientId", "SMAPPEE_CLIENT_ID");
-        Alias("Smappee__ClientSecret", "SMAPPEE_CLIENT_SECRET");
-        Alias("Smappee__Username", "SMAPPEE_USERNAME");
-        Alias("Smappee__Password", "SMAPPEE_PASSWORD");
-
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Smappee__BaseUrl")))
-        {
-            var baseUrl = Environment.GetEnvironmentVariable("SMAPPEE_BASE_URL");
-            var ver = Environment.GetEnvironmentVariable("SMAPPEE_API_VERSION");
-            if (!string.IsNullOrEmpty(baseUrl) && !string.IsNullOrEmpty(ver))
-            {
-                var combined = $"{baseUrl.TrimEnd('/')}/dev/{ver.Trim('/')}";
-                Environment.SetEnvironmentVariable("Smappee__BaseUrl", combined);
-            }
-        }
-
-        Alias("Smappee__ServiceLocationId", "SMAPPEE_SERVICE_LOCATION_ID");
-    }
 }

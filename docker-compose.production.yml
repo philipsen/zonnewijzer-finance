@@ -58,9 +58,10 @@ services:
       - Smappee__ClientSecret=${SMAPPEE_CLIENT_SECRET:-}
       - Smappee__Username=${SMAPPEE_USERNAME:-}
       - Smappee__Password=${SMAPPEE_PASSWORD:-}
-      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-0}
+      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-307785}
       - Smappee__BaseUrl=${SMAPPEE_BASE_URL:-https://app1pub.smappee.net/dev/v3}
       - Smappee__OAuthBaseUrl=${SMAPPEE_OAUTH_BASE_URL:-}
+      - FINANCE_BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
       - ./data:/app/database
       - ./logs:/app/logs
