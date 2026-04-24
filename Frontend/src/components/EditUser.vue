@@ -13,9 +13,9 @@
       Loading user data...
     </div>
 
-    <div v-else-if="!isAppAdmin" class="access-denied">
+    <div v-else-if="!canEditUserProfiles" class="access-denied">
       <h2>Access Denied</h2>
-      <p>Only administrators can edit users.</p>
+      <p>You do not have permission to edit user profiles.</p>
     </div>
 
     <div v-else-if="error" class="error">
@@ -66,7 +66,7 @@
           >
         </div>
 
-        <div v-if="currentUserRole" class="form-group">
+        <div v-if="canEditUserProfiles" class="form-group">
           <label for="role" class="form-label">Role</label>
           <select
             id="role"
@@ -75,18 +75,8 @@
           >
             <option value="Base">Base</option>
             <option value="Admin">Admin</option>
-            <option v-if="isEditorOwner || (isAppAdmin && isEditingSelf)" value="Owner">Owner</option>
+            <option v-if="isEditorOwner || (editorIsAppAdmin && isEditingSelf)" value="Owner">Owner</option>
           </select>
-        </div>
-
-        <div v-else-if="user.role" class="form-group">
-          <label class="form-label">Role</label>
-          <div class="role-display">
-            <span :class="['role-badge', 'role-' + user.role.toLowerCase()]">
-              {{ user.role }}
-            </span>
-            <span class="role-note">You must be logged in to edit roles</span>
-          </div>
         </div>
 
         <div class="user-metadata">
@@ -126,7 +116,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
-import { isAppAdmin as roleIsAppAdmin, isOwner, roleFromToken } from '../utils/roles'
+import { isAppAdmin as roleIsAppAdmin, isOwner, roleFromToken, canManageUserProfiles } from '../utils/roles'
 
 export default {
   name: 'EditUser',
@@ -140,13 +130,11 @@ export default {
     const error = ref('')
     const currentUserRole = ref('')
     const currentUserId = ref(null)
-    const isAppAdmin = ref(false)
-    const isEditorOwner = ref(false)
-    {
-      const role = roleFromToken(localStorage.getItem('token'))
-      isAppAdmin.value = roleIsAppAdmin(role)
-      isEditorOwner.value = isOwner(role)
-    }
+
+    const editorTokenRole = computed(() => roleFromToken(localStorage.getItem('token')))
+    const canEditUserProfiles = computed(() => canManageUserProfiles(editorTokenRole.value))
+    const editorIsAppAdmin = computed(() => roleIsAppAdmin(editorTokenRole.value))
+    const isEditorOwner = computed(() => isOwner(editorTokenRole.value))
 
     const isEditingSelf = computed(
       () =>
@@ -165,7 +153,7 @@ export default {
       if (!user.value) return false
       const nameChanged = form.value.name !== user.value.name
       const emailChanged = form.value.email !== user.value.email
-      const roleChanged = currentUserRole.value && form.value.role !== user.value.role
+      const roleChanged = canEditUserProfiles.value && form.value.role !== user.value.role
       return nameChanged || emailChanged || roleChanged
     })
 
@@ -203,6 +191,8 @@ export default {
         console.error('Failed to fetch user:', err)
         if (err.response?.status === 401) {
           error.value = 'Unauthorized. Please log in again.'
+        } else if (err.response?.status === 403) {
+          error.value = 'You do not have permission to view this user.'
         } else if (err.response?.status === 404) {
           error.value = 'User not found.'
         } else {
@@ -226,8 +216,7 @@ export default {
           email: form.value.email
         }
         
-        // Only include role if current user is authenticated
-        if (currentUserRole.value) {
+        if (canEditUserProfiles.value) {
           updateData.role = form.value.role
         }
         
@@ -241,6 +230,9 @@ export default {
         console.error('Failed to update user:', err)
         if (err.response?.status === 401) {
           error.value = 'Unauthorized. Please log in again.'
+        } else if (err.response?.status === 403) {
+          const msg = err.response?.data?.message
+          error.value = typeof msg === 'string' ? msg : 'You are not allowed to perform this change.'
         } else {
           error.value = 'Failed to update user. Please try again.'
         }
@@ -275,7 +267,8 @@ export default {
     })
 
     return {
-      isAppAdmin,
+      canEditUserProfiles,
+      editorIsAppAdmin,
       isEditorOwner,
       isEditingSelf,
       user,

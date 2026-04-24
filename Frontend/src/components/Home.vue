@@ -80,6 +80,14 @@
         >
           Clear GnuCash app data…
         </button>
+        <button
+          v-if="isOwnerView"
+          type="button"
+          class="btn-clear-charging"
+          @click="openClearChargingModal"
+        >
+          Clear charging sessions &amp; charge cards…
+        </button>
       </div>
       <p>Dashboard content will go here.</p>
       <div class="features">
@@ -133,6 +141,49 @@
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="clearChargingModalOpen" class="modal-backdrop" @click.self="closeClearChargingModal">
+        <div
+          class="modal-panel modal-panel--clear-charging"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="clear-charging-modal-title"
+          tabindex="-1"
+          @keydown.esc="closeClearChargingModal"
+        >
+          <h2 id="clear-charging-modal-title" class="modal-title">Clear charging data?</h2>
+          <p class="modal-warning">
+            This removes <strong>all</strong> charging sessions and charge cards, and unlinks every app user from a charge card.
+            Invoices and payments in the database are <strong>not</strong> deleted.
+          </p>
+          <p class="modal-instructions">Type exactly (case-sensitive):</p>
+          <code class="modal-phrase">{{ clearChargingConfirmationPhrase }}</code>
+          <input
+            v-model="clearChargingConfirmInput"
+            type="text"
+            class="modal-input"
+            autocomplete="off"
+            placeholder="Confirmation phrase"
+            @keydown.esc="closeClearChargingModal"
+          >
+          <p v-if="clearChargingError" class="modal-error">{{ clearChargingError }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" :disabled="clearChargingLoading" @click="closeClearChargingModal">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn-confirm-clear-charging"
+              :disabled="clearChargingLoading || clearChargingConfirmInput !== clearChargingConfirmationPhrase"
+              @click="executeClearCharging"
+            >
+              {{ clearChargingLoading ? 'Clearing…' : 'Clear charging data' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-if="gnucashWipeModalOpen" class="modal-backdrop" @click.self="closeGnucashWipeModal">
         <div
           class="modal-panel modal-panel--gnucash"
@@ -178,6 +229,9 @@ import { computed, ref, onMounted, onBeforeUnmount, inject, nextTick, watch } fr
 import axios from 'axios'
 import { isAppAdmin, isOwner } from '../utils/roles'
 
+/** Must match Backend AuthController.ClearChargingDataConfirmationPhrase */
+const CLEAR_CHARGING_CONFIRMATION_PHRASE = 'CLEAR CHARGING DATA'
+
 export default {
   name: 'Home',
   setup() {
@@ -192,7 +246,7 @@ export default {
       isAuthenticated.value &&
       appUser.value &&
       appUser.value.role === 'Base' &&
-      !appUser.value.chargingUserId
+      !appUser.value.chargeCardId
     )
 
     const signinButtonEl = ref(null)
@@ -215,6 +269,52 @@ export default {
     const gnucashWipeLoading = ref(false)
     const gnucashWipeError = ref('')
     const gnucashWipeDryRun = ref(false)
+
+    const clearChargingModalOpen = ref(false)
+    const clearChargingConfirmInput = ref('')
+    const clearChargingLoading = ref(false)
+    const clearChargingError = ref('')
+    const clearChargingConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
+
+    const openClearChargingModal = () => {
+      clearChargingError.value = ''
+      clearChargingConfirmInput.value = ''
+      clearChargingModalOpen.value = true
+    }
+
+    const closeClearChargingModal = () => {
+      if (clearChargingLoading.value) return
+      clearChargingModalOpen.value = false
+      clearChargingConfirmInput.value = ''
+      clearChargingError.value = ''
+    }
+
+    const executeClearCharging = async () => {
+      if (clearChargingConfirmInput.value !== CLEAR_CHARGING_CONFIRMATION_PHRASE) return
+      clearChargingError.value = ''
+      clearChargingLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        await axios.post(
+          '/api/auth/admin/clear-charging-data',
+          { confirmation: CLEAR_CHARGING_CONFIRMATION_PHRASE },
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        closeClearChargingModal()
+        window.location.reload()
+      } catch (err) {
+        console.error('Clear charging data failed:', err)
+        if (err.response?.status === 403) {
+          clearChargingError.value = 'Only the owner account can clear charging data.'
+        } else if (err.response?.data?.message) {
+          clearChargingError.value = err.response.data.message
+        } else {
+          clearChargingError.value = 'Request failed. Please try again.'
+        }
+      } finally {
+        clearChargingLoading.value = false
+      }
+    }
 
     const openWipeModal = () => {
       wipeError.value = ''
@@ -468,6 +568,14 @@ export default {
       openGnucashWipeModal,
       closeGnucashWipeModal,
       executeGnucashWipe,
+      clearChargingModalOpen,
+      clearChargingConfirmInput,
+      clearChargingLoading,
+      clearChargingError,
+      clearChargingConfirmationPhrase,
+      openClearChargingModal,
+      closeClearChargingModal,
+      executeClearCharging,
       submitEmailAuth,
       submitForgotPassword
     }
@@ -747,6 +855,66 @@ export default {
 
 .btn-gnucash-wipe:hover {
   background: #e7f1ff;
+}
+
+.btn-clear-charging {
+  background: #fff;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-clear-charging:hover {
+  background: #f8d7da;
+}
+
+.modal-panel--clear-charging .modal-title {
+  color: #842029;
+}
+
+.modal-instructions {
+  margin: 0 0 0.35rem 0;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.modal-phrase {
+  display: block;
+  background: #f1f3f5;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.btn-confirm-clear-charging {
+  background: #842029;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-confirm-clear-charging:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .modal-panel--gnucash .modal-title {

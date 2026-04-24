@@ -61,6 +61,7 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { isAppAdmin, roleFromToken } from '../utils/roles'
+import { formatLocalYmdHm } from '../utils/formatLocalDateTime'
 
 export default {
   name: 'ChargingStationsPage',
@@ -78,13 +79,7 @@ export default {
 
     const formatDateTime = (iso) => {
       if (!iso) return '—'
-      return new Date(iso).toLocaleString('nl-NL', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
+      return formatLocalYmdHm(iso) || '—'
     }
 
     const fetchStations = async () => {

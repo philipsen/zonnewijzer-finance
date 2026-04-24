@@ -1,3 +1,4 @@
+using Backend;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -54,7 +55,7 @@ public class MyInvoicesControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetMyInvoices_NoChargingUser_ReturnsEmptyMonths()
+    public async Task GetMyInvoices_NoChargeCard_ReturnsEmptyMonths()
     {
         _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1" });
         await _db.SaveChangesAsync();
@@ -71,9 +72,12 @@ public class MyInvoicesControllerTests : IDisposable
     [Fact]
     public async Task GetMyInvoices_WithSessions_BuildsMonthRows()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1", ChargingUserId = 20 });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-INV-1" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1", ChargeCardId = cid });
         var t = new DateTime(2024, 6, 10, 12, 0, 0, DateTimeKind.Utc);
-        _db.ChargingSessions.Add(new ChargingSession { UserId = 20, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 10 });
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 10));
         _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 6, PricePerKwh = 0.5m });
         await _db.SaveChangesAsync();
 
@@ -81,7 +85,7 @@ public class MyInvoicesControllerTests : IDisposable
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         using var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal(20, doc.RootElement.GetProperty("chargingUserId").GetInt32());
+        Assert.Equal(cid, doc.RootElement.GetProperty("chargeCardId").GetInt32());
         var months = doc.RootElement.GetProperty("months");
         Assert.Equal(1, months.GetArrayLength());
         Assert.Equal(2024, months[0].GetProperty("Year").GetInt32());
@@ -91,12 +95,15 @@ public class MyInvoicesControllerTests : IDisposable
     [Fact]
     public async Task GetMyInvoices_RefreshesOpenPaymentFromMollie()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1", ChargingUserId = 20 });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-INV-2" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1", ChargeCardId = cid });
         var t = new DateTime(2024, 5, 1, 8, 0, 0, DateTimeKind.Utc);
-        _db.ChargingSessions.Add(new ChargingSession { UserId = 20, StationId = 1, Start = t, End = t.AddHours(1), ChargedKwh = 2 });
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 2));
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargingUserId = 20,
+            ChargeCardId = cid,
             Year = 2024,
             Month = 5,
             MolliePaymentId = "tr_x",

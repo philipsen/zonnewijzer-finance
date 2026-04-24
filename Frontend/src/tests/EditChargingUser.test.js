@@ -11,18 +11,18 @@ const makeRouter = (id = '5') => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/charging-users/:id/edit', component: EditChargingUser },
-      { path: '/charging-users', component: { template: '<div />' } }
+      { path: '/charge-cards/:id/edit', component: EditChargingUser },
+      { path: '/charge-cards', component: { template: '<div />' } }
     ]
   })
-  router.push(`/charging-users/${id}/edit`)
+  router.push(`/charge-cards/${id}/edit`)
   return router
 }
 
 const mockChargingUser = {
   id: 5,
-  rfidTokenKey: '047D9322B62290',
-  displayName: 'Alice',
+  value: '047D9322B62290',
+  comment: 'Alice',
   linkedUserId: null,
   street: 'Main St',
   houseNumber: '10',
@@ -31,8 +31,8 @@ const mockChargingUser = {
 }
 
 const mockAppUsers = [
-  { id: 1, name: 'Bob', chargingUserId: null },
-  { id: 2, name: 'Carol', chargingUserId: 7 } // linked to a different charging user
+  { id: 1, name: 'Bob', chargeCardId: null },
+  { id: 2, name: 'Carol', chargeCardId: 7 } // linked to a different charge card
 ]
 
 // Build a JWT-like token with Admin role
@@ -80,10 +80,10 @@ describe('EditChargingUser.vue', () => {
     await router.isReady()
     const wrapper = mount(EditChargingUser, { global: { plugins: [router] } })
     await flushPromises()
-    expect(wrapper.text()).toContain('Charging user not found')
+    expect(wrapper.text()).toContain('Charge card not found')
   })
 
-  it('only disables app users already linked to a different charging user', async () => {
+  it('only disables app users already linked to a different charge card', async () => {
     axios.get
       .mockResolvedValueOnce({ data: mockChargingUser })
       .mockResolvedValueOnce({ data: mockAppUsers })

@@ -80,9 +80,9 @@ In `appsettings.Development.json` (or secrets / environment):
 Admin endpoint:
 
 - **`POST /api/invoices/gnucash/insert`**
-- Body: `{ "year": 2025, "month": 3, "chargingUserId": null, "dryRun": false }`
-  - Omit `chargingUserId` or set `null` to insert **all** users with sessions that month.
-  - Set `chargingUserId` to a single charging user id for one invoice.
+- Body: `{ "year": 2025, "month": 3, "chargeCardId": null, "dryRun": false }`
+  - Omit `chargeCardId` or set `null` to insert **all** charge cards with sessions that month.
+  - Set `chargeCardId` to a single charge card id for one invoice.
   - Set **`dryRun`: true** to call the Python service with `?dry_run=true` (no commits in GnuCash).
 
 Requires admin JWT (same as invoice grid).
@@ -95,7 +95,7 @@ On **Invoices** (invoice grid), use **GnuCash** controls: pick year/month, optio
 
 - Prefer **not** running GnuCash desktop against the same book while the Python service is writing.
 - Pin **GnuCash** and **piecash** versions; major GnuCash upgrades can change the SQL schema.
-- Customer IDs from the app look like **`CU-{chargingUserId}`**; invoice IDs match **`INV-{yyyy}-{mm}-{userId}`**. Re-sends with the same invoice id are **skipped**.
+- Customer IDs from the app look like **`CU-{chargeCardId}`**; invoice IDs match **`INV-{yyyy}-{mm}-{chargeCardId}`**. Re-sends with the same invoice id are **skipped**.
 
 ## 7. VS Code
 

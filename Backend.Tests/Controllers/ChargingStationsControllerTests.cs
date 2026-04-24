@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Backend;
 using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
@@ -55,45 +56,21 @@ public class ChargingStationsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAll_Admin_ReturnsStationsAggregatedBySerialAndConnector()
+    public async Task GetAll_Admin_GroupsSessionsBySerialNumber()
     {
         _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-STATION-TEST" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
+
         var t1 = new DateTime(2026, 3, 1, 10, 0, 0, DateTimeKind.Utc);
         var t2 = new DateTime(2026, 3, 2, 10, 0, 0, DateTimeKind.Utc);
+        var sidA = ChargingPointIds.ChargingPointIdFromSerialAndConnector("6531001272", "1");
+        var sidB = ChargingPointIds.ChargingPointIdFromSerialAndConnector("6531001273", "1");
         _db.ChargingSessions.AddRange(
-            new ChargingSession
-            {
-                UserId = 10,
-                StationId = 1,
-                Start = t1,
-                End = t1.AddHours(1),
-                ChargedKwh = 5,
-                StationSerialNumber = "6531001272",
-                Connector = "1",
-                ChargingStationName = "Paal 2"
-            },
-            new ChargingSession
-            {
-                UserId = 10,
-                StationId = 1,
-                Start = t2,
-                End = t2.AddHours(1),
-                ChargedKwh = 3,
-                StationSerialNumber = "6531001272",
-                Connector = "1",
-                ChargingStationName = "Paal 2"
-            },
-            new ChargingSession
-            {
-                UserId = 10,
-                StationId = 2,
-                Start = t1,
-                End = t1.AddHours(1),
-                ChargedKwh = 2,
-                StationSerialNumber = "6531001272",
-                Connector = "2",
-                ChargingStationName = "Paal 2"
-            }
+            TestData.Session(cid, sidA, t1, t1.AddHours(1), 5, "6531001272"),
+            TestData.Session(cid, sidA, t2, t2.AddHours(1), 3, "6531001272"),
+            TestData.Session(cid, sidB, t1, t1.AddHours(1), 2, "6531001273")
         );
         await _db.SaveChangesAsync();
 
@@ -110,14 +87,21 @@ public class ChargingStationsControllerTests : IDisposable
     public async Task GetAll_Admin_IncludesLegacyBucket()
     {
         _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.ChargeCards.Add(new ChargeCard { Value = "RF-LEGACY" });
+        await _db.SaveChangesAsync();
+        var cid = _db.ChargeCards.Single().Id;
         var t = new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.Add(new ChargingSession
         {
-            UserId = 5,
+            ChargeCardId = cid,
             StationId = 99,
-            Start = t,
-            End = t.AddHours(1),
-            ChargedKwh = 1m
+            FromTimestamp = TestData.UtcMs(t),
+            ToTimestamp = TestData.UtcMs(t.AddHours(1)),
+            StartReading = 0,
+            StopReading = 1m,
+            SerialNumber = null,
+            Rfid = "r",
+            Status = "STOPPED"
         });
         await _db.SaveChangesAsync();
 

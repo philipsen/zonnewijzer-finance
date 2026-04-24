@@ -1,4 +1,4 @@
-namespace Backend.Controllers
+namespace Backend.Models
 {
     public class GoogleAuthRequest
     {
@@ -65,7 +65,7 @@ namespace Backend.Controllers
         /// <summary>When true, authorizes POST <c>admin/wipe-database</c> (admin JWT required).</summary>
         public bool Confirm { get; set; }
 
-        /// <summary>Exact phrase for POST <c>admin/clear-charging-data</c>.</summary>
+        /// <summary>Exact phrase for POST <c>admin/clear-charging-data</c> (owner JWT required).</summary>
         public string? Confirmation { get; set; }
     }
 }
