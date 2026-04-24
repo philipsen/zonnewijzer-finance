@@ -50,6 +50,13 @@ public sealed class SmappeeHourlySyncBackgroundService : BackgroundService
                 {
                     _logger.LogDebug("Smappee background sync skipped: ServiceLocationId is not set.");
                 }
+                else if (!smappeeOpts.HasAllCredentials)
+                {
+                    _logger.LogError(
+                        "Smappee background sync skipped: credentials incomplete (null/empty). Missing: {Missing}. " +
+                        "Set Smappee__ClientId, Smappee__ClientSecret, Smappee__Username, Smappee__Password on the host or in env_file.",
+                        string.Join(", ", smappeeOpts.GetMissingCredentialFields()));
+                }
                 else
                 {
                     var lookback = Math.Clamp(bg.LookbackDays, 1, 365);
