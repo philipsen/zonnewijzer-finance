@@ -30,7 +30,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
             || string.IsNullOrWhiteSpace(_options.Username)
             || string.IsNullOrWhiteSpace(_options.Password))
         {
-            _logger.LogWarning("Smappee OAuth: ClientId, Username, or Password is missing from configuration.");
+            _logger.LogError("Smappee OAuth: ClientId, Username, or Password is missing from configuration.");
             throw new InvalidOperationException(
                 "Smappee OAuth: set Smappee:ClientId, Username, Password (and ClientSecret) via appsettings or environment variables.");
         }
@@ -50,7 +50,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Smappee token request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
+            _logger.LogError("Smappee token request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
             throw new InvalidOperationException($"Smappee authentication failed ({(int)response.StatusCode}).");
         }
 
@@ -70,7 +70,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Smappee RFIDs request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
+            _logger.LogError("Smappee RFIDs request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
             throw new InvalidOperationException($"Smappee RFIDs request failed ({(int)response.StatusCode}).");
         }
 
@@ -96,7 +96,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Smappee sessions request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
+            _logger.LogError("Smappee sessions request failed: {Status} {Body}", response.StatusCode, Truncate(payload));
             throw new InvalidOperationException($"Smappee sessions request failed ({(int)response.StatusCode}).");
         }
 
