@@ -65,6 +65,18 @@ public class ChargingSessionsControllerTests : IDisposable
             _smappeeMock.Object,
             Options.Create(opts),
             NullLogger<SmappeeChargingSyncService>.Instance);
+        if (!_db.Users.Any(u => u.Id == 1))
+        {
+            _db.Users.Add(new User
+            {
+                Id = 1,
+                Email = "admin-test@local",
+                Name = "Admin",
+                Role = UserRole.Admin
+            });
+            _db.SaveChanges();
+        }
+
         var controller = new ChargingSessionsController(
             _db,
             _jwtMock.Object,

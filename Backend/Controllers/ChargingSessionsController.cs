@@ -109,16 +109,24 @@ public class ChargingSessionsController : ControllerBase
         }
     }
 
-    [Authorize(Roles = "Admin,Owner")]
     [HttpPost("sync-smappee")]
     public async Task<IActionResult> SyncSmappee([FromBody] SyncSmappeeRequest body, CancellationToken cancellationToken)
     {
+        var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+        var userIdString = _jwtService.ValidateToken(token);
+        if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+            return Unauthorized();
+
+        var requestingUser = await _context.Users.FindAsync(currentUserId);
+        if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+            return Forbid();
+
         try
         {
             var result = await _smappeeSync.SyncSmappeeCalendarAsync(
                 body.From,
                 body.To,
-                User.Identity?.Name ?? "Unknown",
+                requestingUser.Name,
                 cancellationToken);
 
             if (!result.Success)

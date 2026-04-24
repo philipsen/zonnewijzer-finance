@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Yarp.ReverseProxy.Configuration;
 using System.Text;
+using System.Security.Claims;
 using Backend.Configuration;
 using Backend.Data;
 using Backend.Services;
@@ -85,7 +86,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidAudience = builder.Configuration["Jwt:Audience"],
             ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero
+            ClockSkew = TimeSpan.Zero,
+            // Match claims issued by IJwtService (ClaimTypes.*) so [Authorize(Roles=…)] is reliable
+            NameClaimType = ClaimTypes.Name,
+            RoleClaimType = ClaimTypes.Role
         };
     });
 
