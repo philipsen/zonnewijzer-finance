@@ -5,7 +5,7 @@
         <img src="/assets/zonnewijzer_logo.png" alt="Zonnewijzer Logo" class="logo">
         <h1>Zonnewijzer Finance</h1>
       </router-link>
-      <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': navOverflows }">
+      <nav v-if="user" ref="mainNav" class="main-nav" :class="{ 'nav-hidden': useHamburgerNav }">
         <router-link to="/" class="nav-link">Home</router-link>
         <router-link
           v-if="canManageUserProfiles(user?.role) && !previewMode"
@@ -29,8 +29,8 @@
         </template>
       </nav>
 
-      <!-- Hamburger dropdown shown when nav overflows -->
-      <div v-if="user && navOverflows" class="nav-dropdown-wrapper" ref="dropdownWrapper">
+      <!-- Hamburger when viewport is narrow or inline links do not fit (see useHamburgerNav) -->
+      <div v-if="user && useHamburgerNav" class="nav-dropdown-wrapper" ref="dropdownWrapper">
         <button class="hamburger-btn" @click="dropdownOpen = !dropdownOpen" :aria-expanded="dropdownOpen">
           <span></span><span></span><span></span>
         </button>
@@ -100,6 +100,17 @@ export default {
     const navOverflows = ref(false)
     const dropdownOpen = ref(false)
     let resizeObserver = null
+    /** Below this width, always use the menu — inline admin links need more space than fits comfortably. */
+    const narrowNavMql = typeof window !== 'undefined'
+      ? window.matchMedia('(max-width: 1024px)')
+      : null
+    const narrowNavViewport = ref(narrowNavMql?.matches ?? false)
+
+    const syncNarrowNavViewport = () => {
+      if (narrowNavMql) narrowNavViewport.value = narrowNavMql.matches
+    }
+
+    const useHamburgerNav = computed(() => navOverflows.value || narrowNavViewport.value)
 
     const checkNavOverflow = () => {
       nextTick(() => {
@@ -213,6 +224,9 @@ export default {
       window.handleCredentialResponse = handleCredentialResponse
       checkAuthStatus()
 
+      syncNarrowNavViewport()
+      narrowNavMql?.addEventListener('change', syncNarrowNavViewport)
+
       resizeObserver = new ResizeObserver(() => checkNavOverflow())
       resizeObserver.observe(document.body)
 
@@ -224,6 +238,7 @@ export default {
     })
 
     onBeforeUnmount(() => {
+      narrowNavMql?.removeEventListener('change', syncNarrowNavViewport)
       resizeObserver?.disconnect()
     })
 
@@ -246,6 +261,7 @@ export default {
       mainNav,
       dropdownWrapper,
       navOverflows,
+      useHamburgerNav,
       dropdownOpen,
       signOut
     }
@@ -254,9 +270,32 @@ export default {
 </script>
 
 <style>
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: sans-serif;
+  width: 100%;
+  max-width: 100%;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 100vh;
 }
 
 .navbar {
@@ -266,6 +305,12 @@ body {
   padding: 1rem 2rem;
   background-color: #f8f9fa;
   border-bottom: 1px solid #dee2e6;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .navbar-brand {
@@ -274,6 +319,14 @@ body {
   gap: 1rem;
   text-decoration: none;
   color: inherit;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.navbar-brand h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logo {
@@ -313,10 +366,12 @@ body {
   display: flex;
   align-items: center;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 .nav-dropdown-wrapper {
   position: relative;
+  flex-shrink: 0;
 }
 
 .hamburger-btn {
@@ -386,15 +441,112 @@ body {
 }
 
 main {
+  flex: 1 1 auto;
   padding: 2rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: clip;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  background-color: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  width: fit-content;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/*
+ * Below this width we use the hamburger (see useHamburgerNav). The action cluster
+ * (preview + user card + sign out) still has a large intrinsic width in one row —
+ * put it on its own full-width row and allow the user card to shrink so the page
+ * can go narrower than ~700px.
+ */
+@media (max-width: 1024px) {
+  .navbar {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 0.75rem;
+    column-gap: 1rem;
+  }
+
+  .navbar-brand {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /*
+   * Stack actions for every sub-desktop width. A later (min-width: 769px) rule used to
+   * re-apply white-space: nowrap on the preview button and undo this — nowrap is now
+   * only from (min-width: 1025px).
+   */
+  .nav-actions {
+    flex: 1 1 100%;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 0.5rem;
+  }
+
+  .preview-toggle-btn {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .sign-out-btn {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .user-info {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: none;
+  }
+
+  .user-info > span:first-of-type {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 768px) {
+  /*
+   * align-items: flex-start makes column children use max-content width — the bar can
+   * stay as wide as the user/actions row and blocks narrowing the whole page.
+   */
   .navbar {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0.75rem;
     padding: 0.75rem 1rem;
+  }
+
+  .navbar-brand {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .nav-dropdown-wrapper {
+    align-self: flex-start;
   }
 
   .navbar-brand h1 {
@@ -416,41 +568,50 @@ main {
     font-size: 0.85rem;
   }
 
+  /*
+   * Always stack under 768px — preview + user card + sign-out in one row still exceeds
+   * many phone widths and was keeping the whole page at a wide min-content size.
+   */
   .nav-actions {
     align-self: stretch;
     width: 100%;
-    justify-content: space-between;
+    max-width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    flex-grow: 0;
+    flex-shrink: 1;
+    flex-basis: auto;
+    min-width: 0;
+  }
+
+  .preview-toggle-btn {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
   }
 
   .user-info {
-    min-width: unset;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
     font-size: 0.85rem;
     align-items: flex-start;
-    flex: 1;
+    flex: none;
   }
 
   .sign-out-btn {
-    white-space: nowrap;
+    width: 100%;
+    white-space: normal;
     font-size: 0.85rem;
     padding: 0.4rem 0.75rem;
+    text-align: center;
   }
 
   main {
     padding: 0.75rem;
   }
-}
-
-.user-info {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.25rem;
-  padding: 0.75rem 1rem;
-  background-color: #ffffff;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  width: fit-content;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .role-badge {
@@ -487,7 +648,13 @@ main {
   font-size: inherit;
   font-weight: 500;
   transition: all 0.2s ease;
-  white-space: nowrap;
+}
+
+/* Only true desktop: below 1025px must not get nowrap (it overrode max-width:1024 rules). */
+@media (min-width: 1025px) {
+  .preview-toggle-btn {
+    white-space: nowrap;
+  }
 }
 
 .preview-toggle-btn:hover {

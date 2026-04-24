@@ -77,25 +77,36 @@ public class ChargingStationsController : ControllerBase
         }
     }
 
-    /// <summary>Up to five appliance <c>name</c> values from stored Smappee <c>…/info</c> where <c>type</c> is charging station.</summary>
+    /// <summary>
+    /// Up to five charging-station appliances from stored <c>…/info</c>, ordered by name, with optional <see cref="ChargingStationHomeSquareDto.LiveState"/> from Smappee live (matched by device serial when possible).
+    /// </summary>
     [Authorize(Roles = "Base,Admin,Owner")]
     [HttpGet("smappee-charging-station-display-names")]
     public async Task<IActionResult> GetSmappeeChargingStationDisplayNames(CancellationToken cancellationToken = default)
     {
         const string chargingStationType = "charging station";
-        var jsonRows = await _context.SmappeeServiceLocations.AsNoTracking()
+        var locRows = await _context.SmappeeServiceLocations.AsNoTracking()
             .Where(s => s.AppliancesJson != null && s.AppliancesJson != "")
             .OrderBy(s => s.ServiceLocationId)
-            .Select(s => s.AppliancesJson!)
+            .Select(s => new { s.ServiceLocationId, s.AppliancesJson })
             .ToListAsync(cancellationToken);
 
-        var names = new List<string>();
-        foreach (var json in jsonRows)
+        var devicesByLoc = (await _context.SmappeeServiceLocationDevices.AsNoTracking()
+                .ToListAsync(cancellationToken))
+            .GroupBy(d => d.ServiceLocationId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(d => d.DeviceSerialNumber, StringComparer.OrdinalIgnoreCase).ToList());
+
+        var work = new List<(string Name, string? Serial, int ServiceLocationId)>();
+        foreach (var row in locRows)
         {
             List<SmappeeServiceLocationApplianceDto>? appliances;
             try
             {
-                appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceDto>>(json, SmappeeAppliancesJson);
+                appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceDto>>(
+                    row.AppliancesJson!,
+                    SmappeeAppliancesJson);
             }
             catch (JsonException)
             {
@@ -105,24 +116,122 @@ public class ChargingStationsController : ControllerBase
             if (appliances == null)
                 continue;
 
-            foreach (var a in appliances)
+            if (!devicesByLoc.TryGetValue(row.ServiceLocationId, out var devices))
+                devices = new List<SmappeeServiceLocationDevice>();
+
+            var charging = appliances
+                .Where(a =>
+                    !string.IsNullOrWhiteSpace(a.Type) &&
+                    string.Equals(a.Type.Trim(), chargingStationType, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(a => a.Id)
+                .ToList();
+
+            var usedDeviceIds = new HashSet<int>();
+            foreach (var a in charging)
             {
-                if (string.IsNullOrWhiteSpace(a.Type) ||
-                    !string.Equals(a.Type.Trim(), chargingStationType, StringComparison.OrdinalIgnoreCase))
-                    continue;
                 var name = SmappeeApplianceDisplayName.NormalizeName(a.Name);
                 if (name == null)
                     continue;
-                names.Add(name);
+                var dev = MatchDeviceToAppliance(devices, usedDeviceIds, name);
+                var serial = string.IsNullOrWhiteSpace(dev?.DeviceSerialNumber) ? null : dev!.DeviceSerialNumber.Trim();
+                work.Add((name, serial, row.ServiceLocationId));
             }
         }
 
-        var ordered = names
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+        var ordered = work
+            .OrderBy(w => w.Name, StringComparer.OrdinalIgnoreCase)
             .Take(5)
             .ToList();
 
-        return Ok(new { names = ordered });
+        Dictionary<string, string>? serialToLiveState = null;
+        Dictionary<string, string>? stationNameToLiveState = null;
+        if (_smappeeOptions.HasAllCredentials && _smappeeOptions.ServiceLocationId > 0)
+        {
+            try
+            {
+                var live = await _smappeeLive.GetLiveAsync(cancellationToken);
+                serialToLiveState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                stationNameToLiveState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in live.Points)
+                {
+                    var mapped = MapChargingPointUiStateToHomeLiveState(p.UiState);
+                    var sn = (p.SerialNumber ?? "").Trim();
+                    if (!string.IsNullOrEmpty(sn))
+                        serialToLiveState[sn] = mapped;
+                    var nm = (p.StationName ?? "").Trim();
+                    if (!string.IsNullOrEmpty(nm))
+                        stationNameToLiveState[nm] = mapped;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogDebug(ex, "Smappee live not used for home charging squares");
+            }
+        }
+
+        var squares = new List<ChargingStationHomeSquareDto>(ordered.Count);
+        foreach (var w in ordered)
+        {
+            string? liveState = null;
+            if (serialToLiveState != null)
+            {
+                if (w.Serial != null && serialToLiveState.TryGetValue(w.Serial, out var bySerial))
+                    liveState = bySerial;
+                else if (stationNameToLiveState != null &&
+                         stationNameToLiveState.TryGetValue(w.Name, out var byName))
+                    liveState = byName;
+            }
+
+            // No live / misconfigured: assume available (green). Unmatched with live: same — avoids all-white tiles when SL id or serial pairing is off.
+            liveState ??= ChargingStationHomeSquareDto.LiveStateFree;
+
+            squares.Add(new ChargingStationHomeSquareDto { Name = w.Name, LiveState = liveState });
+        }
+
+        return Ok(new { squares });
+    }
+
+    /// <summary>Green = no session, yellow = idle (preparing/suspended), red = active (charging).</summary>
+    private static string MapChargingPointUiStateToHomeLiveState(string? uiState) =>
+        uiState switch
+        {
+            "charging" => ChargingStationHomeSquareDto.LiveStateActive,
+            "preparing" or "suspended" => ChargingStationHomeSquareDto.LiveStateIdle,
+            "available" or "finished_recent" => ChargingStationHomeSquareDto.LiveStateFree,
+            _ => ChargingStationHomeSquareDto.LiveStateFree
+        };
+
+    private static SmappeeServiceLocationDevice? MatchDeviceToAppliance(
+        List<SmappeeServiceLocationDevice> devices,
+        ISet<int> usedDeviceIds,
+        string normalizedApplianceName)
+    {
+        foreach (var d in devices)
+        {
+            if (usedDeviceIds.Contains(d.Id))
+                continue;
+            var dn = SmappeeApplianceDisplayName.NormalizeName(d.Name);
+            if (dn != null &&
+                string.Equals(dn, normalizedApplianceName, StringComparison.OrdinalIgnoreCase))
+            {
+                usedDeviceIds.Add(d.Id);
+                return d;
+            }
+        }
+
+        foreach (var d in devices.OrderBy(x => x.DeviceSerialNumber, StringComparer.OrdinalIgnoreCase))
+        {
+            if (usedDeviceIds.Contains(d.Id))
+                continue;
+            usedDeviceIds.Add(d.Id);
+            return d;
+        }
+
+        return null;
     }
 
     [HttpGet]
