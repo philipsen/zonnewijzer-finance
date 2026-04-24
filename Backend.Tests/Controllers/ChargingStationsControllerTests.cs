@@ -151,12 +151,12 @@ public class ChargingStationsControllerTests : IDisposable
         var c = BuildController();
         var result = await c.GetSmappeeChargingStationDisplayNames(default);
         var ok = Assert.IsType<OkObjectResult>(result);
-        var json = JsonSerializer.Serialize(ok.Value);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         using var doc = JsonDocument.Parse(json);
-        var names = doc.RootElement.GetProperty("names");
-        Assert.Equal(2, names.GetArrayLength());
-        Assert.Equal("Paal A", names[0].GetString());
-        Assert.Equal("Paal B", names[1].GetString());
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(2, squares.GetArrayLength());
+        Assert.Equal("Paal A", squares[0].GetProperty("name").GetString());
+        Assert.Equal("Paal B", squares[1].GetProperty("name").GetString());
     }
 
     [Fact]
@@ -180,11 +180,11 @@ public class ChargingStationsControllerTests : IDisposable
         var c = BuildController();
         var result = await c.GetSmappeeChargingStationDisplayNames(default);
         var ok = Assert.IsType<OkObjectResult>(result);
-        var json = JsonSerializer.Serialize(ok.Value);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         using var doc = JsonDocument.Parse(json);
-        var names = doc.RootElement.GetProperty("names");
-        Assert.Equal(2, names.GetArrayLength());
-        Assert.Equal("Alpha", names[0].GetString());
-        Assert.Equal("zebra", names[1].GetString());
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(2, squares.GetArrayLength());
+        Assert.Equal("Alpha", squares[0].GetProperty("name").GetString());
+        Assert.Equal("zebra", squares[1].GetProperty("name").GetString());
     }
 }
