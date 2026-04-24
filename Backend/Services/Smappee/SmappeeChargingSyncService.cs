@@ -69,6 +69,7 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
             _options.ServiceLocationId,
             rangeStartMs,
             rangeEndMs,
+            active: null,
             cancellationToken);
 
         _logger.LogInformation("Smappee sync: received {Count} session DTOs in range", sessionsDto.Count);

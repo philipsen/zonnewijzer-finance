@@ -89,19 +89,35 @@
           Clear charging sessions &amp; charge cards…
         </button>
       </div>
-      <p>Dashboard content will go here.</p>
-      <div class="features">
-        <div class="feature-card">
-          <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
-            <h3>Charging Sessions</h3>
-            <p>View and manage charging sessions</p>
-          </router-link>
-        </div>
-        <div class="feature-card">
-          <router-link :to="isAppAdminView && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
-            <h3>Invoices</h3>
-            <p>Generate and download invoices</p>
-          </router-link>
+      <div class="dashboard-content">
+        <section
+          v-if="chargingStationSquares.length"
+          class="charging-station-squares"
+          aria-label="Charging stations"
+        >
+          <div
+            v-for="(sq, idx) in chargingStationSquares"
+            :key="`${idx}-${sq.name}`"
+            :class="chargingStationSquareClass(sq)"
+            :title="chargingStationSquareTitle(sq)"
+          >
+            <span class="station-label-full">{{ sq.name }}</span>
+            <span class="station-label-compact">{{ shortStationLabel(sq.name) }}</span>
+          </div>
+        </section>
+        <div class="features">
+          <div class="feature-card">
+            <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
+              <h3>Charging Sessions</h3>
+              <p>View and manage charging sessions</p>
+            </router-link>
+          </div>
+          <div class="feature-card">
+            <router-link :to="isAppAdminView && !previewMode ? '/invoices' : '/my-invoices'" class="card-link">
+              <h3>Invoices</h3>
+              <p>Generate and download invoices</p>
+            </router-link>
+          </div>
         </div>
       </div>
     </div>
@@ -275,6 +291,61 @@ export default {
     const clearChargingLoading = ref(false)
     const clearChargingError = ref('')
     const clearChargingConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
+
+    const chargingStationSquares = ref([])
+
+    const loadChargingStationSquares = async () => {
+      if (!isAuthenticated.value || needsAccess.value) {
+        chargingStationSquares.value = []
+        return
+      }
+      const token = localStorage.getItem('token')
+      if (!token) {
+        chargingStationSquares.value = []
+        return
+      }
+      try {
+        const { data } = await axios.get('/api/chargingstations/smappee-charging-station-display-names', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        const raw = Array.isArray(data.squares) ? data.squares : []
+        chargingStationSquares.value = raw.map((s) => ({
+          name: s.name ?? s.Name ?? '',
+          liveState: s.liveState ?? s.LiveState ?? 'free'
+        }))
+      } catch {
+        chargingStationSquares.value = []
+      }
+    }
+
+    const chargingStationSquareClass = (sq) => {
+      const base = ['charging-station-square']
+      if (sq.liveState === 'free') base.push('is-free')
+      else if (sq.liveState === 'idle') base.push('is-idle')
+      else if (sq.liveState === 'active') base.push('is-active')
+      return base
+    }
+
+    const chargingStationSquareTitle = (sq) => {
+      const name = (sq.name || '').trim() || 'Station'
+      const state =
+        sq.liveState === 'free'
+          ? 'No session'
+          : sq.liveState === 'idle'
+            ? 'Idle (connected, not charging)'
+            : sq.liveState === 'active'
+              ? 'Charging (active)'
+              : 'Status unknown'
+      return `${name} — ${state}`
+    }
+
+    /** Strip leading "Paal" (any case) so narrow tiles can show e.g. "2" only. */
+    const shortStationLabel = (name) => {
+      if (!name || typeof name !== 'string') return ''
+      const t = name.trim()
+      const cut = t.replace(/^(paal)\s+/i, '').trim()
+      return cut.length > 0 ? cut : t
+    }
 
     const openClearChargingModal = () => {
       clearChargingError.value = ''
@@ -460,6 +531,7 @@ export default {
     }
 
     let googlePollTimer = null
+    let homeChargingSquaresPollTimer = null
 
     const startGoogleReadyPoll = () => {
       if (googlePollTimer) return
@@ -522,6 +594,7 @@ export default {
 
       requestAnimationFrame(() => tryRenderGoogle())
       startGoogleReadyPoll()
+      homeChargingSquaresPollTimer = setInterval(loadChargingStationSquares, 45_000)
     })
 
     onBeforeUnmount(() => {
@@ -530,12 +603,24 @@ export default {
         clearInterval(googlePollTimer)
         googlePollTimer = null
       }
+      if (homeChargingSquaresPollTimer) {
+        clearInterval(homeChargingSquaresPollTimer)
+        homeChargingSquaresPollTimer = null
+      }
     })
 
     watch(
       () => [isAuthenticated.value, signinButtonEl.value],
       () => tryRenderGoogle(),
       { flush: 'post', immediate: true }
+    )
+
+    watch(
+      () => [isAuthenticated.value, needsAccess.value, appUser.value?.chargeCardId, appUser.value?.role],
+      () => {
+        loadChargingStationSquares()
+      },
+      { immediate: true }
     )
 
     return {
@@ -577,7 +662,11 @@ export default {
       closeClearChargingModal,
       executeClearCharging,
       submitEmailAuth,
-      submitForgotPassword
+      submitForgotPassword,
+      chargingStationSquares,
+      chargingStationSquareClass,
+      chargingStationSquareTitle,
+      shortStationLabel
     }
   }
 }
@@ -587,6 +676,15 @@ export default {
 .home {
   max-width: 1200px;
   margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.home > h2 {
+  max-width: 100%;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 .auth-prompt {
@@ -772,11 +870,127 @@ export default {
   color: #5d4037;
 }
 
+.dashboard {
+  min-width: 0;
+  width: 100%;
+}
+
+.dashboard-content {
+  margin-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Equal-width columns for any number of tiles; minmax(0,1fr) avoids a flex min-width floor */
+.charging-station-squares {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.charging-station-square {
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  max-width: 100%;
+  /* No aspect-ratio — with grid/flex it can still raise intrinsic min-width in some engines */
+  aspect-ratio: unset;
+  height: clamp(2.1rem, 9vw, 3.5rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.35rem;
+  text-align: center;
+  font-size: clamp(0.72rem, 1.1vw + 0.55rem, 0.95rem);
+  font-weight: 600;
+  line-height: 1.25;
+  color: #343a40;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  word-break: break-word;
+  hyphens: auto;
+  overflow: hidden;
+}
+
+.station-label-compact {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .charging-station-squares {
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .charging-station-square {
+    min-width: 0;
+    width: auto;
+    max-width: none;
+    padding: 0.25rem 0.2rem;
+    line-height: 1.15;
+    word-break: normal;
+    height: clamp(2rem, 12vw, 2.85rem);
+    min-height: 2rem;
+  }
+
+  .station-label-full {
+    display: none;
+  }
+
+  .station-label-compact {
+    display: inline;
+    font-size: clamp(0.95rem, 5.5vw + 0.45rem, 1.35rem);
+    font-weight: 700;
+    line-height: 1.1;
+  }
+}
+
+/* Green = no session */
+.charging-station-square.is-free {
+  background: #e8f5e9;
+  border-color: #66bb6a;
+  color: #1b5e20;
+  box-shadow: 0 1px 4px rgba(46, 125, 50, 0.2);
+}
+
+/* Yellow = idle */
+.charging-station-square.is-idle {
+  background: #fffde7;
+  border-color: #fdd835;
+  color: #f57f17;
+  box-shadow: 0 1px 4px rgba(245, 127, 23, 0.15);
+}
+
+/* Red = active charging */
+.charging-station-square.is-active {
+  background: #ffebee;
+  border-color: #e57373;
+  color: #b71c1c;
+  box-shadow: 0 1px 4px rgba(183, 28, 28, 0.15);
+}
+
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  /* One fluid column by default — avoids auto-fit + minmax() leaving a ~600px floor when cards stack */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
-  margin-top: 2rem;
+  margin-top: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+@media (min-width: 40rem) {
+  .features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .feature-card {
@@ -785,6 +999,8 @@ export default {
   border-radius: 8px;
   background-color: #fff;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .feature-card:hover {
@@ -801,6 +1017,7 @@ export default {
   text-decoration: none;
   color: inherit;
   display: block;
+  min-width: 0;
 }
 
 .card-link:hover {
@@ -818,6 +1035,9 @@ export default {
   background: #fff5f5;
   border: 1px solid #f5c2c7;
   border-radius: 8px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .admin-tools-label {
@@ -825,6 +1045,13 @@ export default {
   font-size: 0.9rem;
   font-weight: 600;
   color: #842029;
+}
+
+.admin-tools button {
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  text-align: center;
 }
 
 .btn-wipe {

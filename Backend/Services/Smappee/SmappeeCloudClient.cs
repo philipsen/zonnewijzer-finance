@@ -101,15 +101,171 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         int serviceLocationId,
         long rangeStartMs,
         long? rangeEndMs,
+        bool? active = null,
         CancellationToken cancellationToken = default)
     {
         var token = await GetAccessTokenAsync(cancellationToken);
-        var rangeQuery = rangeEndMs.HasValue
-            ? $"?range={rangeStartMs},{rangeEndMs.Value}"
-            : $"?range={rangeStartMs}";
-        using var req = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"chargingparks/{serviceLocationId}/sessions{rangeQuery}");
+        return await GetChargingSessionsWithTokenAsync(
+            token,
+            serviceLocationId,
+            rangeStartMs,
+            rangeEndMs,
+            active,
+            cancellationToken);
+    }
+
+    public async Task<(IReadOnlyList<SmappeeSessionDto> Active, IReadOnlyList<SmappeeSessionDto> Completed)>
+        GetChargingSessionsActiveAndCompletedAsync(
+            int serviceLocationId,
+            long rangeStartMs,
+            long? rangeEndMs,
+            CancellationToken cancellationToken = default)
+    {
+        var token = await GetAccessTokenAsync(cancellationToken);
+        var active = await GetChargingSessionsWithTokenAsync(
+            token, serviceLocationId, rangeStartMs, rangeEndMs, true, cancellationToken);
+        var completed = await GetChargingSessionsWithTokenAsync(
+            token, serviceLocationId, rangeStartMs, rangeEndMs, false, cancellationToken);
+        return (active, completed);
+    }
+
+    public async Task<(IReadOnlyList<SmappeeSessionDto> Active, IReadOnlyList<SmappeeSessionDto> Completed, IReadOnlyList<string> ChargerSerialsAtPark)>
+        GetChargingLiveDataAsync(
+            int serviceLocationId,
+            long rangeStartMs,
+            long? rangeEndMs,
+            CancellationToken cancellationToken = default)
+    {
+        var token = await GetAccessTokenAsync(cancellationToken);
+        var active = await GetChargingSessionsWithTokenAsync(
+            token, serviceLocationId, rangeStartMs, rangeEndMs, true, cancellationToken);
+        var completed = await GetChargingSessionsWithTokenAsync(
+            token, serviceLocationId, rangeStartMs, rangeEndMs, false, cancellationToken);
+        var serials = await GetChargerSerialsRegisteredAtParkWithTokenAsync(token, serviceLocationId, cancellationToken);
+        return (active, completed, serials);
+    }
+
+    public async Task<(string? AppName, IReadOnlyList<SmappeeServiceLocationRowDto> ServiceLocations)> GetServiceLocationsListAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var token = await GetAccessTokenAsync(cancellationToken);
+        using var req = new HttpRequestMessage(HttpMethod.Get, "servicelocation");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _http.SendAsync(req, cancellationToken);
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "Smappee servicelocation list failed: {Status} {Body}",
+                response.StatusCode,
+                Truncate(payload));
+            throw new InvalidOperationException(
+                $"Smappee service locations request failed ({(int)response.StatusCode}).");
+        }
+
+        var (appName, rows) = ParseServiceLocationsListPayload(payload);
+        return (appName, rows);
+    }
+
+    public Task<SmappeeServiceLocationInfoDto> GetServiceLocationInfoAsync(
+        int serviceLocationId,
+        CancellationToken cancellationToken = default) =>
+        GetServiceLocationInfoCoreAsync(null, serviceLocationId, cancellationToken);
+
+    public Task<SmappeeServiceLocationInfoDto> GetServiceLocationInfoAsync(
+        string accessToken,
+        int serviceLocationId,
+        CancellationToken cancellationToken = default) =>
+        GetServiceLocationInfoCoreAsync(accessToken, serviceLocationId, cancellationToken);
+
+    private async Task<SmappeeServiceLocationInfoDto> GetServiceLocationInfoCoreAsync(
+        string? accessTokenOrNull,
+        int serviceLocationId,
+        CancellationToken cancellationToken)
+    {
+        var token = accessTokenOrNull ?? await GetAccessTokenAsync(cancellationToken);
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"servicelocation/{serviceLocationId}/info");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _http.SendAsync(req, cancellationToken);
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "Smappee servicelocation info failed for {ServiceLocationId}: {Status} {Body}",
+                serviceLocationId,
+                response.StatusCode,
+                Truncate(payload));
+            throw new InvalidOperationException(
+                $"Smappee service location info request failed for {serviceLocationId} ({(int)response.StatusCode}).");
+        }
+
+        var dto = JsonSerializer.Deserialize<SmappeeServiceLocationInfoDto>(payload, JsonOptions);
+        if (dto == null)
+            throw new InvalidOperationException($"Smappee service location info for {serviceLocationId} had an empty body.");
+
+        return dto;
+    }
+
+    private async Task<IReadOnlyList<string>> GetChargerSerialsRegisteredAtParkWithTokenAsync(
+        string token,
+        int serviceLocationId,
+        CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "servicelocation");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _http.SendAsync(req, cancellationToken);
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "Smappee servicelocation list failed: {Status} {Body}",
+                response.StatusCode,
+                Truncate(payload));
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var (_, rows) = ParseServiceLocationsListPayload(payload);
+            if (rows.Count == 0)
+                return Array.Empty<string>();
+
+            return SmappeeServiceLocationChargerSerials.SelectForChargingPark(rows, serviceLocationId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse Smappee servicelocation list JSON");
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string BuildChargingSessionsQuery(long rangeStartMs, long? rangeEndMs, bool? active)
+    {
+        var q = new StringBuilder();
+        q.Append("?range=");
+        q.Append(rangeStartMs);
+        if (rangeEndMs.HasValue)
+        {
+            q.Append(',');
+            q.Append(rangeEndMs.Value);
+        }
+
+        if (active.HasValue)
+            q.Append(active.Value ? "&active=true" : "&active=false");
+
+        return q.ToString();
+    }
+
+    private async Task<IReadOnlyList<SmappeeSessionDto>> GetChargingSessionsWithTokenAsync(
+        string token,
+        int serviceLocationId,
+        long rangeStartMs,
+        long? rangeEndMs,
+        bool? active,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildChargingSessionsQuery(rangeStartMs, rangeEndMs, active);
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"chargingparks/{serviceLocationId}/sessions{query}");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await _http.SendAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -130,14 +286,21 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         return Array.Empty<SmappeeSessionDto>();
     }
 
-    private static List<SmappeeSessionDto> ParseSessionArray(JsonElement array)
+    private List<SmappeeSessionDto> ParseSessionArray(JsonElement array)
     {
         var result = new List<SmappeeSessionDto>();
         foreach (var el in array.EnumerateArray())
         {
-            var dto = JsonSerializer.Deserialize<SmappeeSessionDto>(el.GetRawText(), JsonOptions);
-            if (dto != null)
-                result.Add(dto);
+            try
+            {
+                var dto = JsonSerializer.Deserialize<SmappeeSessionDto>(el.GetRawText(), JsonOptions);
+                if (dto != null)
+                    result.Add(dto);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Skipping a Smappee session row: invalid JSON for session DTO");
+            }
         }
 
         return result;
@@ -149,6 +312,31 @@ public class SmappeeCloudClient : ISmappeeCloudClient
             return _options.OAuthBaseUrl.Trim();
 
         return SmappeeUrl.ApiV3ToOAuthV1Base(_normalizedApiBase);
+    }
+
+    /// <summary>Handles documented object shape and a top-level array fallback if the API variant returns rows only.</summary>
+    private (string? AppName, List<SmappeeServiceLocationRowDto> Rows) ParseServiceLocationsListPayload(string payload)
+    {
+        try
+        {
+            var text = string.IsNullOrWhiteSpace(payload) ? "{}" : payload;
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                var rows = JsonSerializer.Deserialize<List<SmappeeServiceLocationRowDto>>(root.GetRawText(), JsonOptions)
+                    ?? new List<SmappeeServiceLocationRowDto>();
+                return (null, rows);
+            }
+
+            var dto = JsonSerializer.Deserialize<SmappeeServiceLocationsListResponse>(root.GetRawText(), JsonOptions);
+            return (dto?.AppName, dto?.ServiceLocations ?? new List<SmappeeServiceLocationRowDto>());
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Smappee servicelocation list JSON parse failed");
+            throw new InvalidOperationException("Smappee service locations response was not valid JSON.");
+        }
     }
 
     private static string Truncate(string s, int max = 500) =>
