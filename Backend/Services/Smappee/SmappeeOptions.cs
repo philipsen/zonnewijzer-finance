@@ -4,6 +4,20 @@ public class SmappeeOptions
 {
     public const string SectionName = "Smappee";
 
+    /// <summary>True when <see cref="ClientId"/>, <see cref="ClientSecret"/>, <see cref="Username"/>, and <see cref="Password"/> are all non-empty (after trim).</summary>
+    public bool HasAllCredentials => GetMissingCredentialFields().Count == 0;
+
+    /// <summary>Which OAuth fields are null, empty, or whitespace. Values are property names, not secrets.</summary>
+    public IReadOnlyList<string> GetMissingCredentialFields()
+    {
+        var m = new List<string>(4);
+        if (string.IsNullOrWhiteSpace(ClientId)) m.Add(nameof(ClientId));
+        if (string.IsNullOrWhiteSpace(ClientSecret)) m.Add(nameof(ClientSecret));
+        if (string.IsNullOrWhiteSpace(Username)) m.Add(nameof(Username));
+        if (string.IsNullOrWhiteSpace(Password)) m.Add(nameof(Password));
+        return m;
+    }
+
     /// <summary>REST API base (e.g. <c>https://app1pub.smappee.net/dev/v3</c>).</summary>
     public string BaseUrl { get; set; } = "https://app1pub.smappee.net/dev/v3";
 

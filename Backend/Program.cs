@@ -13,12 +13,15 @@ using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using Microsoft.Extensions.Options;
 
 // Configure Serilog early
 Directory.CreateDirectory("logs");
 
 if (LocalSecretsBootstrap.IsDevelopmentEnvironment())
     LocalSecretsBootstrap.Apply();
+else
+    LocalSecretsBootstrap.MapSmappeeAliases();
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -165,6 +168,24 @@ var app = builder.Build();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         context.Database.Migrate();
         DevelopmentAdminSeed.Apply(builder.Configuration, context);
+
+        var smappeeOpts = scope.ServiceProvider.GetRequiredService<IOptions<SmappeeOptions>>().Value;
+        var smappeeBg = scope.ServiceProvider.GetRequiredService<IOptions<SmappeeBackgroundSyncOptions>>().Value;
+        var missingSmappee = smappeeOpts.GetMissingCredentialFields();
+        if (smappeeBg.Enabled && smappeeOpts.ServiceLocationId > 0 && missingSmappee.Count > 0)
+        {
+            Log.Error(
+                "Smappee: BackgroundSync is enabled and ServiceLocationId is set, but required credentials are null or empty. Missing: {Missing}.",
+                string.Join(", ", missingSmappee));
+        }
+
+        Log.Information(
+            "Smappee: credentials {CredentialStatus} (ServiceLocationId={ServiceLocationId}, BackgroundSync={BgEnabled})",
+            missingSmappee.Count == 0
+                ? "OK — ClientId, ClientSecret, Username, Password are all non-empty"
+                : "incomplete — missing: " + string.Join(", ", missingSmappee),
+            smappeeOpts.ServiceLocationId,
+            smappeeBg.Enabled);
     }
 
     // Configure the HTTP request pipeline.
