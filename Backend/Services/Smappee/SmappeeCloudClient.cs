@@ -9,6 +9,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
     private readonly HttpClient _http;
     private readonly SmappeeOptions _options;
     private readonly ILogger<SmappeeCloudClient> _logger;
+    private readonly string _normalizedApiBase;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -20,8 +21,8 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         _http = http;
         _options = options.Value;
         _logger = logger;
-        if (!string.IsNullOrWhiteSpace(_options.BaseUrl))
-            _http.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
+        _normalizedApiBase = SmappeeUrl.NormalizeApiBase(_options.BaseUrl);
+        _http.BaseAddress = new Uri(_normalizedApiBase.TrimEnd('/') + "/");
     }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
@@ -54,16 +55,19 @@ public class SmappeeCloudClient : ISmappeeCloudClient
             _logger.LogError(
                 "Smappee token request failed: {Status} {Body}. " +
                 "TokenEndpoint was {TokenEndpoint} (Smappee:OAuthBaseUrl empty: {WithoutOAuthOverride}; " +
-                "Smappee:BaseUrl ends with /v3: {BaseUrlLooksLikeV3}). " +
-                "Config snapshot: client_id length {ClientIdLen}, client_secret {SecretPresent}, username length {UsernameLen}.",
+                "normalized API base has /v3: {BaseUrlLikeV3}). " +
+                "Config snapshot: client_id length {ClientIdLen}, client_secret {SecretPresent}, username length {UsernameLen}. " +
+                "Smappee:BaseUrl (raw) was {BaseUrlRaw}; normalized API base is {ApiBaseNorm}.",
                 response.StatusCode,
                 Truncate(payload),
                 tokenUri,
                 string.IsNullOrWhiteSpace(_options.OAuthBaseUrl),
-                (_options.BaseUrl ?? "").Contains("/v3", StringComparison.OrdinalIgnoreCase),
+                _normalizedApiBase.Contains("/v3", StringComparison.OrdinalIgnoreCase),
                 _options.ClientId?.Length ?? 0,
                 string.IsNullOrEmpty(_options.ClientSecret) ? "empty" : "set",
-                _options.Username?.Length ?? 0);
+                _options.Username?.Length ?? 0,
+                _options.BaseUrl ?? "(null)",
+                _normalizedApiBase);
             throw new InvalidOperationException(
                 $"Smappee authentication failed ({(int)response.StatusCode}). " +
                 $"Check Smappee token URL (tried {tokenUri}) and credentials in production env.");
@@ -144,11 +148,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         if (!string.IsNullOrWhiteSpace(_options.OAuthBaseUrl))
             return _options.OAuthBaseUrl.Trim();
 
-        var api = _options.BaseUrl?.Trim() ?? "";
-        if (api.Contains("/v3", StringComparison.OrdinalIgnoreCase))
-            return api.Replace("/v3", "/v1", StringComparison.OrdinalIgnoreCase);
-
-        return api;
+        return SmappeeUrl.ApiV3ToOAuthV1Base(_normalizedApiBase);
     }
 
     private static string Truncate(string s, int max = 500) =>
