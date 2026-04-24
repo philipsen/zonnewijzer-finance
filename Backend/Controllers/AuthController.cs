@@ -393,7 +393,7 @@ namespace Backend.Controllers
                 name = user.Name,
                 picture = user.PictureUrl,
                 role = user.Role.ToString(),
-                chargingUserId = user.ChargingUserId
+                chargeCardId = user.ChargeCardId
             }
         };
 
@@ -483,7 +483,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargingUserId = user.ChargingUserId,
+                    chargeCardId = user.ChargeCardId,
                     devUserDeletionEnabled = _environment.IsDevelopment()
                 });
             }
@@ -509,13 +509,13 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                if (requestingUser == null || !requestingUser.Role.CanManageUserProfiles())
                 {
-                    _logger.LogWarning("Non-admin user {UserId} attempted to access users list", userId);
+                    _logger.LogWarning("User {UserId} attempted to access users list without permission", userId);
                     return Forbid();
                 }
 
-                _logger.LogInformation("Admin {UserId} requesting all users list", userId);
+                _logger.LogInformation("User {UserId} requesting all users list", userId);
 
                 var users = await _context.Users
                     .OrderByDescending(u => u.CreatedAt)
@@ -526,7 +526,7 @@ namespace Backend.Controllers
                         name = u.Name,
                         picture = u.PictureUrl,
                         role = u.Role.ToString(),
-                        chargingUserId = u.ChargingUserId,
+                        chargeCardId = u.ChargeCardId,
                         createdAt = u.CreatedAt,
                         lastLoginAt = u.LastLoginAt,
                         hasPendingInvite = _context.PasswordResetTokens.Any(t =>
@@ -589,18 +589,18 @@ namespace Backend.Controllers
                 var deletedEvents = await _context.EventLogs.CountAsync();
                 var deletedSessions = await _context.ChargingSessions.CountAsync();
                 var deletedPrices = await _context.EnergyPrices.CountAsync();
-                var deletedProfiles = await _context.ChargingUserProfiles.CountAsync();
+                var deletedProfiles = await _context.ChargeCards.CountAsync();
                 var usersPreserved = await _context.Users.CountAsync();
 
                 foreach (var u in await _context.Users.ToListAsync())
-                    u.ChargingUserId = null;
+                    u.ChargeCardId = null;
 
                 _context.Invoices.RemoveRange(await _context.Invoices.ToListAsync());
                 _context.MolliePayments.RemoveRange(await _context.MolliePayments.ToListAsync());
                 _context.EventLogs.RemoveRange(await _context.EventLogs.ToListAsync());
                 _context.ChargingSessions.RemoveRange(await _context.ChargingSessions.ToListAsync());
                 _context.EnergyPrices.RemoveRange(await _context.EnergyPrices.ToListAsync());
-                _context.ChargingUserProfiles.RemoveRange(await _context.ChargingUserProfiles.ToListAsync());
+                _context.ChargeCards.RemoveRange(await _context.ChargeCards.ToListAsync());
 
                 // InMemory (used in tests) does not support explicit transactions the same way as SQLite.
                 var useTransaction = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite";
@@ -633,7 +633,7 @@ namespace Backend.Controllers
                         Invoices = deletedInvoices,
                         EventLogs = deletedEvents,
                         EnergyPrices = deletedPrices,
-                        ChargingUserProfiles = deletedProfiles,
+                        ChargeCards = deletedProfiles,
                         MolliePayments = deletedMollie
                     }
                 });
@@ -649,7 +649,7 @@ namespace Backend.Controllers
 
         /// <summary>
         /// Removes all charging sessions and charging user profiles, and clears app users' ChargingUserId links.
-        /// Does not remove invoices, payments, or other tables. Admin only; requires confirmation phrase.
+        /// Does not remove invoices, payments, or other tables. Owner only; requires confirmation phrase.
         /// </summary>
         [HttpPost("admin/clear-charging-data")]
         public async Task<IActionResult> ClearChargingData([FromBody] WipeDatabaseRequest? request)
@@ -674,26 +674,26 @@ namespace Backend.Controllers
                 }
 
                 var requestingUser = await _context.Users.FindAsync(userId);
-                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                if (requestingUser == null || !requestingUser.Role.CanClearChargingData())
                 {
-                    _logger.LogWarning("Non-admin user {UserId} attempted clear charging data", userId);
+                    _logger.LogWarning("Non-owner user {UserId} attempted clear charging data", userId);
                     return Forbid();
                 }
 
                 _logger.LogWarning(
-                    "Charging sessions and profiles cleared by admin {AdminId} ({Email})",
+                    "Charging sessions and profiles cleared by owner {UserId} ({Email})",
                     userId,
                     requestingUser.Email);
 
                 var removedSessions = await _context.ChargingSessions.CountAsync();
-                var removedProfiles = await _context.ChargingUserProfiles.CountAsync();
-                var appUsersUnlinked = await _context.Users.CountAsync(u => u.ChargingUserId != null);
+                var removedProfiles = await _context.ChargeCards.CountAsync();
+                var appUsersUnlinked = await _context.Users.CountAsync(u => u.ChargeCardId != null);
 
                 foreach (var u in await _context.Users.ToListAsync())
-                    u.ChargingUserId = null;
+                    u.ChargeCardId = null;
 
                 _context.ChargingSessions.RemoveRange(await _context.ChargingSessions.ToListAsync());
-                _context.ChargingUserProfiles.RemoveRange(await _context.ChargingUserProfiles.ToListAsync());
+                _context.ChargeCards.RemoveRange(await _context.ChargeCards.ToListAsync());
 
                 var useTransaction = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite";
                 if (useTransaction)
@@ -725,9 +725,9 @@ namespace Backend.Controllers
 
                 return Ok(new ClearChargingDataResult
                 {
-                    Message = "Charging sessions and charging user profiles removed. App users were unlinked from charging accounts.",
+                    Message = "Charging sessions and charge cards removed. App users were unlinked from charge cards.",
                     ChargingSessionsRemoved = removedSessions,
-                    ChargingUserProfilesRemoved = removedProfiles,
+                    ChargeCardsRemoved = removedProfiles,
                     AppUsersUnlinked = appUsersUnlinked
                 });
             }
@@ -738,12 +738,15 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin,Owner")]
-        [HttpPut("users/{id}")]
-        public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest request)
+        [Authorize(Roles = "Base,Admin,Owner")]
+        [HttpPut("users/{id:int}")]
+        public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest? request)
         {
             try
             {
+                if (request == null)
+                    return BadRequest(new { message = "Request body is required." });
+
                 var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
                 var userIdString = _jwtService.ValidateToken(token);
                 
@@ -812,7 +815,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargingUserId = user.ChargingUserId,
+                    chargeCardId = user.ChargeCardId,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -820,7 +823,8 @@ namespace Backend.Controllers
             catch (Exception ex)
             {
                 return BadRequest($"Update failed: {ex.Message}");
-            }        }
+            }
+        }
 
         /// <summary>
         /// Permanently deletes an app user (invoices and password-reset tokens cascade). Development environment only.
@@ -889,7 +893,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Admin,Owner")]
+        [Authorize(Roles = "Base,Admin,Owner")]
         [HttpPut("users/{id}/role")]
         public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleRequest request)
         {
@@ -970,29 +974,30 @@ namespace Backend.Controllers
                 return Unauthorized();
 
             var ids = await _context.ChargingSessions
-                .Select(cs => cs.UserId)
+                .Select(cs => cs.ChargeCardId)
                 .Distinct()
                 .OrderBy(id => id)
                 .ToListAsync();
 
             var linkedMap = await _context.Users
-                .Where(u => u.ChargingUserId != null)
-                .Select(u => new { u.ChargingUserId, u.Name, UserId = u.Id })
+                .Where(u => u.ChargeCardId != null)
+                .Select(u => new { u.ChargeCardId, u.Name, UserId = u.Id })
                 .ToListAsync();
 
-            var profiles = await _context.ChargingUserProfiles
+            var profiles = await _context.ChargeCards
                 .Where(p => ids.Contains(p.Id))
                 .ToListAsync();
 
             var result = ids.Select(id =>
             {
-                var linked = linkedMap.FirstOrDefault(l => l.ChargingUserId == id);
+                var linked = linkedMap.FirstOrDefault(l => l.ChargeCardId == id);
                 var profile = profiles.FirstOrDefault(p => p.Id == id);
                 return new
                 {
                     id,
-                    rfidTokenKey = profile?.RfidTokenKey,
-                    displayName = profile?.DisplayName,
+                    smappeeWhitelistId = profile?.SmappeeWhitelistId,
+                    value = profile?.Value,
+                    comment = profile?.Comment,
                     linkedUserId = linked?.UserId,
                     linkedUserName = linked?.Name
                 };
@@ -1005,25 +1010,33 @@ namespace Backend.Controllers
         [HttpGet("/charging-users")]
         public Task<IActionResult> GetChargingUsersRoot() => GetChargingUsers();
 
+        [HttpGet("charge-cards")]
+        public Task<IActionResult> GetChargeCards() => GetChargingUsers();
+
+        [HttpGet("/charge-cards")]
+        public Task<IActionResult> GetChargeCardsRoot() => GetChargingUsers();
+
         [HttpGet("charging-users/{id}")]
+        [HttpGet("charge-cards/{id}")]
         public async Task<IActionResult> GetChargingUserById(int id)
         {
             var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
             if (_jwtService.ValidateToken(token) == null)
                 return Unauthorized();
 
-            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.UserId == id);
+            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.ChargeCardId == id);
             if (!sessionExists)
-                return NotFound("Charging user not found");
+                return NotFound("Charge card not found");
 
-            var profile = await _context.ChargingUserProfiles.FindAsync(id);
-            var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+            var profile = await _context.ChargeCards.FindAsync(id);
+            var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
 
             return Ok(new
             {
                 id,
-                rfidTokenKey = profile?.RfidTokenKey,
-                displayName = profile?.DisplayName,
+                smappeeWhitelistId = profile?.SmappeeWhitelistId,
+                value = profile?.Value,
+                comment = profile?.Comment,
                 street = profile?.Street,
                 houseNumber = profile?.HouseNumber,
                 postalCode = profile?.PostalCode,
@@ -1035,6 +1048,7 @@ namespace Backend.Controllers
 
         [Authorize(Roles = "Admin,Owner")]
         [HttpPut("charging-users/{id}")]
+        [HttpPut("charge-cards/{id}")]
         public async Task<IActionResult> UpdateChargingUser(int id, [FromBody] UpdateChargingUserRequest request)
         {
             var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
@@ -1042,76 +1056,63 @@ namespace Backend.Controllers
             if (editorIdString == null || !int.TryParse(editorIdString, out int editorId))
                 return Unauthorized();
 
-            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.UserId == id);
+            var sessionExists = await _context.ChargingSessions.AnyAsync(cs => cs.ChargeCardId == id);
             if (!sessionExists)
-                return NotFound("Charging user not found");
+                return NotFound("Charge card not found");
 
             var editor = await _context.Users.FindAsync(editorId);
             var editorName = editor?.Name ?? $"User {editorId}";
             var changes = new List<string>();
 
-            // Update or create display name
-            var profile = await _context.ChargingUserProfiles.FindAsync(id);
-            var oldDisplayName = profile?.DisplayName;
-            if (request.DisplayName != oldDisplayName)
+            var profile = await _context.ChargeCards.FindAsync(id);
+            if (profile == null)
+                return NotFound("Charge card record missing; run Smappee sync.");
+
+            var oldComment = profile.Comment;
+            if (request.DisplayName != oldComment)
             {
-                if (profile == null)
-                {
-                    profile = new Backend.Models.ChargingUserProfile { Id = id };
-                    _context.ChargingUserProfiles.Add(profile);
-                }
-                profile.DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
-                changes.Add($"DisplayName: '{oldDisplayName ?? "none"}' → '{profile.DisplayName ?? "none"}'");
+                profile.Comment = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
+                changes.Add($"Comment: '{oldComment ?? "none"}' → '{profile.Comment ?? "none"}'");
             }
 
-            // Update address fields
             var newStreet = string.IsNullOrWhiteSpace(request.Street) ? null : request.Street.Trim();
             var newHouseNumber = string.IsNullOrWhiteSpace(request.HouseNumber) ? null : request.HouseNumber.Trim();
             var newPostalCode = string.IsNullOrWhiteSpace(request.PostalCode) ? null : request.PostalCode.Trim().ToUpper().Replace(" ", "");
             var newPlaceName = string.IsNullOrWhiteSpace(request.PlaceName) ? null : request.PlaceName.Trim();
 
-            if (newStreet != profile?.Street || newHouseNumber != profile?.HouseNumber ||
-                newPostalCode != profile?.PostalCode || newPlaceName != profile?.PlaceName)
+            if (newStreet != profile.Street || newHouseNumber != profile.HouseNumber ||
+                newPostalCode != profile.PostalCode || newPlaceName != profile.PlaceName)
             {
-                if (profile == null)
-                {
-                    profile = new Backend.Models.ChargingUserProfile { Id = id };
-                    _context.ChargingUserProfiles.Add(profile);
-                }
                 profile.Street = newStreet;
                 profile.HouseNumber = newHouseNumber;
                 profile.PostalCode = newPostalCode;
                 profile.PlaceName = newPlaceName;
-                changes.Add($"Address updated");
+                changes.Add("Address updated");
             }
 
-            // Handle user linking
             if (request.UnlinkUser)
             {
-                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
                 if (currentlyLinked != null)
                 {
                     changes.Add($"Unlinked user '{currentlyLinked.Name}'");
-                    currentlyLinked.ChargingUserId = null;
+                    currentlyLinked.ChargeCardId = null;
                 }
             }
             else if (request.LinkedUserId.HasValue)
             {
-                // Unlink anyone currently linked to this charging user
-                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
+                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
                 if (currentlyLinked != null && currentlyLinked.Id != request.LinkedUserId.Value)
-                {
-                    currentlyLinked.ChargingUserId = null;
-                }
+                    currentlyLinked.ChargeCardId = null;
 
                 var newLinkedUser = await _context.Users.FindAsync(request.LinkedUserId.Value);
                 if (newLinkedUser == null)
                     return NotFound("Linked user not found");
 
-                if (newLinkedUser.ChargingUserId != id)
+                if (newLinkedUser.ChargeCardId != id)
                 {
                     changes.Add($"Linked user: '{newLinkedUser.Name}'");
-                    newLinkedUser.ChargingUserId = id;
+                    newLinkedUser.ChargeCardId = id;
                 }
             }
 
@@ -1121,20 +1122,21 @@ namespace Backend.Controllers
                 {
                     Timestamp = DateTime.UtcNow,
                     UserName = editorName,
-                    Action = $"Edited charging user {id}: {string.Join(", ", changes)}"
+                    Action = $"Edited charge card {id}: {string.Join(", ", changes)}"
                 });
             }
 
             await _context.SaveChangesAsync();
 
-            var linkedUserAfter = await _context.Users.FirstOrDefaultAsync(u => u.ChargingUserId == id);
-            var profileAfter = await _context.ChargingUserProfiles.FindAsync(id);
+            var linkedUserAfter = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
+            var profileAfter = await _context.ChargeCards.FindAsync(id);
 
             return Ok(new
             {
                 id,
-                rfidTokenKey = profileAfter?.RfidTokenKey,
-                displayName = profileAfter?.DisplayName,
+                smappeeWhitelistId = profileAfter?.SmappeeWhitelistId,
+                value = profileAfter?.Value,
+                comment = profileAfter?.Comment,
                 street = profileAfter?.Street,
                 houseNumber = profileAfter?.HouseNumber,
                 postalCode = profileAfter?.PostalCode,
@@ -1163,6 +1165,13 @@ namespace Backend.Controllers
                     return NotFound("User not found");
                 }
 
+                var requestingUser = await _context.Users.FindAsync(currentUserId);
+                if (requestingUser == null)
+                    return Unauthorized();
+
+                if (!requestingUser.Role.CanManageUserProfiles() && currentUserId != id)
+                    return Forbid();
+
                 return Ok(new
                 {
                     id = user.Id,
@@ -1170,7 +1179,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargingUserId = user.ChargingUserId,
+                    chargeCardId = user.ChargeCardId,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -1312,7 +1321,8 @@ namespace Backend.Controllers
         }
 
         /// <summary>
-        /// Owner may grant Owner to anyone. An Admin may grant Owner <em>only to themselves</em> (editing own user id).
+        /// Owner may grant Owner to anyone. An Admin may grant Owner <em>only to themselves</em>.
+        /// Base and administrators may assign Base or Admin (not Owner, except as above).
         /// </summary>
         private static bool CanAssignUserRole(UserRole editor, UserRole newRole, int targetUserId, int currentUserId)
         {
@@ -1323,7 +1333,7 @@ namespace Backend.Controllers
                 return editor == UserRole.Admin && targetUserId == currentUserId;
             }
 
-            return editor.IsAppAdministrator();
+            return editor.IsAppAdministrator() || editor == UserRole.Base;
         }
 
         private async Task NotifyAdminsOfNewSignupAsync(User newUser, string signupMethod)

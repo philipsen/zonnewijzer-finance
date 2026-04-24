@@ -6,7 +6,7 @@ namespace Backend.Models
         public int Invoices { get; set; }
         public int EventLogs { get; set; }
         public int EnergyPrices { get; set; }
-        public int ChargingUserProfiles { get; set; }
+        public int ChargeCards { get; set; }
         public int MolliePayments { get; set; }
     }
 
@@ -21,7 +21,7 @@ namespace Backend.Models
     {
         public string Message { get; set; } = string.Empty;
         public int ChargingSessionsRemoved { get; set; }
-        public int ChargingUserProfilesRemoved { get; set; }
+        public int ChargeCardsRemoved { get; set; }
         public int AppUsersUnlinked { get; set; }
     }
 }

@@ -68,7 +68,7 @@
               <div class="role-management">
                 <span :class="['role-badge', `role-${user.role.toLowerCase()}`]">{{ user.role }}</span>
                 <select 
-                  v-if="isAppAdminView && user.id !== currentUserId"
+                  v-if="canManageProfilesView && user.id !== currentUserId"
                   :value="user.role"
                   @change="updateUserRole(user, $event.target.value)"
                   class="role-select"
@@ -87,9 +87,9 @@
               <span class="date-label">Last Login:</span>
               <span class="date-value">{{ formatDate(user.lastLoginAt) }}</span>
             </div>
-            <div v-if="user.chargingUserId != null" class="date-item">
-              <span class="date-label">Charging user:</span>
-              <span class="date-value mono">{{ user.chargingUserId }}</span>
+            <div v-if="user.chargeCardId != null" class="date-item">
+              <span class="date-label">Charge card:</span>
+              <span class="date-value mono">{{ user.chargeCardId }}</span>
             </div>
           </div>
         </div>
@@ -98,14 +98,14 @@
             v-if="isOwnerView"
             type="button"
             class="btn btn-gnucash-customer"
-            :disabled="gnucashCustomerLoadingId === user.id || user.chargingUserId == null"
-            :title="user.chargingUserId == null ? 'Link this app user to a charging user first (Edit user).' : 'Create CU-' + user.chargingUserId + ' in GnuCash if missing.'"
+            :disabled="gnucashCustomerLoadingId === user.id || user.chargeCardId == null"
+            :title="user.chargeCardId == null ? 'Link this app user to a charge card first (Edit user).' : 'Create CU-' + user.chargeCardId + ' in GnuCash if missing.'"
             @click="ensureGnucashCustomer(user)"
           >
             {{ gnucashCustomerLoadingId === user.id ? 'GnuCash…' : 'GnuCash customer' }}
           </button>
           <router-link 
-            v-if="isAppAdminView"
+            v-if="canManageProfilesView"
             :to="`/users/${user.id}/edit`" 
             class="btn btn-edit"
           >
@@ -129,7 +129,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-import { isAppAdmin, isOwner } from '../utils/roles'
+import { isAppAdmin, isOwner, canManageUserProfiles } from '../utils/roles'
 
 export default {
   name: 'UsersList',
@@ -149,6 +149,7 @@ export default {
 
     const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
     const isOwnerView = computed(() => isOwner(currentUserRole.value))
+    const canManageProfilesView = computed(() => canManageUserProfiles(currentUserRole.value))
 
     const fetchCurrentUser = async () => {
       try {
@@ -259,7 +260,7 @@ export default {
     }
 
     const ensureGnucashCustomer = async (user) => {
-      if (user.chargingUserId == null) return
+      if (user.chargeCardId == null) return
       try {
         gnucashCustomerLoadingId.value = user.id
         const token = localStorage.getItem('token')
@@ -355,6 +356,7 @@ export default {
       currentUserRole,
       isAppAdminView,
       isOwnerView,
+      canManageProfilesView,
       currentUserId,
       inviteEmail,
       inviting,

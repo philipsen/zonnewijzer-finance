@@ -91,7 +91,7 @@ export default {
     const userName = ref('')
     const months = ref([])
     const hasChargingAccount = ref(true)
-    const chargingUserId = ref(null)
+    const chargeCardId = ref(null)
 
     const fetchMyInvoices = async () => {
       try {
@@ -105,11 +105,11 @@ export default {
           headers: { Authorization: `Bearer ${token}` }
         })
         userName.value = response.data.userName
-        if (!response.data.chargingUserId) {
+        if (!response.data.chargeCardId) {
           hasChargingAccount.value = false
           return
         }
-        chargingUserId.value = response.data.chargingUserId
+        chargeCardId.value = response.data.chargeCardId
         months.value = response.data.months
       } catch (err) {
         console.error('Failed to fetch invoices:', err)
@@ -127,7 +127,7 @@ export default {
       try {
         const token = localStorage.getItem('token')
         const response = await axios.get(
-          `/api/invoices/${chargingUserId.value}/${month.year}/${month.month}`,
+          `/api/invoices/${chargeCardId.value}/${month.year}/${month.month}`,
           { headers: { Authorization: `Bearer ${token}` }, responseType: 'blob' }
         )
         const blob = new Blob([response.data], { type: 'application/pdf' })
@@ -152,7 +152,7 @@ export default {
       try {
         const token = localStorage.getItem('token')
         const response = await axios.post(
-          `/api/invoices/${chargingUserId.value}/${month.year}/${month.month}/payment-link`,
+          `/api/invoices/${chargeCardId.value}/${month.year}/${month.month}/payment-link`,
           null,
           { headers: { Authorization: `Bearer ${token}` } }
         )

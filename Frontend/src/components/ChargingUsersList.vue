@@ -1,8 +1,8 @@
 <template>
   <div class="charging-users-page">
     <div class="page-header">
-      <h1>Charging Users</h1>
-      <p class="subtitle">Users appear from session imports. RFID keys come from the token column; names in parentheses become display names after import.</p>
+      <h1>Charge cards</h1>
+      <p class="subtitle">Cards come from Smappee whitelist sync and session RFIDs. The comment is the display label when present.</p>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
@@ -13,27 +13,27 @@
         <table v-if="chargingUsers.length" class="charging-users-table">
           <thead>
             <tr>
-              <th>RFID key</th>
-              <th>Display Name</th>
-              <th>Linked App User</th>
+              <th>Value (RFID)</th>
+              <th>Comment</th>
+              <th>Linked app user</th>
               <th v-if="isAdmin">Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="cu in chargingUsers" :key="cu.id">
-              <td class="mono-cell">{{ cu.rfidTokenKey || '—' }}</td>
-              <td>{{ cu.displayName || '—' }}</td>
+              <td class="mono-cell">{{ cu.value || '—' }}</td>
+              <td>{{ cu.comment || '—' }}</td>
               <td>
                 <span v-if="cu.linkedUserName" class="linked-badge">{{ cu.linkedUserName }}</span>
                 <span v-else class="unlinked-badge">Not linked</span>
               </td>
               <td v-if="isAdmin">
-                <router-link :to="`/charging-users/${cu.id}/edit`" class="btn-edit">Edit</router-link>
+                <router-link :to="`/charge-cards/${cu.id}/edit`" class="btn-edit">Edit</router-link>
               </td>
             </tr>
           </tbody>
         </table>
-        <p v-else class="no-data">No charging users found. Upload charging sessions first.</p>
+        <p v-else class="no-data">No charge cards yet. Run a Smappee sync from Charging Sessions.</p>
       </div>
     </div>
   </div>
@@ -70,7 +70,7 @@ export default {
         })
         this.chargingUsers = data
       } catch {
-        this.error = 'Failed to load charging users.'
+        this.error = 'Failed to load charge cards.'
       } finally {
         this.loading = false
       }

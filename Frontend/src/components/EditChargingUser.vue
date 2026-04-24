@@ -2,12 +2,12 @@
   <div class="edit-charging-user-page">
     <div class="page-header">
       <div class="header-content">
-        <router-link to="/charging-users" class="back-link">
-          ← Back to Charging Users
+        <router-link to="/charge-cards" class="back-link">
+          ← Back to charge cards
         </router-link>
-        <h1>Edit Charging User {{ chargingUserId }}</h1>
-        <p v-if="chargingUser?.rfidTokenKey" class="rfid-line">
-          RFID key: <code>{{ chargingUser.rfidTokenKey }}</code>
+        <h1>Edit charge card {{ chargingUserId }}</h1>
+        <p v-if="chargingUser?.value" class="rfid-line">
+          RFID value: <code>{{ chargingUser.value }}</code>
         </p>
       </div>
     </div>
@@ -16,7 +16,7 @@
 
     <div v-else-if="!isAdmin" class="access-denied">
       <h2>Access Denied</h2>
-      <p>Only administrators can edit charging users.</p>
+      <p>Only administrators can edit charge cards.</p>
     </div>
 
     <div v-else-if="error && !chargingUser" class="error">{{ error }}</div>
@@ -34,7 +34,7 @@
             placeholder="e.g. John Doe"
             class="form-input"
           >
-          <p class="form-hint">Shown on invoices and lists. After a CSV import, this is filled from the name in parentheses in the token column.</p>
+          <p class="form-hint">Shown on invoices and lists. Synced from Smappee whitelist <em>comment</em> when present.</p>
         </div>
 
         <div class="form-group">
@@ -49,15 +49,15 @@
               v-for="u in availableUsers"
               :key="u.id"
               :value="u.id"
-              :disabled="u.chargingUserId !== null && u.chargingUserId !== chargingUser.id"
+              :disabled="u.chargeCardId !== null && u.chargeCardId !== chargingUser.id"
             >
               {{ u.name }}
-              <template v-if="u.chargingUserId !== null && u.chargingUserId !== chargingUser.id">
-                (linked to charging user {{ u.chargingUserId }})
+              <template v-if="u.chargeCardId !== null && u.chargeCardId !== chargingUser.id">
+                (linked to card {{ u.chargeCardId }})
               </template>
             </option>
           </select>
-          <p class="form-hint">Associates this charging station ID with an app account for invoicing.</p>
+          <p class="form-hint">Associates this charge card with an app account for invoicing.</p>
         </div>
 
         <fieldset class="address-fieldset">
@@ -167,7 +167,7 @@ export default {
 
     const hasChanges = computed(() => {
       if (!chargingUser.value) return false
-      const displayNameChanged = (form.value.displayName || null) !== (chargingUser.value.displayName || null)
+      const displayNameChanged = (form.value.displayName || null) !== (chargingUser.value.comment || null)
       const linkedUserChanged = form.value.linkedUserId !== (chargingUser.value.linkedUserId ?? null)
       const streetChanged = (form.value.street || null) !== (chargingUser.value.street || null)
       const houseNumberChanged = (form.value.houseNumber || null) !== (chargingUser.value.houseNumber || null)
@@ -195,7 +195,7 @@ export default {
         chargingUser.value = cuRes.data
         availableUsers.value = usersRes.data
         form.value = {
-          displayName: cuRes.data.displayName || '',
+          displayName: cuRes.data.comment || '',
           linkedUserId: cuRes.data.linkedUserId ?? null,
           street: cuRes.data.street || 'Warmoestuin',
           houseNumber: cuRes.data.houseNumber || '',
@@ -204,7 +204,7 @@ export default {
         }
       } catch (err) {
         error.value = err.response?.status === 404
-          ? 'Charging user not found.'
+          ? 'Charge card not found.'
           : 'Failed to load data. Please try again.'
       } finally {
         loading.value = false
@@ -228,7 +228,7 @@ export default {
         await axios.put(`/api/auth/charging-users/${chargingUserId}`, payload, {
           headers: { Authorization: `Bearer ${token}` }
         })
-        router.push('/charging-users')
+        router.push('/charge-cards')
       } catch (err) {
         error.value = err.response?.data || 'Failed to save. Please try again.'
       } finally {
@@ -237,7 +237,7 @@ export default {
     }
 
     const cancel = () => {
-      router.push('/charging-users')
+      router.push('/charge-cards')
     }
 
     onMounted(fetchData)

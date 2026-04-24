@@ -1,24 +1,35 @@
-namespace Backend.Models
+namespace Backend.Models;
+
+public class ChargingSession
 {
-    public class ChargingSession
-    {
-        public int Id { get; set; }
-        public DateTime Start { get; set; }
-        /// <summary>Null while the session is still in progress.</summary>
-        public DateTime? End { get; set; }
-        public int UserId { get; set; }
-        /// <summary>Stable id for the charging point (station serial + connector).</summary>
-        public int StationId { get; set; }
-        public decimal ChargedKwh { get; set; }
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int Id { get; set; }
 
-        /// <summary>Hardware serial from the export; optional for legacy rows.</summary>
-        public string? StationSerialNumber { get; set; }
+    /// <summary>Smappee session id; null for manually entered rows.</summary>
+    public long? SmappeeSessionId { get; set; }
 
-        /// <summary>Connector index from the export; optional for legacy rows.</summary>
-        public string? Connector { get; set; }
+    public string? SerialNumber { get; set; }
+    public string? AuthenticationType { get; set; }
+    public string? Rfid { get; set; }
+    public string? CsmsTransactionId { get; set; }
 
-        /// <summary>Human-readable station name from the export.</summary>
-        public string? ChargingStationName { get; set; }
-    }
+    /// <summary>Session start, epoch ms (Smappee <c>from</c>).</summary>
+    public long FromTimestamp { get; set; }
+
+    /// <summary>Session end, epoch ms (Smappee <c>to</c>).</summary>
+    public long? ToTimestamp { get; set; }
+
+    public string? Status { get; set; }
+    public int? Range { get; set; }
+    public int? Duration { get; set; }
+    public int? Priority { get; set; }
+
+    public decimal? StartReading { get; set; }
+    public decimal? StopReading { get; set; }
+
+    public int ChargeCardId { get; set; }
+
+    /// <summary>Derived charging point id (serial + default connector).</summary>
+    public int StationId { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
