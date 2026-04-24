@@ -160,8 +160,7 @@ var app = builder.Build();
         TryBackupSqliteBeforeMigrate(app.Environment, builder.Configuration.GetConnectionString("DefaultConnection"));
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         context.Database.Migrate();
-        if (app.Environment.IsDevelopment())
-            DevelopmentAdminSeed.Apply(builder.Configuration, context);
+        DevelopmentAdminSeed.Apply(builder.Configuration, context);
     }
 
     // Configure the HTTP request pipeline.

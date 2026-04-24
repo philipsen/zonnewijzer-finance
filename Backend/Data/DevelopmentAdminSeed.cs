@@ -5,11 +5,17 @@ using Serilog;
 
 namespace Backend.Data;
 
-/// <summary>Creates or updates a local admin account when <see cref="DevelopmentSeedOptions"/> is set (Development only).</summary>
+/// <summary>
+/// Creates or updates a bootstrap admin when <see cref="DevelopmentSeedOptions"/> has email and a password
+/// (from env or JSON). Runs after migrations in every environment; no-ops if email or password is missing.
+/// </summary>
 public static class DevelopmentAdminSeed
 {
-    /// <summary>Preferred: set in repo root <c>.env</c> (e.g. via direnv). Also accepts <c>DevelopmentSeed__BootstrapAdmin__Password</c>.</summary>
-    public const string BootstrapAdminPasswordEnvVar = "FINANCE_DEV_BOOTSTRAP_ADMIN_PASSWORD";
+    /// <summary>Legacy name; still supported. Prefer <see cref="BootstrapAdminPasswordEnvVar"/> for production.</summary>
+    public const string BootstrapAdminPasswordEnvVarDev = "FINANCE_DEV_BOOTSTRAP_ADMIN_PASSWORD";
+
+    /// <summary>Preferred in production/Docker; also set <c>DevelopmentSeed__BootstrapAdmin__Password</c> if needed.</summary>
+    public const string BootstrapAdminPasswordEnvVar = "FINANCE_BOOTSTRAP_ADMIN_PASSWORD";
 
     private static readonly PasswordHasher<User> PasswordHasher = new();
 
@@ -69,7 +75,7 @@ public class BootstrapAdminOptions
 {
     public string? Email { get; set; }
 
-    /// <summary>Optional in JSON; prefer <see cref="DevelopmentAdminSeed.BootstrapAdminPasswordEnvVar"/> or <c>DevelopmentSeed__BootstrapAdmin__Password</c> in <c>.env</c>.</summary>
+    /// <summary>Optional in JSON; prefer <see cref="DevelopmentAdminSeed.BootstrapAdminPasswordEnvVar"/> (or legacy <c>FINANCE_DEV_BOOTSTRAP_ADMIN_PASSWORD</c>) or <c>DevelopmentSeed__BootstrapAdmin__Password</c>.</summary>
     public string? Password { get; set; }
 
     public string? Name { get; set; }
