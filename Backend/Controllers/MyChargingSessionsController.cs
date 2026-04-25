@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Backend;
 using Backend.Data;
+using Backend.Models;
 using Backend.Services;
 
 namespace Backend.Controllers;
@@ -33,11 +34,14 @@ public class MyChargingSessionsController : ControllerBase
                 return Unauthorized();
 
             var currentUser = await _context.Users.FindAsync(currentUserId);
-            if (currentUser?.ChargeCardId == null)
+            var myCardIds = currentUser is null
+                ? Array.Empty<int>()
+                : await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, currentUserId);
+            if (myCardIds.Count == 0)
                 return Forbid();
 
             var timestamps = await _context.ChargingSessions
-                .Where(s => s.ChargeCardId == currentUser.ChargeCardId)
+                .Where(s => myCardIds.Contains(s.ChargeCardId))
                 .Select(s => s.FromTimestamp)
                 .ToListAsync();
 
@@ -51,7 +55,7 @@ public class MyChargingSessionsController : ControllerBase
             var monthsData = availableMonths.Select(m => new
             {
                 value = $"{m.Year}-{m.Month:D2}",
-                label = new DateTime(m.Year, m.Month, 1).ToString("MMMM yyyy"),
+                label = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Unspecified).ToString("MMMM yyyy"),
                 year = m.Year,
                 month = m.Month
             }).ToList();
@@ -77,11 +81,14 @@ public class MyChargingSessionsController : ControllerBase
                 return Unauthorized();
 
             var currentUser = await _context.Users.FindAsync(currentUserId);
-            if (currentUser?.ChargeCardId == null)
+            var myCardIds = currentUser is null
+                ? Array.Empty<int>()
+                : await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, currentUserId);
+            if (myCardIds.Count == 0)
                 return Forbid();
 
             var query = _context.ChargingSessions
-                .Where(s => s.ChargeCardId == currentUser.ChargeCardId)
+                .Where(s => myCardIds.Contains(s.ChargeCardId))
                 .AsQueryable();
 
             if (year.HasValue && month.HasValue)
@@ -101,31 +108,33 @@ public class MyChargingSessionsController : ControllerBase
                 .Take(pageSize)
                 .ToListAsync();
 
-            var chargeCardId = currentUser.ChargeCardId.Value;
-            var profile = await _context.ChargeCards.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.Id == chargeCardId);
-            var linkedUser = await _context.Users.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.ChargeCardId == chargeCardId);
-            var chargeCardDisplayName =
-                !string.IsNullOrWhiteSpace(profile?.Comment) ? profile!.Comment!.Trim()
-                : (!string.IsNullOrWhiteSpace(linkedUser?.Name) ? linkedUser!.Name : null);
+            var profileById = await _context.ChargeCards.AsNoTracking()
+                .Where(p => myCardIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id);
 
-            var sessionData = sessions.Select(s => new
+            var sessionData = sessions.Select(s =>
             {
-                id = s.Id,
-                smappeeSessionId = s.SmappeeSessionId,
-                start = ChargingSessionEnergy.StartUtc(s.FromTimestamp),
-                end = ChargingSessionEnergy.EndUtc(s.ToTimestamp),
-                chargeCardId = s.ChargeCardId,
-                chargeCardDisplayName,
-                serialNumber = s.SerialNumber,
-                rfid = s.Rfid,
-                stationId = s.StationId,
-                chargedKwh = ChargingSessionEnergy.ChargedKwh(s),
-                durationMinutes = ChargingSessionEnergy.EndUtc(s.ToTimestamp) is { } end
-                    ? (int?)(int)(end - ChargingSessionEnergy.StartUtc(s.FromTimestamp)).TotalMinutes
-                    : null,
-                createdAt = s.CreatedAt
+                profileById.TryGetValue(s.ChargeCardId, out var profile);
+                var displayName = !string.IsNullOrWhiteSpace(profile?.Comment)
+                    ? profile!.Comment!.Trim()
+                    : currentUser?.Name;
+                return new
+                {
+                    id = s.Id,
+                    smappeeSessionId = s.SmappeeSessionId,
+                    start = ChargingSessionEnergy.StartUtc(s.FromTimestamp),
+                    end = ChargingSessionEnergy.EndUtc(s.ToTimestamp),
+                    chargeCardId = s.ChargeCardId,
+                    chargeCardDisplayName = displayName,
+                    serialNumber = s.SerialNumber,
+                    rfid = s.Rfid,
+                    stationId = s.StationId,
+                    chargedKwh = ChargingSessionEnergy.ChargedKwh(s),
+                    durationMinutes = ChargingSessionEnergy.EndUtc(s.ToTimestamp) is { } end
+                        ? (int?)(int)(end - ChargingSessionEnergy.StartUtc(s.FromTimestamp)).TotalMinutes
+                        : null,
+                    createdAt = s.CreatedAt
+                };
             }).ToList();
 
             return Ok(new

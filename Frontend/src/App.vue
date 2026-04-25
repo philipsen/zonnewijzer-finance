@@ -24,8 +24,8 @@
           <router-link to="/event-log" class="nav-link">Events</router-link>
         </template>
         <template v-else-if="!isAppAdminUser || previewMode">
-          <router-link v-if="user.chargeCardId" to="/my-sessions" class="nav-link">My Sessions</router-link>
-          <router-link v-if="user.chargeCardId" to="/my-invoices" class="nav-link">My Invoices</router-link>
+          <router-link v-if="user.chargeCardIds?.length" to="/my-sessions" class="nav-link">My Sessions</router-link>
+          <router-link v-if="user.chargeCardIds?.length" to="/my-invoices" class="nav-link">My Invoices</router-link>
         </template>
       </nav>
 
@@ -54,8 +54,8 @@
             <router-link to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
           </template>
           <template v-else-if="!isAppAdminUser || previewMode">
-            <router-link v-if="user.chargeCardId" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
-            <router-link v-if="user.chargeCardId" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
+            <router-link v-if="user.chargeCardIds?.length" to="/my-sessions" class="dropdown-link" @click="dropdownOpen = false">My Sessions</router-link>
+            <router-link v-if="user.chargeCardIds?.length" to="/my-invoices" class="dropdown-link" @click="dropdownOpen = false">My Invoices</router-link>
           </template>
         </div>
       </div>

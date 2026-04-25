@@ -63,11 +63,15 @@ public class AuthControllerTests : IDisposable
             GoogleId = $"google-{id}",
             Email = $"user{id}@test.com",
             Name = name,
-            Role = role,
-            ChargeCardId = chargeCardId
+            Role = role
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
+        if (chargeCardId is int cc)
+        {
+            _db.UserChargeCards.Add(new UserChargeCard { UserId = id, ChargeCardId = cc });
+            await _db.SaveChangesAsync();
+        }
         return user;
     }
 
@@ -187,7 +191,7 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllUsers_IncludesChargeCardId()
+    public async Task GetAllUsers_IncludesChargeCardIds()
     {
         await AddUser(1, "Admin", UserRole.Admin);
         var cardId = await AddChargeCardAsync("auth-alice-card");
@@ -197,7 +201,9 @@ public class AuthControllerTests : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         var doc = System.Text.Json.JsonDocument.Parse(json);
         var alice = doc.RootElement.EnumerateArray().First(e => e.GetProperty("id").GetInt32() == 2);
-        Assert.Equal(cardId, alice.GetProperty("chargeCardId").GetInt32());
+        var arr = alice.GetProperty("chargeCardIds");
+        Assert.Equal(1, arr.GetArrayLength());
+        Assert.Equal(cardId, arr[0].GetInt32());
     }
 
     [Fact]
@@ -250,7 +256,9 @@ public class AuthControllerTests : IDisposable
         var doc = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal("Pat", doc.RootElement.GetProperty("name").GetString());
         Assert.Equal("Admin", doc.RootElement.GetProperty("role").GetString());
-        Assert.Equal(cardId, doc.RootElement.GetProperty("chargeCardId").GetInt32());
+        var ids = doc.RootElement.GetProperty("chargeCardIds");
+        Assert.Equal(1, ids.GetArrayLength());
+        Assert.Equal(cardId, ids[0].GetInt32());
         Assert.True(doc.RootElement.GetProperty("devUserDeletionEnabled").GetBoolean());
     }
 
@@ -636,8 +644,8 @@ public class AuthControllerTests : IDisposable
             .UpdateChargingUser(cardId, new UpdateChargingUserRequest { LinkedUserId = 2 });
 
         Assert.IsType<OkObjectResult>(result);
-        var appUser = await _db.Users.FindAsync(2);
-        Assert.Equal(cardId, appUser!.ChargeCardId);
+        Assert.NotNull(
+            await _db.UserChargeCards.FirstOrDefaultAsync(x => x.UserId == 2 && x.ChargeCardId == cardId));
     }
 
     [Fact]
@@ -653,8 +661,7 @@ public class AuthControllerTests : IDisposable
             .UpdateChargingUser(cardId, new UpdateChargingUserRequest { UnlinkUser = true });
 
         Assert.IsType<OkObjectResult>(result);
-        var appUser = await _db.Users.FindAsync(2);
-        Assert.Null(appUser!.ChargeCardId);
+        Assert.Equal(0, await _db.UserChargeCards.CountAsync(x => x.ChargeCardId == cardId));
     }
 
     // ── WipeDatabase ───────────────────────────────────────────────────────────
@@ -696,7 +703,7 @@ public class AuthControllerTests : IDisposable
         _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 1, PricePerKwh = 0.2m });
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cardId,
+            AppUserId = 1,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr",
@@ -721,7 +728,7 @@ public class AuthControllerTests : IDisposable
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(2, await _db.Users.CountAsync());
-        Assert.Null((await _db.Users.FindAsync(1))!.ChargeCardId);
+        Assert.Equal(0, await _db.UserChargeCards.CountAsync());
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
         Assert.Equal(0, await _db.EventLogs.CountAsync());
         Assert.Equal(0, await _db.Invoices.CountAsync());
@@ -781,7 +788,7 @@ public class AuthControllerTests : IDisposable
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(0, await _db.ChargingSessions.CountAsync());
         Assert.Equal(0, await _db.ChargeCards.CountAsync());
-        Assert.Null((await _db.Users.FindAsync(2))!.ChargeCardId);
+        Assert.Equal(0, await _db.UserChargeCards.CountAsync());
         Assert.Equal(1, await _db.Invoices.CountAsync());
     }
 }

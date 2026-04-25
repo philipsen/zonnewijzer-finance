@@ -31,8 +31,8 @@ const mockChargingUser = {
 }
 
 const mockAppUsers = [
-  { id: 1, name: 'Bob', chargeCardId: null },
-  { id: 2, name: 'Carol', chargeCardId: 7 } // linked to a different charge card
+  { id: 1, name: 'Bob', chargeCardIds: [] },
+  { id: 2, name: 'Carol', chargeCardIds: [7] } // linked to another card
 ]
 
 // Build a JWT-like token with Admin role

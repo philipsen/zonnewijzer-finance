@@ -128,7 +128,7 @@ public class InvoicesControllerTests : IDisposable
     {
         await SeedAdminAsync();
 
-        var result = await BuildController().GenerateInvoicePdf(99, 2024, 1);
+        var result = await BuildController().GenerateInvoicePdf(99, 2024, 1, CancellationToken.None);
 
         var notFound = Assert.IsType<NotFoundObjectResult>(result);
         Assert.Contains("No charging sessions", notFound.Value!.ToString());
@@ -138,13 +138,16 @@ public class InvoicesControllerTests : IDisposable
     public async Task GenerateInvoicePdf_WithSessions_ReturnsPdfFile()
     {
         await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
         var cid = await AddChargeCardAsync("inv-pdf");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
         var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 8));
         _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = appUserId,
             Year = 2024,
             Month = 4,
             MolliePaymentId = "tr_existing",
@@ -156,7 +159,7 @@ public class InvoicesControllerTests : IDisposable
 
         _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
 
-        var result = await BuildController().GenerateInvoicePdf(cid, 2024, 4);
+        var result = await BuildController().GenerateInvoicePdf(appUserId, 2024, 4, CancellationToken.None);
 
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
@@ -168,10 +171,13 @@ public class InvoicesControllerTests : IDisposable
     public async Task CreatePaymentLink_WhenExists_ReturnsExistingWithoutMollieCreate()
     {
         await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "p@test.com", Name = "P", GoogleId = "g2", Role = UserRole.Base });
         var cid = await AddChargeCardAsync("inv-pay-exists");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = appUserId,
             Year = 2024,
             Month = 3,
             MolliePaymentId = "tr_old",
@@ -182,7 +188,7 @@ public class InvoicesControllerTests : IDisposable
         await _db.SaveChangesAsync();
         _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_old")).ReturnsAsync("open");
 
-        var result = await BuildController().CreatePaymentLink(cid, 2024, 3);
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
@@ -195,12 +201,15 @@ public class InvoicesControllerTests : IDisposable
     public async Task CreatePaymentLink_WhenExistingExpired_CreatesFreshPayment()
     {
         await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "p2@test.com", Name = "P2", GoogleId = "g2", Role = UserRole.Base });
         var cid = await AddChargeCardAsync("inv-pay-exp");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
         var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = appUserId,
             Year = 2024,
             Month = 3,
             MolliePaymentId = "tr_old_expired",
@@ -217,7 +226,7 @@ public class InvoicesControllerTests : IDisposable
             .Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync(new MolliePaymentResult("tr_new_after_expired", "https://new", "open"));
 
-        var result = await BuildController().CreatePaymentLink(cid, 2024, 3);
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(1, await _db.MolliePayments.CountAsync());
@@ -229,9 +238,13 @@ public class InvoicesControllerTests : IDisposable
     public async Task CreatePaymentLink_NoSessions_ReturnsNotFound()
     {
         await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "n@test.com", Name = "N", GoogleId = "g2", Role = UserRole.Base });
         var cid = await AddChargeCardAsync("inv-pay-none");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        await _db.SaveChangesAsync();
 
-        var result = await BuildController().CreatePaymentLink(cid, 2024, 3);
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
 
         Assert.IsType<NotFoundObjectResult>(result);
     }
@@ -240,7 +253,10 @@ public class InvoicesControllerTests : IDisposable
     public async Task CreatePaymentLink_New_CallsMollieAndPersists()
     {
         await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "n2@test.com", Name = "N2", GoogleId = "g2", Role = UserRole.Base });
         var cid = await AddChargeCardAsync("inv-pay-new");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
         var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
         await _db.SaveChangesAsync();
@@ -252,7 +268,7 @@ public class InvoicesControllerTests : IDisposable
             .Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync(new MolliePaymentResult("tr_new", "https://new", "open"));
 
-        var result = await BuildController().CreatePaymentLink(cid, 2024, 3);
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(1, await _db.MolliePayments.CountAsync());
@@ -265,7 +281,7 @@ public class InvoicesControllerTests : IDisposable
     {
         await SeedAdminAsync();
 
-        var result = await BuildController().GetPaymentLink(1, 2024, 1);
+        var result = await BuildController().GetPaymentLink(1, 2024, 1, CancellationToken.None);
         Assert.IsType<NotFoundResult>(result);
     }
 
@@ -273,10 +289,13 @@ public class InvoicesControllerTests : IDisposable
     public async Task GetPaymentLink_RefreshesOpenStatus()
     {
         await SeedAdminAsync();
-        var cid = await AddChargeCardAsync("inv-getpay");
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "g@test.com", Name = "G", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+        _ = await AddChargeCardAsync("inv-getpay");
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = appUserId,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr_open",
@@ -288,7 +307,7 @@ public class InvoicesControllerTests : IDisposable
 
         _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_open")).ReturnsAsync("paid");
 
-        var result = await BuildController().GetPaymentLink(cid, 2024, 1);
+        var result = await BuildController().GetPaymentLink(appUserId, 2024, 1, CancellationToken.None);
         Assert.IsType<OkObjectResult>(result);
 
         var p = await _db.MolliePayments.FirstAsync();
@@ -309,10 +328,9 @@ public class InvoicesControllerTests : IDisposable
     public async Task GetAllPayments_Admin_ReturnsPayments()
     {
         await SeedAdminAsync();
-        var cid = await AddChargeCardAsync("inv-all-pay");
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = 1,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr_p",
@@ -332,10 +350,9 @@ public class InvoicesControllerTests : IDisposable
     public async Task GetAllPayments_RefreshesExpiredStatus()
     {
         await SeedAdminAsync();
-        var cid = await AddChargeCardAsync("inv-all-exp");
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = 1,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr_expired",
@@ -356,13 +373,13 @@ public class InvoicesControllerTests : IDisposable
     [Fact]
     public async Task DeletePayment_NonAdmin_ReturnsForbid()
     {
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", Role = UserRole.Admin });
         _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
         _db.ChargeCards.Add(new ChargeCard { Value = "inv-del-nc" });
         await _db.SaveChangesAsync();
-        var payCid = _db.ChargeCards.Single().Id;
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = payCid,
+            AppUserId = 1,
             Year = 2024,
             Month = 1,
             MolliePaymentId = "tr_del",
@@ -380,10 +397,9 @@ public class InvoicesControllerTests : IDisposable
     public async Task DeletePayment_Admin_RemovesPayment()
     {
         await SeedAdminAsync();
-        var cid = await AddChargeCardAsync("inv-del-adm");
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = 1,
             Year = 2024,
             Month = 2,
             MolliePaymentId = "tr_del2",
@@ -426,12 +442,10 @@ public class InvoicesControllerTests : IDisposable
     [Fact]
     public async Task MollieWebhook_UpdatesPaymentStatus()
     {
-        _db.ChargeCards.Add(new ChargeCard { Value = "inv-wh" });
-        await _db.SaveChangesAsync();
-        var cid = _db.ChargeCards.Single().Id;
+        _db.Users.Add(new User { Id = 1, Email = "wh@test.com", Name = "Wh", GoogleId = "g1", Role = UserRole.Base });
         _db.MolliePayments.Add(new MolliePayment
         {
-            ChargeCardId = cid,
+            AppUserId = 1,
             Year = 2024,
             Month = 6,
             MolliePaymentId = "tr_wh",
@@ -459,7 +473,7 @@ public class InvoicesControllerTests : IDisposable
     {
         await SeedOwnerAsync();
         _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base, ChargeCardId = null });
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base });
         await _db.SaveChangesAsync();
 
         var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
@@ -473,10 +487,12 @@ public class InvoicesControllerTests : IDisposable
         await SeedOwnerAsync();
         _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
         var cardId = await AddChargeCardAsync("inv-gc-py", street: "Main", houseNumber: "1");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X User", GoogleId = "g2", Role = UserRole.Base, ChargeCardId = cardId });
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X User", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cardId });
         await _db.SaveChangesAsync();
 
-        var expectedCu = $"CU-{cardId}";
+        var expectedCu = "CU-USER-2";
         _gnuCashSyncMock
             .Setup(g => g.EnsureCustomerAsync(It.IsAny<GnuCashEnsureCustomerRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GnuCashEnsureCustomerResponse { CustomerId = expectedCu, Status = "created" });
@@ -498,7 +514,9 @@ public class InvoicesControllerTests : IDisposable
         await SeedAdminAsync();
         _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
         var cardId = await AddChargeCardAsync("inv-gc-adm");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base, ChargeCardId = cardId });
+        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cardId });
         await _db.SaveChangesAsync();
 
         var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);

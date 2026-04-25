@@ -45,25 +45,33 @@ public class MyInvoicesController : ControllerBase
             if (currentUser == null)
                 return Unauthorized();
 
-            if (currentUser.ChargeCardId == null)
-                return Ok(new { userName = currentUser.Name, chargeCardId = (int?)null, months = new List<object>() });
-
-            var chargeCardId = currentUser.ChargeCardId.Value;
+            var myCardIds = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, currentUserId);
+            if (myCardIds.Count == 0)
+                return Ok(new
+                {
+                    userName = currentUser.Name,
+                    appUserId = currentUserId,
+                    chargeCardIds = myCardIds,
+                    months = new List<object>()
+                });
 
             var allSessions = await _context.ChargingSessions
-                .Where(cs => cs.ChargeCardId == chargeCardId)
+                .Where(cs => myCardIds.Contains(cs.ChargeCardId))
                 .ToListAsync();
 
-            var months = allSessions
-                .Select(cs => BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.FromTimestamp))
+            var monthKeys = allSessions
+                .Select(cs =>
+                {
+                    var (y, mo) = BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.FromTimestamp);
+                    return new { Year = y, Month = mo };
+                })
                 .Distinct()
-                .OrderByDescending(d => d.Year)
-                .ThenByDescending(d => d.Month)
-                .Select(d => new { d.Year, d.Month })
+                .OrderByDescending(x => x.Year)
+                .ThenByDescending(x => x.Month)
                 .ToList();
 
             var allPayments = await _context.MolliePayments
-                .Where(p => p.ChargeCardId == chargeCardId)
+                .Where(p => p.AppUserId == currentUserId)
                 .ToListAsync();
 
             var stale = allPayments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
@@ -97,21 +105,26 @@ public class MyInvoicesController : ControllerBase
                     .Select(p => (decimal?)p.PricePerKwh)
                     .FirstOrDefault() ?? 0.22m;
 
-            var result = months.Select(m =>
+            var result = monthKeys.Select(m =>
             {
                 var sessions = allSessions
-                    .Where(cs => BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
+                    .Where(cs =>
+                        myCardIds.Contains(cs.ChargeCardId) &&
+                        BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
                     .ToList();
                 var rate = GetRate(m.Year, m.Month);
                 var totalKwh = Math.Round(sessions.Sum(ChargingSessionEnergy.ChargedKwh), 2);
                 var totalAmount = Math.Round(totalKwh * rate, 2);
-                var payment = allPayments.FirstOrDefault(p => p.Year == m.Year && p.Month == m.Month);
+                var payment = allPayments.FirstOrDefault(p =>
+                    p.Year == m.Year && p.Month == m.Month);
                 return new
                 {
+                    appUserId = currentUserId,
                     Year = m.Year,
                     Month = m.Month,
-                    MonthName = new DateTime(m.Year, m.Month, 1).ToString("MMMM yyyy"),
-                    InvoiceNumber = $"INV-{m.Year:D4}-{m.Month:D2}-{chargeCardId:D4}",
+                    MonthName = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                        .ToString("MMMM yyyy"),
+                    InvoiceNumber = $"INV-{m.Year:D4}-{m.Month:D2}-U{currentUserId}",
                     TotalKwh = totalKwh,
                     RatePerKwh = rate,
                     TotalAmount = totalAmount,
@@ -121,7 +134,13 @@ public class MyInvoicesController : ControllerBase
                 };
             }).ToList();
 
-            return Ok(new { userName = currentUser.Name, chargeCardId, months = result });
+            return Ok(new
+            {
+                userName = currentUser.Name,
+                appUserId = currentUserId,
+                chargeCardIds = myCardIds,
+                months = result
+            });
         }
         catch (Exception ex)
         {

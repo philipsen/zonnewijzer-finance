@@ -12,26 +12,65 @@ public class InvoiceComputationService : IInvoiceComputationService
         _context = context;
     }
 
-    public async Task<IReadOnlyList<int>> GetChargeCardIdsForMonthAsync(int year, int month, int? chargeCardIdFilter, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<int>> GetAppUserIdsForMonthAsync(
+        int year,
+        int month,
+        int? appUserIdFilter,
+        CancellationToken cancellationToken = default)
     {
         var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
-        var q = _context.ChargingSessions
-            .Where(cs => cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs);
-        if (chargeCardIdFilter.HasValue)
-            q = q.Where(cs => cs.ChargeCardId == chargeCardIdFilter.Value);
+        var cardIdsInMonth = await _context.ChargingSessions
+            .Where(cs => cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs)
+            .Select(cs => cs.ChargeCardId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
 
-        return await q.Select(cs => cs.ChargeCardId).Distinct().OrderBy(id => id).ToListAsync(cancellationToken);
+        if (cardIdsInMonth.Count == 0)
+            return Array.Empty<int>();
+
+        var q = _context.UserChargeCards
+            .AsNoTracking()
+            .Where(ucc => cardIdsInMonth.Contains(ucc.ChargeCardId))
+            .Select(ucc => ucc.UserId)
+            .Distinct();
+
+        if (appUserIdFilter.HasValue)
+            q = q.Where(id => id == appUserIdFilter.Value);
+
+        return await q.OrderBy(id => id).ToListAsync(cancellationToken);
     }
 
-    public async Task<InvoiceData?> BuildInvoiceDataReadOnlyAsync(int chargeCardId, int year, int month, CancellationToken cancellationToken = default)
+    public async Task<InvoiceData?> BuildInvoiceDataForAppUserAsync(
+        int appUserId,
+        int year,
+        int month,
+        CancellationToken cancellationToken = default)
     {
+        var myCards = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, appUserId, cancellationToken);
+        if (myCards.Count == 0)
+            return null;
+
         var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
         var chargingSessions = await _context.ChargingSessions
-            .Where(cs => cs.ChargeCardId == chargeCardId && cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs)
+            .Where(cs => myCards.Contains(cs.ChargeCardId) && cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs)
+            .OrderBy(cs => cs.FromTimestamp)
             .ToListAsync(cancellationToken);
 
         if (chargingSessions.Count == 0)
             return null;
+
+        var appUser = await _context.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == appUserId, cancellationToken);
+        if (appUser == null)
+            return null;
+
+        var cardProfiles = await _context.ChargeCards
+            .Where(c => myCards.Contains(c.Id))
+            .OrderBy(c => c.Id)
+            .ToListAsync(cancellationToken);
+        var profile = cardProfiles.FirstOrDefault(c =>
+                          !string.IsNullOrWhiteSpace(c.Street) || !string.IsNullOrWhiteSpace(c.PostalCode))
+                      ?? cardProfiles.FirstOrDefault();
 
         var totalKwh = chargingSessions.Sum(ChargingSessionEnergy.ChargedKwh);
         var ratePerKwh = await _context.EnergyPrices
@@ -42,27 +81,25 @@ public class InvoiceComputationService : IInvoiceComputationService
 
         var totalAmount = totalKwh * ratePerKwh;
 
-        var linkedUser = await _context.Users
-            .FirstOrDefaultAsync(u => u.ChargeCardId == chargeCardId, cancellationToken);
-        var profile = await _context.ChargeCards
-            .FirstOrDefaultAsync(p => p.Id == chargeCardId, cancellationToken);
-        var userName = linkedUser?.Name ?? profile?.Comment ?? $"Charge card {chargeCardId}";
-
         var molliePayment = await _context.MolliePayments
-            .FirstOrDefaultAsync(p => p.ChargeCardId == chargeCardId && p.Year == year && p.Month == month, cancellationToken);
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
+                cancellationToken);
 
         return new InvoiceData
         {
-            UserId = chargeCardId,
-            UserName = userName,
+            UserId = appUserId,
+            UserName = appUser.Name,
             Street = profile?.Street,
             HouseNumber = profile?.HouseNumber,
             PostalCode = profile?.PostalCode,
             PlaceName = profile?.PlaceName,
             Year = year,
             Month = month,
-            MonthName = new DateTime(year, month, 1).ToString("MMMM yyyy"),
-            InvoiceNumber = $"INV-{year:D4}-{month:D2}-{chargeCardId:D4}",
+            MonthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                .ToString("MMMM yyyy"),
+            InvoiceNumber = $"INV-{year:D4}-{month:D2}-U{appUserId}",
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = ratePerKwh,
             TotalAmount = Math.Round(totalAmount, 2),
@@ -70,6 +107,7 @@ public class InvoiceComputationService : IInvoiceComputationService
             IsPaid = molliePayment?.Status == "paid",
             Sessions = chargingSessions.Select(cs => new SessionData
             {
+                ChargeCardId = cs.ChargeCardId,
                 Start = ChargingSessionEnergy.StartUtc(cs.FromTimestamp),
                 End = ChargingSessionEnergy.EndUtc(cs.ToTimestamp),
                 StationId = cs.StationId,

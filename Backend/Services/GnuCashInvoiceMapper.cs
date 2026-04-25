@@ -18,7 +18,7 @@ public static class GnuCashInvoiceMapper
         return new GnuCashInvoiceDto
         {
             InvoiceId = data.InvoiceNumber,
-            CustomerId = $"CU-{data.UserId}",
+            CustomerId = $"CU-USER-{data.UserId}",
             CustomerName = data.UserName,
             Street = data.Street,
             HouseNumber = data.HouseNumber,
@@ -43,6 +43,6 @@ public static class GnuCashInvoiceMapper
     private static string SessionLineDescription(SessionData s)
     {
         var station = string.IsNullOrWhiteSpace(s.ChargingStationName) ? $"Station {s.StationId}" : s.ChargingStationName!;
-        return $"{station} · {s.Start:yyyy-MM-dd HH:mm}";
+        return $"Card {s.ChargeCardId} · {station} · {s.Start:yyyy-MM-dd HH:mm}";
     }
 }
