@@ -5,9 +5,9 @@ export function isAppAdmin (role) {
   return role === 'Admin' || role === 'Owner'
 }
 
-/** List users and edit profiles (roles: Owner still owner/admin-self rules on server). */
+/** List users and edit profiles (server enforces owner-only rules for Owner role). */
 export function canManageUserProfiles (role) {
-  return role === 'Base' || isAppAdmin(role)
+  return isAppAdmin(role)
 }
 
 export function isOwner (role) {

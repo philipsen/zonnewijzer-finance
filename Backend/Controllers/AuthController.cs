@@ -749,7 +749,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Base,Admin,Owner")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("users/{id:int}")]
         public async Task<IActionResult> UpdateUser(int id, [FromBody] UpdateUserRequest? request)
         {
@@ -773,7 +773,12 @@ namespace Backend.Controllers
                 }
 
                 var editor = await _context.Users.FindAsync(currentUserId);
-                var editorName = editor?.Name ?? $"User {currentUserId}";
+                if (editor == null)
+                    return Unauthorized();
+                if (!editor.Role.IsAppAdministrator())
+                    return StatusCode(403, new { message = "Only administrators can edit user accounts." });
+
+                var editorName = editor.Name;
 
                 var changes = new List<string>();
 
@@ -794,7 +799,7 @@ namespace Backend.Controllers
                 {
                     if (Enum.TryParse<UserRole>(request.Role, true, out var newRole) && newRole != user.Role)
                     {
-                        if (editor == null || !CanAssignUserRole(editor.Role, newRole, id, currentUserId))
+                        if (!CanAssignUserRole(editor.Role, newRole, id, currentUserId))
                             return StatusCode(403, new
                             {
                                 message = newRole == UserRole.Owner
@@ -905,7 +910,7 @@ namespace Backend.Controllers
             }
         }
 
-        [Authorize(Roles = "Base,Admin,Owner")]
+        [Authorize(Roles = "Admin,Owner")]
         [HttpPut("users/{id}/role")]
         public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleRequest request)
         {
@@ -933,6 +938,8 @@ namespace Backend.Controllers
                 var editor = await _context.Users.FindAsync(currentUserId);
                 if (editor == null)
                     return Unauthorized();
+                if (!editor.Role.IsAppAdministrator())
+                    return StatusCode(403, new { message = "Only administrators can change user roles." });
                 if (!CanAssignUserRole(editor.Role, newRole, id, currentUserId))
                 {
                     return newRole == UserRole.Owner
