@@ -87,9 +87,9 @@
               <span class="date-label">Last Login:</span>
               <span class="date-value">{{ formatDate(user.lastLoginAt) }}</span>
             </div>
-            <div v-if="user.chargeCardId != null" class="date-item">
-              <span class="date-label">Charge card:</span>
-              <span class="date-value mono">{{ user.chargeCardId }}</span>
+            <div v-if="user.chargeCardIds && user.chargeCardIds.length" class="date-item">
+              <span class="date-label">Charge card(s):</span>
+              <span class="date-value mono">{{ user.chargeCardIds.join(', ') }}</span>
             </div>
           </div>
         </div>
@@ -98,8 +98,8 @@
             v-if="isOwnerView"
             type="button"
             class="btn btn-gnucash-customer"
-            :disabled="gnucashCustomerLoadingId === user.id || user.chargeCardId == null"
-            :title="user.chargeCardId == null ? 'Link this app user to a charge card first (Edit user).' : 'Create CU-' + user.chargeCardId + ' in GnuCash if missing.'"
+            :disabled="gnucashCustomerLoadingId === user.id || !user.chargeCardIds?.length"
+            :title="!user.chargeCardIds?.length ? 'Link this app user to a charge card first (Edit user or charge card).' : 'Create CU-… in GnuCash for each linked card if missing.'"
             @click="ensureGnucashCustomer(user)"
           >
             {{ gnucashCustomerLoadingId === user.id ? 'GnuCash…' : 'GnuCash customer' }}
@@ -260,7 +260,7 @@ export default {
     }
 
     const ensureGnucashCustomer = async (user) => {
-      if (user.chargeCardId == null) return
+      if (!user.chargeCardIds?.length) return
       try {
         gnucashCustomerLoadingId.value = user.id
         const token = localStorage.getItem('token')
@@ -273,13 +273,26 @@ export default {
           {},
           { params: { dryRun: false }, headers: { Authorization: `Bearer ${token}` } }
         )
-        const msg =
-          data.status === 'created'
-            ? `GnuCash customer ${data.customerId} created.`
-            : data.status === 'already_exists'
-              ? `Customer ${data.customerId} already exists in GnuCash.`
-              : data.detail || data.status || 'Done'
-        alert(msg)
+        const results = data.results
+        if (Array.isArray(results) && results.length) {
+          const parts = results.map(
+            (r) =>
+              r.status === 'created'
+                ? `Created ${r.customerId}`
+                : r.status === 'already_exists'
+                  ? `${r.customerId} already exists`
+                  : `${r.customerId}: ${r.detail || r.status}`
+          )
+          alert(parts.join('\n'))
+        } else {
+          const msg =
+            data.status === 'created'
+              ? `GnuCash customer ${data.customerId} created.`
+              : data.status === 'already_exists'
+                ? `Customer ${data.customerId} already exists in GnuCash.`
+                : data.detail || data.status || 'Done'
+          alert(msg)
+        }
       } catch (err) {
         console.error('GnuCash ensure customer failed:', err)
         const msg =
