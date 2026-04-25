@@ -267,7 +267,7 @@ namespace Backend.Controllers
 
                 var rawToken = GenerateResetToken();
                 var tokenHash = HashToken(rawToken);
-                var expiresAt = DateTime.UtcNow.AddMinutes(30);
+                var expiresAt = DateTime.UtcNow.AddDays(2);
 
                 var existingActiveTokens = await _context.PasswordResetTokens
                     .Where(t => t.UserId == user.Id && t.UsedAt == null)
@@ -296,7 +296,7 @@ namespace Backend.Controllers
 <p>Hello {System.Net.WebUtility.HtmlEncode(user.Name)},</p>
 <p>You were invited to the Zonnewijzer Finance app.</p>
 <p><a href=""{resetLink}"">Click here to set your password</a></p>
-<p>This invite link is valid for 30 minutes and can only be used once.</p>";
+<p>This invite link is valid for 2 days and can only be used once.</p>";
 
                 await _emailService.SendAsync(user.Email, "You're invited to Zonnewijzer Finance", body);
 
