@@ -59,6 +59,12 @@ public static class LocalSecretsBootstrap
         }
 
         Alias("Smappee__ServiceLocationId", "SMAPPEE_SERVICE_LOCATION_ID");
+
+        Alias("Sigenergy__BaseUrl", "SIGENERGY_BASE_URL");
+        Alias("Sigenergy__Username", "SIGENERGY_USERNAME");
+        Alias("Sigenergy__Password", "SIGENERGY_PASSWORD");
+        Alias("Sigenergy__SystemId", "SIGENERGY_SYSTEM_ID");
+        Alias("Sigenergy__UsableBatteryCapacityKwh", "SIGENERGY_USABLE_BATTERY_CAPACITY_KWH");
     }
 
     private static IEnumerable<string> EnumerateDotEnvCandidatePaths()

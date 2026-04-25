@@ -61,6 +61,12 @@ services:
       - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-307785}
       - Smappee__BaseUrl=${SMAPPEE_BASE_URL:-https://app1pub.smappee.net/dev/v3}
       - Smappee__OAuthBaseUrl=${SMAPPEE_OAUTH_BASE_URL:-}
+      # Sigenergy (override appsettings.Production.json); set on host env or in a .env next to this file
+      - Sigenergy__BaseUrl=${SIGENERGY_BASE_URL:-https://api-eu.sigencloud.com}
+      - Sigenergy__Username=${SIGENERGY_USERNAME:-}
+      - Sigenergy__Password=${SIGENERGY_PASSWORD:-}
+      - Sigenergy__SystemId=${SIGENERGY_SYSTEM_ID:-}
+      - Sigenergy__UsableBatteryCapacityKwh=${SIGENERGY_USABLE_BATTERY_CAPACITY_KWH:-}
       - FINANCE_BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
       - ./data:/app/database
