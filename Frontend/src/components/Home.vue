@@ -91,6 +91,33 @@
       </div>
       <div class="dashboard-content">
         <section
+          v-if="showSigenergyBlock"
+          class="sigenergy-snapshot"
+          aria-label="Solar and battery"
+        >
+          <h3 class="sigenergy-heading">Solar &amp; battery</h3>
+          <p v-if="sigenergyLoading" class="sigenergy-status">Loading…</p>
+          <p v-else-if="sigenergyError" class="sigenergy-error" role="alert">{{ sigenergyError }}</p>
+          <div v-else-if="sigenergySnapshot" class="sigenergy-grid">
+            <div class="sigenergy-metric">
+              <span class="sigenergy-label">Battery state of charge</span>
+              <span class="sigenergy-value">{{ formatSoc(sigenergySnapshot.batterySocPercent) }}</span>
+            </div>
+            <div class="sigenergy-metric">
+              <span class="sigenergy-label">Battery power</span>
+              <span class="sigenergy-value">{{ formatKw(sigenergySnapshot.batteryPowerKw) }}</span>
+            </div>
+            <div class="sigenergy-metric">
+              <span class="sigenergy-label">Solar (PV) power</span>
+              <span class="sigenergy-value">{{ formatKw(sigenergySnapshot.solarPowerKw) }}</span>
+            </div>
+            <div class="sigenergy-metric">
+              <span class="sigenergy-label">Remaining battery energy</span>
+              <span class="sigenergy-value">{{ formatKwh(sigenergySnapshot.remainingBatteryKwh) }}</span>
+            </div>
+          </div>
+        </section>
+        <section
           v-if="chargingStationSquares.length"
           class="charging-station-squares"
           aria-label="Charging stations"
@@ -293,6 +320,70 @@ export default {
     const clearChargingConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
 
     const chargingStationSquares = ref([])
+    const sigenergyLoading = ref(false)
+    const sigenergyError = ref('')
+    const sigenergySnapshot = ref(null)
+    const showSigenergyBlock = ref(false)
+
+    const formatKw = (v) => {
+      if (v == null || Number.isNaN(Number(v))) return '—'
+      const n = Number(v)
+      return `${n >= 0 ? '' : '−'}${Math.abs(n).toFixed(1)} kW`
+    }
+
+    const formatKwh = (v) => {
+      if (v == null || Number.isNaN(Number(v))) return '—'
+      return `${Number(v).toFixed(2)} kWh`
+    }
+
+    const formatSoc = (v) => {
+      if (v == null || Number.isNaN(Number(v))) return '—'
+      return `${Math.round(Number(v))}%`
+    }
+
+    const loadSigenergySnapshot = async () => {
+      sigenergyError.value = ''
+      sigenergySnapshot.value = null
+      if (!isAuthenticated.value || needsAccess.value) {
+        showSigenergyBlock.value = false
+        return
+      }
+      const token = localStorage.getItem('token')
+      if (!token) {
+        showSigenergyBlock.value = false
+        return
+      }
+      sigenergyLoading.value = true
+      try {
+        const { data } = await axios.get('/api/sigenergy/live', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!data || data.configured === false) {
+          showSigenergyBlock.value = false
+          return
+        }
+        showSigenergyBlock.value = true
+        if (data.error) {
+          sigenergyError.value = data.error
+          return
+        }
+        sigenergySnapshot.value = {
+          batterySocPercent: data.batterySocPercent,
+          batteryPowerKw: data.batteryPowerKw,
+          solarPowerKw: data.solarPowerKw,
+          remainingBatteryKwh: data.remainingBatteryKwh
+        }
+      } catch (err) {
+        showSigenergyBlock.value = true
+        if (err.response?.status === 401) {
+          sigenergyError.value = 'Not signed in.'
+        } else {
+          sigenergyError.value = 'Could not load solar and battery data.'
+        }
+      } finally {
+        sigenergyLoading.value = false
+      }
+    }
 
     const loadChargingStationSquares = async () => {
       if (!isAuthenticated.value || needsAccess.value) {
@@ -613,6 +704,7 @@ export default {
       () => [isAuthenticated.value, needsAccess.value, appUser.value?.chargeCardIds, appUser.value?.role],
       () => {
         loadChargingStationSquares()
+        loadSigenergySnapshot()
       },
       { immediate: true }
     )
@@ -660,7 +752,14 @@ export default {
       chargingStationSquares,
       chargingStationSquareClass,
       chargingStationSquareTitle,
-      shortStationLabel
+      shortStationLabel,
+      sigenergyLoading,
+      sigenergyError,
+      sigenergySnapshot,
+      showSigenergyBlock,
+      formatKw,
+      formatKwh,
+      formatSoc
     }
   }
 }
@@ -985,6 +1084,60 @@ export default {
   .features {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.sigenergy-snapshot {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid #c5e1a5;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f9fff4 0%, #f5f9f0 100%);
+  min-width: 0;
+}
+
+.sigenergy-heading {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.1rem;
+  color: #2e4a1c;
+  font-weight: 600;
+}
+
+.sigenergy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1rem;
+}
+
+.sigenergy-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.sigenergy-label {
+  font-size: 0.8rem;
+  color: #5c6c4a;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sigenergy-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: #1a2e0f;
+  font-variant-numeric: tabular-nums;
+}
+
+.sigenergy-status {
+  margin: 0;
+  color: #5c6c4a;
+}
+
+.sigenergy-error {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 0.95rem;
 }
 
 .feature-card {
