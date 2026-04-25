@@ -9,6 +9,7 @@ using Backend.Configuration;
 using Backend.Data;
 using Backend.Services;
 using Backend.Services.GnuCash;
+using Backend.Services.Sigenergy;
 using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
@@ -124,6 +125,16 @@ builder.Services.AddReverseProxy().LoadFromMemory(
 // Add custom services
 builder.Services.Configure<GnuCashSyncOptions>(builder.Configuration.GetSection(GnuCashSyncOptions.SectionName));
 builder.Services.Configure<SmappeeOptions>(builder.Configuration.GetSection(SmappeeOptions.SectionName));
+builder.Services.Configure<SigenergyOptions>(builder.Configuration.GetSection(SigenergyOptions.SectionName));
+builder.Services.AddHttpClient(SigenergyCloudClient.HttpClientName, (sp, client) =>
+{
+    var o = sp.GetRequiredService<IOptions<SigenergyOptions>>().Value;
+    var raw = (string.IsNullOrWhiteSpace(o.BaseUrl) ? "https://api-eu.sigencloud.com" : o.BaseUrl).Trim().TrimEnd('/');
+    if (Uri.TryCreate(raw + "/", UriKind.Absolute, out var baseUri))
+        client.BaseAddress = baseUri;
+    client.Timeout = TimeSpan.FromMinutes(2);
+});
+builder.Services.AddSingleton<ISigenergyCloudClient, SigenergyCloudClient>();
 builder.Services.AddHttpClient<IGnuCashSyncClient, GnuCashSyncClient>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
@@ -159,6 +170,11 @@ var app = builder.Build();
             if (httpContext.Request.Path.StartsWithSegments("/health"))
                 return LogEventLevel.Verbose; // filtered by default minimum level
 
+            // In Development, suppress frontend/Vite reverse-proxy chatter (304/static assets).
+            if (app.Environment.IsDevelopment() &&
+                !httpContext.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+                return LogEventLevel.Verbose;
+
             return LogEventLevel.Information;
         };
     });
@@ -188,6 +204,25 @@ var app = builder.Build();
                 : "incomplete — missing: " + string.Join(", ", missingSmappee),
             smappeeOpts.ServiceLocationId,
             smappeeBg.Enabled);
+
+        var se = scope.ServiceProvider.GetRequiredService<IOptions<SigenergyOptions>>().Value;
+        var missingSigenergy = se.GetMissingSettings();
+        if (missingSigenergy.Count == 0)
+        {
+            Log.Information(
+                "Sigenergy: configured (BaseUrl, Username, Password, SystemId are all non-empty)");
+        }
+        else if (missingSigenergy.Count < 4)
+        {
+            Log.Warning(
+                "Sigenergy: partially configured. Missing: {Missing}. Home snapshot calls will fail until all required fields are set.",
+                string.Join(", ", missingSigenergy));
+        }
+        else
+        {
+            Log.Information(
+                "Sigenergy: not configured — home page will omit solar/battery until Sigenergy:… is set");
+        }
     }
 
     // Configure the HTTP request pipeline.
