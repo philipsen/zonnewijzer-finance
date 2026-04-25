@@ -7,8 +7,9 @@ namespace Backend.Models
         [Key]
         public int Id { get; set; }
 
+        /// <summary>App user: one Mollie payment per user per month (all linked charge cards combined).</summary>
         [Required]
-        public int ChargeCardId { get; set; }
+        public int AppUserId { get; set; }
 
         [Required]
         public int Year { get; set; }

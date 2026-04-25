@@ -18,6 +18,7 @@ namespace Backend.Data
         public DbSet<ChargeCard> ChargeCards { get; set; }
         public DbSet<MolliePayment> MolliePayments { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+        public DbSet<UserChargeCard> UserChargeCards { get; set; }
         public DbSet<SmappeeServiceLocation> SmappeeServiceLocations { get; set; }
         public DbSet<SmappeeServiceLocationDevice> SmappeeServiceLocationDevices { get; set; }
 
@@ -29,6 +30,22 @@ namespace Backend.Data
                 entity.HasIndex(e => e.Email).IsUnique();
                 entity.Property(e => e.Email).IsRequired();
                 entity.Property(e => e.Name).IsRequired();
+            });
+
+            modelBuilder.Entity<UserChargeCard>(entity =>
+            {
+                entity.HasKey(e => new { e.UserId, e.ChargeCardId });
+                entity.HasIndex(e => e.ChargeCardId).IsUnique();
+
+                entity.HasOne(e => e.User)
+                    .WithMany(u => u.UserChargeCards)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasOne(e => e.ChargeCard)
+                    .WithMany(c => c.UserChargeCards)
+                    .HasForeignKey(e => e.ChargeCardId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<ChargeCard>(entity =>
@@ -90,14 +107,18 @@ namespace Backend.Data
             modelBuilder.Entity<MolliePayment>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.Property(e => e.ChargeCardId).IsRequired();
+                entity.Property(e => e.AppUserId).IsRequired();
                 entity.Property(e => e.Year).IsRequired();
                 entity.Property(e => e.Month).IsRequired();
                 entity.Property(e => e.MolliePaymentId).HasMaxLength(100).IsRequired();
                 entity.Property(e => e.CheckoutUrl).HasMaxLength(500).IsRequired();
                 entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
                 entity.Property(e => e.Status).HasMaxLength(50).IsRequired();
-                entity.HasIndex(e => new { e.ChargeCardId, e.Year, e.Month }).IsUnique();
+                entity.HasIndex(e => new { e.AppUserId, e.Year, e.Month }).IsUnique();
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(e => e.AppUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<PasswordResetToken>(entity =>

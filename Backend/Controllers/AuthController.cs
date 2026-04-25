@@ -80,7 +80,7 @@ namespace Backend.Controllers
                 await _context.SaveChangesAsync();
                 await NotifyAdminsOfNewSignupAsync(user, "Email/Password");
                 var token = _jwtService.GenerateToken(user);
-                return Ok(BuildAuthResponse(user, token));
+                return Ok(await BuildAuthResponseAsync(user, token));
             }
             catch (Exception ex)
             {
@@ -122,7 +122,7 @@ namespace Backend.Controllers
                     await NotifyAdminsOfInviteMilestoneAsync(user, "First login");
 
                 var token = _jwtService.GenerateToken(user);
-                return Ok(BuildAuthResponse(user, token));
+                return Ok(await BuildAuthResponseAsync(user, token));
             }
             catch (Exception ex)
             {
@@ -374,7 +374,7 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("Authentication successful for user {Email}", user.Email);
 
-                return Ok(BuildAuthResponse(user, token));
+                return Ok(await BuildAuthResponseAsync(user, token));
             }
             catch (Exception ex)
             {
@@ -383,19 +383,23 @@ namespace Backend.Controllers
             }
         }
 
-        private static object BuildAuthResponse(User user, string token) => new
+        private async Task<object> BuildAuthResponseAsync(User user, string token)
         {
-            token,
-            user = new
+            var chargeCardIds = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, user.Id);
+            return new
             {
-                id = user.Id,
-                email = user.Email,
-                name = user.Name,
-                picture = user.PictureUrl,
-                role = user.Role.ToString(),
-                chargeCardId = user.ChargeCardId
-            }
-        };
+                token,
+                user = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    name = user.Name,
+                    picture = user.PictureUrl,
+                    role = user.Role.ToString(),
+                    chargeCardIds
+                }
+            };
+        }
 
         private static string GenerateResetToken()
         {
@@ -476,6 +480,7 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("User profile retrieved for {Email} (ID: {UserId})", user.Email, user.Id);
 
+                var myCards = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, userId);
                 return Ok(new
                 {
                     id = user.Id,
@@ -483,7 +488,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargeCardId = user.ChargeCardId,
+                    chargeCardIds = myCards,
                     devUserDeletionEnabled = _environment.IsDevelopment()
                 });
             }
@@ -517,24 +522,32 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("User {UserId} requesting all users list", userId);
 
-                var users = await _context.Users
+                var userRows = await _context.Users
                     .OrderByDescending(u => u.CreatedAt)
-                    .Select(u => new
-                    {
-                        id = u.Id,
-                        email = u.Email,
-                        name = u.Name,
-                        picture = u.PictureUrl,
-                        role = u.Role.ToString(),
-                        chargeCardId = u.ChargeCardId,
-                        createdAt = u.CreatedAt,
-                        lastLoginAt = u.LastLoginAt,
-                        hasPendingInvite = _context.PasswordResetTokens.Any(t =>
-                            t.UserId == u.Id &&
-                            t.UsedAt == null &&
-                            t.ExpiresAt > DateTime.UtcNow)
-                    })
                     .ToListAsync();
+                var userIdSet = userRows.Select(u => u.Id).ToList();
+                var ucc = await _context.UserChargeCards
+                    .AsNoTracking()
+                    .Where(x => userIdSet.Contains(x.UserId))
+                    .ToListAsync();
+                var cardsByUser = ucc
+                    .GroupBy(x => x.UserId)
+                    .ToDictionary(g => g.Key, g => (IReadOnlyList<int>)g.Select(z => z.ChargeCardId).OrderBy(i => i).ToList());
+                var users = userRows.Select(u => new
+                {
+                    id = u.Id,
+                    email = u.Email,
+                    name = u.Name,
+                    picture = u.PictureUrl,
+                    role = u.Role.ToString(),
+                    chargeCardIds = cardsByUser.GetValueOrDefault(u.Id) ?? Array.Empty<int>(),
+                    createdAt = u.CreatedAt,
+                    lastLoginAt = u.LastLoginAt,
+                    hasPendingInvite = _context.PasswordResetTokens.Any(t =>
+                        t.UserId == u.Id &&
+                        t.UsedAt == null &&
+                        t.ExpiresAt > DateTime.UtcNow)
+                }).ToList();
 
                 _logger.LogInformation("Retrieved {UserCount} users for user {RequestingUserId}", users.Count, userId);
 
@@ -591,9 +604,6 @@ namespace Backend.Controllers
                 var deletedPrices = await _context.EnergyPrices.CountAsync();
                 var deletedProfiles = await _context.ChargeCards.CountAsync();
                 var usersPreserved = await _context.Users.CountAsync();
-
-                foreach (var u in await _context.Users.ToListAsync())
-                    u.ChargeCardId = null;
 
                 _context.Invoices.RemoveRange(await _context.Invoices.ToListAsync());
                 _context.MolliePayments.RemoveRange(await _context.MolliePayments.ToListAsync());
@@ -687,10 +697,11 @@ namespace Backend.Controllers
 
                 var removedSessions = await _context.ChargingSessions.CountAsync();
                 var removedProfiles = await _context.ChargeCards.CountAsync();
-                var appUsersUnlinked = await _context.Users.CountAsync(u => u.ChargeCardId != null);
-
-                foreach (var u in await _context.Users.ToListAsync())
-                    u.ChargeCardId = null;
+                var appUsersUnlinked = await _context.UserChargeCards
+                    .AsNoTracking()
+                    .Select(x => x.UserId)
+                    .Distinct()
+                    .CountAsync();
 
                 _context.ChargingSessions.RemoveRange(await _context.ChargingSessions.ToListAsync());
                 _context.ChargeCards.RemoveRange(await _context.ChargeCards.ToListAsync());
@@ -808,6 +819,7 @@ namespace Backend.Controllers
 
                 await _context.SaveChangesAsync();
 
+                var myCards = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, id);
                 return Ok(new
                 {
                     id = user.Id,
@@ -815,7 +827,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargeCardId = user.ChargeCardId,
+                    chargeCardIds = myCards,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -979,9 +991,14 @@ namespace Backend.Controllers
                 .OrderBy(id => id)
                 .ToListAsync();
 
-            var linkedMap = await _context.Users
-                .Where(u => u.ChargeCardId != null)
-                .Select(u => new { u.ChargeCardId, u.Name, UserId = u.Id })
+            var linkedMap = await _context.UserChargeCards
+                .AsNoTracking()
+                .Join(_context.Users, ucc => ucc.UserId, u => u.Id, (ucc, u) => new
+                {
+                    ucc.ChargeCardId,
+                    u.Name,
+                    UserId = u.Id
+                })
                 .ToListAsync();
 
             var profiles = await _context.ChargeCards
@@ -1029,7 +1046,10 @@ namespace Backend.Controllers
                 return NotFound("Charge card not found");
 
             var profile = await _context.ChargeCards.FindAsync(id);
-            var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
+            var linkedUserId = await UserChargeCardQuery.GetUserIdLinkedToCardAsync(_context, id);
+            var linkedUser = linkedUserId is int luid
+                ? await _context.Users.FindAsync(luid)
+                : null;
 
             return Ok(new
             {
@@ -1092,27 +1112,36 @@ namespace Backend.Controllers
 
             if (request.UnlinkUser)
             {
-                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
-                if (currentlyLinked != null)
+                var links = await _context.UserChargeCards.Where(x => x.ChargeCardId == id).ToListAsync();
+                if (links.Count > 0)
                 {
-                    changes.Add($"Unlinked user '{currentlyLinked.Name}'");
-                    currentlyLinked.ChargeCardId = null;
+                    var u = await _context.Users.FindAsync(links[0].UserId);
+                    if (u != null)
+                        changes.Add($"Unlinked user '{u.Name}'");
+                    _context.UserChargeCards.RemoveRange(links);
                 }
             }
             else if (request.LinkedUserId.HasValue)
             {
-                var currentlyLinked = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
-                if (currentlyLinked != null && currentlyLinked.Id != request.LinkedUserId.Value)
-                    currentlyLinked.ChargeCardId = null;
-
                 var newLinkedUser = await _context.Users.FindAsync(request.LinkedUserId.Value);
                 if (newLinkedUser == null)
                     return NotFound("Linked user not found");
 
-                if (newLinkedUser.ChargeCardId != id)
+                var existing = await _context.UserChargeCards.FirstOrDefaultAsync(x => x.ChargeCardId == id);
+                if (existing?.UserId == newLinkedUser.Id)
                 {
+                    // already linked; no-op
+                }
+                else
+                {
+                    if (existing is not null)
+                        _context.UserChargeCards.Remove(existing);
+                    _context.UserChargeCards.Add(new UserChargeCard
+                    {
+                        UserId = newLinkedUser.Id,
+                        ChargeCardId = id
+                    });
                     changes.Add($"Linked user: '{newLinkedUser.Name}'");
-                    newLinkedUser.ChargeCardId = id;
                 }
             }
 
@@ -1128,7 +1157,8 @@ namespace Backend.Controllers
 
             await _context.SaveChangesAsync();
 
-            var linkedUserAfter = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == id);
+            var linkedUserIdAfter = await UserChargeCardQuery.GetUserIdLinkedToCardAsync(_context, id);
+            var linkedUserAfter = linkedUserIdAfter is int l2 ? await _context.Users.FindAsync(l2) : null;
             var profileAfter = await _context.ChargeCards.FindAsync(id);
 
             return Ok(new
@@ -1172,6 +1202,7 @@ namespace Backend.Controllers
                 if (!requestingUser.Role.CanManageUserProfiles() && currentUserId != id)
                     return Forbid();
 
+                var theirCards = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, id);
                 return Ok(new
                 {
                     id = user.Id,
@@ -1179,7 +1210,7 @@ namespace Backend.Controllers
                     name = user.Name,
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
-                    chargeCardId = user.ChargeCardId,
+                    chargeCardIds = theirCards,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });

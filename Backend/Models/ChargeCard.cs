@@ -20,4 +20,6 @@ public class ChargeCard
     public string? HouseNumber { get; set; }
     public string? PostalCode { get; set; }
     public string? PlaceName { get; set; }
+
+    public ICollection<UserChargeCard> UserChargeCards { get; set; } = new List<UserChargeCard>();
 }
