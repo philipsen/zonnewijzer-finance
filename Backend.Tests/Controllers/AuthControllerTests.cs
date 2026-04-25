@@ -207,14 +207,12 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllUsers_BaseUser_ReturnsAllUsers()
+    public async Task GetAllUsers_BaseUser_Forbidden()
     {
         await AddUser(1, "Regular", UserRole.Base);
         await AddUser(2, "Other");
         var result = await BuildController().GetAllUsers();
-        var ok = Assert.IsType<OkObjectResult>(result);
-        var list = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value).ToList();
-        Assert.Equal(2, list.Count);
+        Assert.IsType<ForbidResult>(result);
     }
 
     // ── GetUser ────────────────────────────────────────────────────────────────
@@ -286,7 +284,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetUserById_WhenNotFound_ReturnsNotFound()
     {
-        await AddUser(1, "Alice");
+        await AddUser(1, "Alice", UserRole.Admin);
         var result = await BuildController().GetUserById(999);
         Assert.IsType<NotFoundObjectResult>(result);
     }
@@ -368,7 +366,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task UpdateUser_WhenNotFound_ReturnsNotFound()
     {
-        await AddUser(1, "Editor");
+        await AddUser(1, "Editor", UserRole.Admin);
         var result = await BuildController().UpdateUser(999, new UpdateUserRequest { Name = "Ghost" });
         Assert.IsType<NotFoundObjectResult>(result);
     }
@@ -376,7 +374,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task UpdateUser_UpdatesNameAndReturnsOk()
     {
-        await AddUser(1, "Editor");
+        await AddUser(1, "Editor", UserRole.Admin);
         await AddUser(2, "OldName");
 
         var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Name = "NewName" });
@@ -426,16 +424,16 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateUser_BaseUser_CanPromoteToAdmin()
+    public async Task UpdateUser_BaseUser_CannotEditUsers()
     {
         await AddUser(1, "BaseEditor", UserRole.Base);
         await AddUser(2, "Target", UserRole.Base);
 
-        var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Role = "Admin" });
+        var result = await BuildController().UpdateUser(2, new UpdateUserRequest { Name = "X" });
 
-        Assert.IsType<OkObjectResult>(result);
-        var target = await _db.Users.FindAsync(2);
-        Assert.Equal(UserRole.Admin, target!.Role);
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbidden.StatusCode);
+        Assert.Equal("Target", (await _db.Users.FindAsync(2))!.Name);
     }
 
     [Fact]
@@ -464,7 +462,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task UpdateUserRole_WhenUserNotFound_ReturnsNotFound()
     {
-        await AddUser(1, "Editor");
+        await AddUser(1, "Editor", UserRole.Admin);
         var result = await BuildController().UpdateUserRole(999, new UpdateRoleRequest { Role = "Admin" });
         Assert.IsType<NotFoundObjectResult>(result);
     }
@@ -472,7 +470,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task UpdateUserRole_WithInvalidRole_ReturnsBadRequest()
     {
-        await AddUser(1, "Editor");
+        await AddUser(1, "Editor", UserRole.Admin);
         await AddUser(2, "Target");
         var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "SuperAdmin" });
         Assert.IsType<BadRequestObjectResult>(result);
@@ -492,16 +490,16 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateUserRole_BaseUser_CanPromoteToAdmin()
+    public async Task UpdateUserRole_BaseUser_CannotChangeRoles()
     {
         await AddUser(1, "BaseEditor", UserRole.Base);
         await AddUser(2, "Target", UserRole.Base);
 
         var result = await BuildController().UpdateUserRole(2, new UpdateRoleRequest { Role = "Admin" });
 
-        Assert.IsType<OkObjectResult>(result);
-        var updated = await _db.Users.FindAsync(2);
-        Assert.Equal(UserRole.Admin, updated!.Role);
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbidden.StatusCode);
+        Assert.Equal(UserRole.Base, (await _db.Users.FindAsync(2))!.Role);
     }
 
     [Fact]
