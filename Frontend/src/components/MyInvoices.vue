@@ -31,7 +31,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="m in months" :key="`${m.year}-${m.month}`">
+            <tr v-for="m in months" :key="`${m.appUserId}-${m.year}-${m.month}`">
               <td>{{ m.monthName }}</td>
               <td class="invoice-num">{{ m.invoiceNumber }}</td>
               <td class="num-cell">{{ m.totalKwh.toFixed(2) }}</td>
@@ -91,7 +91,6 @@ export default {
     const userName = ref('')
     const months = ref([])
     const hasChargingAccount = ref(true)
-    const chargeCardId = ref(null)
 
     const fetchMyInvoices = async () => {
       try {
@@ -105,11 +104,11 @@ export default {
           headers: { Authorization: `Bearer ${token}` }
         })
         userName.value = response.data.userName
-        if (!response.data.chargeCardId) {
+        const cardIds = response.data.chargeCardIds
+        if (!cardIds || !cardIds.length) {
           hasChargingAccount.value = false
           return
         }
-        chargeCardId.value = response.data.chargeCardId
         months.value = response.data.months
       } catch (err) {
         console.error('Failed to fetch invoices:', err)
@@ -127,7 +126,7 @@ export default {
       try {
         const token = localStorage.getItem('token')
         const response = await axios.get(
-          `/api/invoices/${chargeCardId.value}/${month.year}/${month.month}`,
+          `/api/invoices/${month.appUserId}/${month.year}/${month.month}`,
           { headers: { Authorization: `Bearer ${token}` }, responseType: 'blob' }
         )
         const blob = new Blob([response.data], { type: 'application/pdf' })
@@ -152,7 +151,7 @@ export default {
       try {
         const token = localStorage.getItem('token')
         const response = await axios.post(
-          `/api/invoices/${chargeCardId.value}/${month.year}/${month.month}/payment-link`,
+          `/api/invoices/${month.appUserId}/${month.year}/${month.month}/payment-link`,
           null,
           { headers: { Authorization: `Bearer ${token}` } }
         )

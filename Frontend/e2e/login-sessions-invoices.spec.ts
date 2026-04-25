@@ -134,7 +134,7 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
     if ((await mySessions.count()) === 0) {
       test.skip(
         true,
-        'Navbar only shows My Sessions when the user has chargeCardId. Link the account to a charge card to run this check.',
+        'Navbar only shows My Sessions when the user has at least one linked charge card. Link the account to a charge card to run this check.',
       )
     }
     await expect(mySessions).toBeVisible()

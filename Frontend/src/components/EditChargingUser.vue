@@ -49,11 +49,12 @@
               v-for="u in availableUsers"
               :key="u.id"
               :value="u.id"
-              :disabled="u.chargeCardId !== null && u.chargeCardId !== chargingUser.id"
             >
-              {{ u.name }}
-              <template v-if="u.chargeCardId !== null && u.chargeCardId !== chargingUser.id">
-                (linked to card {{ u.chargeCardId }})
+              <template v-if="u.chargeCardIds && u.chargeCardIds.length">
+                {{ u.name }} (card(s) {{ u.chargeCardIds.join(', ') }})
+              </template>
+              <template v-else>
+                {{ u.name }}
               </template>
             </option>
           </select>

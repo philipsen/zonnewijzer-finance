@@ -291,6 +291,8 @@ namespace Backend.Services
                                                 col.Item().Text(title).FontSize(9);
                                                 if (!string.IsNullOrWhiteSpace(session.StationSerialNumber))
                                                     col.Item().Text($"S/N {session.StationSerialNumber}").FontSize(8).FontColor(Colors.Grey.Darken1);
+                                                if (session.ChargeCardId != 0)
+                                                    col.Item().Text($"Card {session.ChargeCardId}").FontSize(8).FontColor(Colors.Grey.Darken1);
                                             });
                                         table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                             .Text(string.IsNullOrWhiteSpace(session.Connector) ? "—" : session.Connector).FontSize(9).AlignCenter();

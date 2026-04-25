@@ -60,7 +60,9 @@ public class MyChargingSessionsControllerTests : IDisposable
         _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-1" });
         await _db.SaveChangesAsync();
         var cid = _db.ChargeCards.Single().Id;
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1" });
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 1, ChargeCardId = cid });
         var t = new DateTime(2024, 3, 15, 10, 0, 0, DateTimeKind.Utc);
         _db.ChargingSessions.AddRange(
             TestData.Session(cid, 1, t, t.AddHours(1), 5),
@@ -97,7 +99,9 @@ public class MyChargingSessionsControllerTests : IDisposable
         _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-2" });
         await _db.SaveChangesAsync();
         var cid = _db.ChargeCards.Single().Id;
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1" });
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 1, ChargeCardId = cid });
         await _db.SaveChangesAsync();
 
         var result = await BuildController().GetMySessions(year: 2024, month: 13);
@@ -110,7 +114,9 @@ public class MyChargingSessionsControllerTests : IDisposable
         _db.ChargeCards.Add(new ChargeCard { Value = "RF-MY-3" });
         await _db.SaveChangesAsync();
         var cid = _db.ChargeCards.Single().Id;
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1", ChargeCardId = cid });
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "A", GoogleId = "g1" });
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 1, ChargeCardId = cid });
         var t = DateTime.UtcNow.AddDays(-1);
         _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
         await _db.SaveChangesAsync();

@@ -30,6 +30,8 @@ namespace Backend.Services
 
     public class SessionData
     {
+        /// <summary>Which charge card (token) the session was billed on; included when a user has multiple cards.</summary>
+        public int ChargeCardId { get; set; }
         public DateTime Start { get; set; }
         public DateTime? End { get; set; }
         public int StationId { get; set; }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -48,7 +49,8 @@ public class SmappeeCloudClient : ISmappeeCloudClient
             ["password"] = _options.Password
         };
         using var content = new FormUrlEncodedContent(body);
-        using var response = await _http.PostAsync(tokenUri, content, cancellationToken);
+        using var tokenReq = new HttpRequestMessage(HttpMethod.Post, tokenUri) { Content = content };
+        using var response = await SendAndLogSmappeeAsync(tokenReq, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -85,7 +87,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var token = await GetAccessTokenAsync(cancellationToken);
         using var req = new HttpRequestMessage(HttpMethod.Get, $"servicelocation/{serviceLocationId}/rfids");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http.SendAsync(req, cancellationToken);
+        using var response = await SendAndLogSmappeeAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -151,7 +153,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var token = await GetAccessTokenAsync(cancellationToken);
         using var req = new HttpRequestMessage(HttpMethod.Get, "servicelocation");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http.SendAsync(req, cancellationToken);
+        using var response = await SendAndLogSmappeeAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -186,7 +188,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var token = accessTokenOrNull ?? await GetAccessTokenAsync(cancellationToken);
         using var req = new HttpRequestMessage(HttpMethod.Get, $"servicelocation/{serviceLocationId}/info");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http.SendAsync(req, cancellationToken);
+        using var response = await SendAndLogSmappeeAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -213,7 +215,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, "servicelocation");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http.SendAsync(req, cancellationToken);
+        using var response = await SendAndLogSmappeeAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -267,7 +269,7 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var query = BuildChargingSessionsQuery(rangeStartMs, rangeEndMs, active);
         using var req = new HttpRequestMessage(HttpMethod.Get, $"chargingparks/{serviceLocationId}/sessions{query}");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await _http.SendAsync(req, cancellationToken);
+        using var response = await SendAndLogSmappeeAsync(req, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -337,6 +339,34 @@ public class SmappeeCloudClient : ISmappeeCloudClient
             _logger.LogWarning(ex, "Smappee servicelocation list JSON parse failed");
             throw new InvalidOperationException("Smappee service locations response was not valid JSON.");
         }
+    }
+
+    private async Task<HttpResponseMessage> SendAndLogSmappeeAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var target = SmappeeRequestUrlForLog(request);
+        var sw = Stopwatch.StartNew();
+        var response = await _http.SendAsync(request, cancellationToken);
+        sw.Stop();
+        _logger.LogInformation(
+            "Smappee {Method} {Url} -> {Status} in {Ms}ms",
+            request.Method,
+            target,
+            (int)response.StatusCode,
+            sw.ElapsedMilliseconds);
+        return response;
+    }
+
+    private string SmappeeRequestUrlForLog(HttpRequestMessage request)
+    {
+        if (request.RequestUri == null)
+            return "";
+        if (request.RequestUri.IsAbsoluteUri)
+            return request.RequestUri.ToString();
+        if (_http.BaseAddress != null)
+            return new Uri(_http.BaseAddress, request.RequestUri).ToString();
+        return request.RequestUri.ToString();
     }
 
     private static string Truncate(string s, int max = 500) =>

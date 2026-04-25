@@ -21,6 +21,29 @@ namespace Backend.Controllers
         private readonly IGnuCashSyncClient _gnuCashSyncClient;
         private readonly IConfiguration _configuration;
         private readonly ILogger<InvoicesController> _logger;
+
+        /// <param name="appUserId">Target app user id (invoice is per user, not per charge card).</param>
+        private async Task<bool> CanAccessAppUserInvoiceAsync(
+            int requesterId,
+            int appUserId,
+            CancellationToken cancellationToken = default)
+        {
+            var u = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == requesterId, cancellationToken);
+            if (u == null)
+                return false;
+            if (u.Role.IsAppAdministrator())
+                return true;
+            return requesterId == appUserId;
+        }
+
+        private async Task<string> AppUserDisplayNameAsync(int appUserId)
+        {
+            var u = await _context.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == appUserId);
+            return u?.Name ?? $"User {appUserId}";
+        }
+
         private static readonly HashSet<string> FinalPaymentStatuses = new(StringComparer.OrdinalIgnoreCase)
         {
             "paid",
@@ -69,19 +92,20 @@ namespace Backend.Controllers
                 if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
                     return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
 
-                var userIds = await _invoiceComputation.GetChargeCardIdsForMonthAsync(body.Year, body.Month, body.ChargeCardId, cancellationToken);
-                var linkedEmails = await _context.Users
-                    .Where(u => u.ChargeCardId != null && userIds.Contains(u.ChargeCardId!.Value))
-                    .Select(u => new { u.ChargeCardId, u.Email })
-                    .ToListAsync(cancellationToken);
+                var appUserIds = await _invoiceComputation.GetAppUserIdsForMonthAsync(
+                    body.Year, body.Month, body.AppUserId, cancellationToken);
 
                 var invoices = new List<GnuCashInvoiceDto>();
-                foreach (var uid in userIds)
+                foreach (var appUserId in appUserIds)
                 {
-                    var data = await _invoiceComputation.BuildInvoiceDataReadOnlyAsync(uid, body.Year, body.Month, cancellationToken);
+                    var data = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(
+                        appUserId, body.Year, body.Month, cancellationToken);
                     if (data == null)
                         continue;
-                    var email = linkedEmails.FirstOrDefault(x => x.ChargeCardId == uid)?.Email;
+                    var email = await _context.Users.AsNoTracking()
+                        .Where(u => u.Id == appUserId)
+                        .Select(u => u.Email)
+                        .FirstOrDefaultAsync(cancellationToken);
                     invoices.Add(GnuCashInvoiceMapper.ToDto(data, email));
                 }
 
@@ -114,7 +138,7 @@ namespace Backend.Controllers
             }
         }
 
-        /// <summary>Admin: create the GnuCash customer for a linked app user (customer id CU-{chargeCardId}, same as invoices).</summary>
+        /// <summary>Admin: create the GnuCash customer for an app user (customer id CU-USER-…, same as invoices).</summary>
         [HttpPost("gnucash/customer/{appUserId:int}")]
         public async Task<IActionResult> EnsureGnucashCustomer(int appUserId, [FromQuery] bool dryRun = false, CancellationToken cancellationToken = default)
         {
@@ -136,26 +160,41 @@ namespace Backend.Controllers
                 if (target == null)
                     return NotFound("User not found.");
 
-                if (target.ChargeCardId is null)
-                    return BadRequest("This user has no linked charge card. Link a charge card first so the GnuCash customer id matches invoices (CU-…).");
+                var cardIds = await _context.UserChargeCards
+                    .AsNoTracking()
+                    .Where(x => x.UserId == appUserId)
+                    .OrderBy(x => x.ChargeCardId)
+                    .Select(x => x.ChargeCardId)
+                    .ToListAsync(cancellationToken);
+                if (cardIds.Count == 0)
+                    return BadRequest("This user has no linked charge cards. Link at least one charge card before creating the GnuCash customer.");
 
-                var profile = await _context.ChargeCards.FirstOrDefaultAsync(p => p.Id == target.ChargeCardId.Value, cancellationToken);
-                var customerId = $"CU-{target.ChargeCardId.Value}";
+                var profiles = await _context.ChargeCards
+                    .Where(p => cardIds.Contains(p.Id))
+                    .OrderBy(p => p.Id)
+                    .ToListAsync(cancellationToken);
+                var profile = profiles.FirstOrDefault(p =>
+                                  !string.IsNullOrWhiteSpace(p.Street) || !string.IsNullOrWhiteSpace(p.PostalCode))
+                              ?? profiles.FirstOrDefault();
+                if (profile == null)
+                    return BadRequest("Charge card profiles are missing.");
+
+                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
+                    ?? $"{Guid.NewGuid():N}";
+                Response.Headers["X-Correlation-Id"] = correlationId;
+
+                var customerId = $"CU-USER-{appUserId}";
                 var pyRequest = new GnuCashEnsureCustomerRequest
                 {
                     CustomerId = customerId,
                     CustomerName = target.Name,
                     Email = target.Email,
-                    Street = profile?.Street,
-                    HouseNumber = profile?.HouseNumber,
-                    PostalCode = profile?.PostalCode,
-                    PlaceName = profile?.PlaceName,
+                    Street = profile.Street,
+                    HouseNumber = profile.HouseNumber,
+                    PostalCode = profile.PostalCode,
+                    PlaceName = profile.PlaceName,
                     Currency = "EUR"
                 };
-
-                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
-                    ?? $"{Guid.NewGuid():N}";
-                Response.Headers["X-Correlation-Id"] = correlationId;
 
                 var pyResponse = await _gnuCashSyncClient.EnsureCustomerAsync(pyRequest, correlationId, dryRun, cancellationToken);
                 if (pyResponse == null)
@@ -169,7 +208,7 @@ namespace Backend.Controllers
                 });
                 await _context.SaveChangesAsync(cancellationToken);
 
-                return Ok(pyResponse);
+                return Ok(new { results = new[] { pyResponse }, customerIds = new[] { customerId } });
             }
             catch (Exception ex)
             {
@@ -244,39 +283,44 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("User {UserId} requesting invoices grid", currentUserId);
 
-                // Get unique users from charging sessions instead of registered users
-                var chargingSessionUsers = await _context.ChargingSessions
-                    .Select(cs => cs.ChargeCardId)
+                // One row per app user with sessions (only cards linked to an account; sessions are combined per user).
+                var allSessions = await _context.ChargingSessions
+                    .ToListAsync(cancellationToken);
+
+                var cardIdsWithSessions = allSessions.Select(s => s.ChargeCardId).Distinct().ToList();
+                var appUserIdsWithActivity = await _context.UserChargeCards
+                    .AsNoTracking()
+                    .Where(ucc => cardIdsWithSessions.Contains(ucc.ChargeCardId))
+                    .Select(ucc => ucc.UserId)
                     .Distinct()
-                    .OrderBy(uid => uid)
+                    .OrderBy(id => id)
                     .ToListAsync(cancellationToken);
 
-                // Look up real user names via ChargeCardId links
-                var linkedUsers = await _context.Users
-                    .Where(u => u.ChargeCardId != null && chargingSessionUsers.Contains(u.ChargeCardId!.Value))
-                    .Select(u => new { u.ChargeCardId, u.Name, u.Email })
+                var appUserRecords = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => appUserIdsWithActivity.Contains(u.Id))
+                    .OrderBy(u => u.Id)
                     .ToListAsync(cancellationToken);
 
-                // Load display names for unlinked charging users
-                var profiles = await _context.ChargeCards
-                    .Where(p => chargingSessionUsers.Contains(p.Id))
-                    .ToListAsync(cancellationToken);
-
-                // Create user objects for grid display
-                var users = chargingSessionUsers.Select(uid => {
-                    var linked = linkedUsers.FirstOrDefault(u => u.ChargeCardId == uid);
-                    var profile = profiles.FirstOrDefault(p => p.Id == uid);
-                    return new {
-                        Id = uid,
-                        Name = linked?.Name ?? profile?.Comment ?? $"Charge card {uid}",
-                        Email = linked?.Email ?? $"user{uid}@charging.local"
-                    };
+                var users = appUserRecords.Select(u => new
+                {
+                    Id = u.Id,
+                    Name = u.Name,
+                    Email = u.Email
                 }).ToList();
 
-                // Get months that have charging sessions instead of all months
-                var sessionTs = await _context.ChargingSessions
-                    .Select(cs => cs.FromTimestamp)
+                var userCardLinks = await _context.UserChargeCards
+                    .AsNoTracking()
+                    .Where(ucc => appUserIdsWithActivity.Contains(ucc.UserId))
+                    .Select(ucc => new { ucc.UserId, ucc.ChargeCardId })
                     .ToListAsync(cancellationToken);
+                var cardsByAppUser = userCardLinks
+                    .GroupBy(x => x.UserId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Select(x => x.ChargeCardId).ToList());
+
+                var sessionTs = allSessions.Select(cs => cs.FromTimestamp).ToList();
                 var rawMonths = sessionTs
                     .Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds)
                     .Distinct()
@@ -284,11 +328,6 @@ namespace Backend.Controllers
                     .ThenBy(d => d.Month)
                     .Select(d => new { d.Year, d.Month })
                     .ToList();
-
-                // Pre-load all charging sessions for the relevant users/months to avoid N+1 queries
-                var allSessions = await _context.ChargingSessions
-                    .Where(cs => chargingSessionUsers.Contains(cs.ChargeCardId))
-                    .ToListAsync(cancellationToken);
 
                 // Pre-load all energy prices
                 var energyPrices = await _context.EnergyPrices
@@ -309,14 +348,19 @@ namespace Backend.Controllers
                     RatePerKwh = Math.Round(GetRate(d.Year, d.Month), 2)
                 }).ToList();
 
-                static string GnucashInvoiceId(int chargeCardId, int year, int month) =>
-                    $"INV-{year:D4}-{month:D2}-{chargeCardId:D4}";
+                static string GnucashInvoiceId(int appUserId, int year, int month) =>
+                    $"INV-{year:D4}-{month:D2}-U{appUserId}";
 
                 var invoiceIdsToCheck = users
                     .SelectMany(user => months
-                        .Where(m => allSessions.Any(cs =>
-                            cs.ChargeCardId == user.Id &&
-                            BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month)))
+                        .Where(m =>
+                        {
+                            if (!cardsByAppUser.TryGetValue(user.Id, out var cids) || cids.Count == 0)
+                                return false;
+                            return allSessions.Any(cs =>
+                                cids.Contains(cs.ChargeCardId) &&
+                                BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                        })
                         .Select(m => GnucashInvoiceId(user.Id, m.Year, m.Month)))
                     .Distinct()
                     .ToList();
@@ -343,30 +387,41 @@ namespace Backend.Controllers
                     }
                 }
 
-                // Create grid data with charging session info instead of stored invoices
                 var gridData = users.Select(user => new
                 {
                     User = user,
                     Invoices = months.Select(m =>
                     {
+                        if (!cardsByAppUser.TryGetValue(user.Id, out var cids) || cids.Count == 0)
+                        {
+                            return new
+                            {
+                                Year = m.Year,
+                                Month = m.Month,
+                                MonthName = m.Name,
+                                HasChargingSessions = false,
+                                TotalKwh = 0m,
+                                RatePerKwh = GetRate(m.Year, m.Month),
+                                TotalAmount = 0m,
+                                GnucashInvoiceInserted = false
+                            };
+                        }
                         var hasCharging = allSessions
-                            .Any(cs => cs.ChargeCardId == user.Id &&
+                            .Any(cs => cids.Contains(cs.ChargeCardId) &&
                                       BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                        var kwh = allSessions
+                            .Where(cs => cids.Contains(cs.ChargeCardId) &&
+                                        BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
+                            .Sum(ChargingSessionEnergy.ChargedKwh);
                         return new
                         {
                             Year = m.Year,
                             Month = m.Month,
                             MonthName = m.Name,
                             HasChargingSessions = hasCharging,
-                            TotalKwh = Math.Round(allSessions
-                                .Where(cs => cs.ChargeCardId == user.Id &&
-                                            BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
-                                .Sum(ChargingSessionEnergy.ChargedKwh), 2),
+                            TotalKwh = Math.Round(kwh, 2),
                             RatePerKwh = GetRate(m.Year, m.Month),
-                            TotalAmount = Math.Round(allSessions
-                                .Where(cs => cs.ChargeCardId == user.Id &&
-                                            BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
-                                .Sum(ChargingSessionEnergy.ChargedKwh) * GetRate(m.Year, m.Month), 2),
+                            TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2),
                             GnucashInvoiceInserted = hasCharging
                                 && existingInvoiceIds.Contains(GnucashInvoiceId(user.Id, m.Year, m.Month))
                         };
@@ -383,7 +438,7 @@ namespace Backend.Controllers
         }
 
         [HttpGet("{userId}/{year}/{month}")]
-        public async Task<IActionResult> GenerateInvoicePdf(int userId, int year, int month)
+        public async Task<IActionResult> GenerateInvoicePdf(int userId, int year, int month, CancellationToken cancellationToken)
         {
             try
             {
@@ -395,14 +450,17 @@ namespace Backend.Controllers
                     return Unauthorized();
                 }
 
-                _logger.LogInformation("Generating on-the-fly invoice for user {UserId}, {Year}-{Month}", userId, year, month);
+                if (!await CanAccessAppUserInvoiceAsync(currentUserId, userId, cancellationToken))
+                    return Forbid();
 
-                var invoiceData = await _invoiceComputation.BuildInvoiceDataReadOnlyAsync(userId, year, month);
+                _logger.LogInformation("Generating on-the-fly invoice for app user {UserId}, {Year}-{Month}", userId, year, month);
+
+                var invoiceData = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(userId, year, month, cancellationToken);
                 if (invoiceData == null)
                     return NotFound("No charging sessions found for this user and month");
 
                 var molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.ChargeCardId == userId && p.Year == year && p.Month == month);
+                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
 
                 // Create a payment record on first PDF download
                 if (molliePayment == null)
@@ -427,7 +485,7 @@ namespace Backend.Controllers
 
                         molliePayment = new MolliePayment
                         {
-                            ChargeCardId = userId,
+                            AppUserId = userId,
                             Year = year,
                             Month = month,
                             MolliePaymentId = result.PaymentId,
@@ -446,13 +504,13 @@ namespace Backend.Controllers
                 }
 
                 molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.ChargeCardId == userId && p.Year == year && p.Month == month);
+                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
                 invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
                 invoiceData.IsPaid = molliePayment?.Status == "paid";
 
                 // Generate PDF
                 var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
-                var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{userId}_{year}_{month:D2}.pdf";
+                var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
 
                 var requester = await _context.Users.FindAsync(currentUserId);
                 _context.EventLogs.Add(new EventLog
@@ -473,7 +531,7 @@ namespace Backend.Controllers
         }
 
         [HttpPost("{userId}/{year}/{month}/payment-link")]
-        public async Task<IActionResult> CreatePaymentLink(int userId, int year, int month)
+        public async Task<IActionResult> CreatePaymentLink(int userId, int year, int month, CancellationToken cancellationToken)
         {
             try
             {
@@ -483,9 +541,12 @@ namespace Backend.Controllers
                 if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
                     return Unauthorized();
 
+                if (!await CanAccessAppUserInvoiceAsync(currentUserId, userId, cancellationToken))
+                    return Forbid();
+
                 // Check for existing payment link and sync latest status first
                 var existing = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.ChargeCardId == userId && p.Year == year && p.Month == month);
+                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
 
                 if (existing != null)
                 {
@@ -509,29 +570,15 @@ namespace Backend.Controllers
                         return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                 }
 
-                // Get charging sessions to calculate amount
-                var (payStartMs, payEndMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
-                var chargingSessions = await _context.ChargingSessions
-                    .Where(cs => cs.ChargeCardId == userId && cs.FromTimestamp >= payStartMs && cs.FromTimestamp < payEndMs)
-                    .ToListAsync();
-
-                if (!chargingSessions.Any())
+                var invoicePreview = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(userId, year, month, cancellationToken);
+                if (invoicePreview == null)
                     return NotFound("No charging sessions found for this user and month");
 
-                var totalKwh = chargingSessions.Sum(ChargingSessionEnergy.ChargedKwh);
-                var ratePerKwh = await _context.EnergyPrices
-                    .Where(p => p.Year < year || (p.Year == year && p.Month <= month))
-                    .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
-                    .Select(p => (decimal?)p.PricePerKwh)
-                    .FirstOrDefaultAsync() ?? 0.22m;
-
-                var totalAmount = Math.Round(totalKwh * ratePerKwh, 2);
-                var invoiceNumber = $"INV-{year:D4}-{month:D2}-{userId:D4}";
-                var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-
-                var profile = await _context.ChargeCards.FirstOrDefaultAsync(p => p.Id == userId);
-                var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == userId);
-                var userName = linkedUser?.Name ?? profile?.Comment ?? $"Charge card {userId}";
+                var totalAmount = invoicePreview.TotalAmount;
+                var invoiceNumber = invoicePreview.InvoiceNumber;
+                var monthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                    .ToString("MMMM yyyy");
+                var userName = invoicePreview.UserName;
 
                 var redirectUrl = _configuration["Mollie:RedirectUrl"];
                 if (string.IsNullOrWhiteSpace(redirectUrl))
@@ -556,7 +603,7 @@ namespace Backend.Controllers
 
                 var molliePayment = new MolliePayment
                 {
-                    ChargeCardId = userId,
+                    AppUserId = userId,
                     Year = year,
                     Month = month,
                     MolliePaymentId = result.PaymentId,
@@ -578,7 +625,7 @@ namespace Backend.Controllers
 
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Payment link created for charging user {UserId}, {Year}-{Month}: {PaymentId}", userId, year, month, result.PaymentId);
+                _logger.LogInformation("Payment link created for app user {UserId}, {Year}-{Month}: {PaymentId}", userId, year, month, result.PaymentId);
 
                 return Ok(new { checkoutUrl = result.CheckoutUrl, paymentId = result.PaymentId, status = result.Status });
             }
@@ -590,18 +637,21 @@ namespace Backend.Controllers
         }
 
         [HttpGet("{userId}/{year}/{month}/payment-link")]
-        public async Task<IActionResult> GetPaymentLink(int userId, int year, int month)
+        public async Task<IActionResult> GetPaymentLink(int userId, int year, int month, CancellationToken cancellationToken)
         {
             try
             {
                 var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
                 var userIdString = _jwtService.ValidateToken(token);
 
-                if (userIdString == null || !int.TryParse(userIdString, out _))
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
                     return Unauthorized();
 
+                if (!await CanAccessAppUserInvoiceAsync(currentUserId, userId, cancellationToken))
+                    return Forbid();
+
                 var payment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.ChargeCardId == userId && p.Year == year && p.Month == month);
+                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
 
                 if (payment == null)
                     return NotFound();
@@ -653,15 +703,11 @@ namespace Backend.Controllers
                     .OrderByDescending(p => p.CreatedAt)
                     .ToListAsync();
 
-                // Resolve display names (loaded early so the refresh loop can use them)
-                var profiles = await _context.ChargeCards.ToListAsync();
-                var linkedUsers = await _context.Users
-                    .Where(u => u.ChargeCardId != null)
-                    .Select(u => new { u.ChargeCardId, u.Name })
-                    .ToListAsync();
+                var appUsers = await _context.Users.AsNoTracking().ToListAsync();
 
                 // Refresh non-final statuses from Mollie
                 var stalePayments = payments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
+                var anyStatusChanged = false;
                 foreach (var p in stalePayments)
                 {
                     try
@@ -669,14 +715,14 @@ namespace Backend.Controllers
                         var latest = await _mollieService.GetPaymentStatusAsync(p.MolliePaymentId);
                         if (latest != p.Status)
                         {
+                            anyStatusChanged = true;
                             var previousStatus = p.Status;
                             p.Status = latest;
                             p.UpdatedAt = DateTime.UtcNow;
 
-                            var linked = linkedUsers.FirstOrDefault(u => u.ChargeCardId == p.ChargeCardId);
-                            var profile = profiles.FirstOrDefault(pr => pr.Id == p.ChargeCardId);
-                            var name = linked?.Name ?? profile?.Comment ?? $"Charge card {p.ChargeCardId}";
-                            var monthName = new DateTime(p.Year, p.Month, 1).ToString("MMMM yyyy");
+                            var name = appUsers.FirstOrDefault(u => u.Id == p.AppUserId)?.Name ?? $"User {p.AppUserId}";
+                            var monthName = new DateTime(p.Year, p.Month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                                .ToString("MMMM yyyy");
 
                             _context.EventLogs.Add(new EventLog
                             {
@@ -691,18 +737,16 @@ namespace Backend.Controllers
                         _logger.LogWarning(ex, "Could not refresh Mollie status for {PaymentId}", p.MolliePaymentId);
                     }
                 }
-                if (stalePayments.Any(p => p.UpdatedAt.HasValue))
+                if (anyStatusChanged)
                     await _context.SaveChangesAsync();
 
                 var result = payments.Select(p =>
                 {
-                    var linked = linkedUsers.FirstOrDefault(u => u.ChargeCardId == p.ChargeCardId);
-                    var profile = profiles.FirstOrDefault(pr => pr.Id == p.ChargeCardId);
-                    var name = linked?.Name ?? profile?.Comment ?? $"Charge card {p.ChargeCardId}";
+                    var name = appUsers.FirstOrDefault(u => u.Id == p.AppUserId)?.Name ?? $"User {p.AppUserId}";
                     return new
                     {
                         p.Id,
-                        p.ChargeCardId,
+                        p.AppUserId,
                         UserName = name,
                         p.Year,
                         p.Month,
@@ -747,10 +791,9 @@ namespace Backend.Controllers
                     payment.Status = latestStatus;
                     payment.UpdatedAt = DateTime.UtcNow;
 
-                    var profile = await _context.ChargeCards.FirstOrDefaultAsync(p => p.Id == payment.ChargeCardId);
-                    var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == payment.ChargeCardId);
-                    var userName = linkedUser?.Name ?? profile?.Comment ?? $"Charge card {payment.ChargeCardId}";
-                    var monthName = new DateTime(payment.Year, payment.Month, 1).ToString("MMMM yyyy");
+                    var userName = await AppUserDisplayNameAsync(payment.AppUserId);
+                    var monthName = new DateTime(payment.Year, payment.Month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                        .ToString("MMMM yyyy");
 
                     _context.EventLogs.Add(new EventLog
                     {
@@ -791,10 +834,9 @@ namespace Backend.Controllers
                 if (payment == null)
                     return NotFound();
 
-                var profile = await _context.ChargeCards.FirstOrDefaultAsync(p => p.Id == payment.ChargeCardId);
-                var linkedUser = await _context.Users.FirstOrDefaultAsync(u => u.ChargeCardId == payment.ChargeCardId);
-                var userName = linkedUser?.Name ?? profile?.Comment ?? $"Charge card {payment.ChargeCardId}";
-                var monthName = new DateTime(payment.Year, payment.Month, 1).ToString("MMMM yyyy");
+                var userName = await AppUserDisplayNameAsync(payment.AppUserId);
+                var monthName = new DateTime(payment.Year, payment.Month, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                    .ToString("MMMM yyyy");
 
                 _context.MolliePayments.Remove(payment);
                 _context.EventLogs.Add(new EventLog

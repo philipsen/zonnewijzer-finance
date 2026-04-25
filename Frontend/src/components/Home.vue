@@ -262,7 +262,7 @@ export default {
       isAuthenticated.value &&
       appUser.value &&
       appUser.value.role === 'Base' &&
-      !appUser.value.chargeCardId
+      !(appUser.value.chargeCardIds && appUser.value.chargeCardIds.length)
     )
 
     const signinButtonEl = ref(null)
@@ -531,7 +531,6 @@ export default {
     }
 
     let googlePollTimer = null
-    let homeChargingSquaresPollTimer = null
 
     const startGoogleReadyPoll = () => {
       if (googlePollTimer) return
@@ -594,7 +593,6 @@ export default {
 
       requestAnimationFrame(() => tryRenderGoogle())
       startGoogleReadyPoll()
-      homeChargingSquaresPollTimer = setInterval(loadChargingStationSquares, 45_000)
     })
 
     onBeforeUnmount(() => {
@@ -602,10 +600,6 @@ export default {
       if (googlePollTimer) {
         clearInterval(googlePollTimer)
         googlePollTimer = null
-      }
-      if (homeChargingSquaresPollTimer) {
-        clearInterval(homeChargingSquaresPollTimer)
-        homeChargingSquaresPollTimer = null
       }
     })
 
@@ -616,7 +610,7 @@ export default {
     )
 
     watch(
-      () => [isAuthenticated.value, needsAccess.value, appUser.value?.chargeCardId, appUser.value?.role],
+      () => [isAuthenticated.value, needsAccess.value, appUser.value?.chargeCardIds, appUser.value?.role],
       () => {
         loadChargingStationSquares()
       },

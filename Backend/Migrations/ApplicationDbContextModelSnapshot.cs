@@ -241,7 +241,7 @@ namespace Backend.Migrations
                         .HasPrecision(10, 2)
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("ChargeCardId")
+                    b.Property<int>("AppUserId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("CheckoutUrl")
@@ -273,7 +273,7 @@ namespace Backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ChargeCardId", "Year", "Month")
+                    b.HasIndex("AppUserId", "Year", "Month")
                         .IsUnique();
 
                     b.ToTable("MolliePayments");
@@ -314,6 +314,9 @@ namespace Backend.Migrations
 
             modelBuilder.Entity("Backend.Models.SmappeeServiceLocation", b =>
                 {
+                    b.Property<int>("ServiceLocationId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("AppliancesJson")
                         .HasColumnType("TEXT");
 
@@ -333,9 +336,6 @@ namespace Backend.Migrations
 
                     b.Property<double?>("Longitude")
                         .HasColumnType("REAL");
-
-                    b.Property<int>("ServiceLocationId")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Timezone")
                         .HasMaxLength(128)
@@ -388,9 +388,6 @@ namespace Backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("ChargeCardId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -428,6 +425,22 @@ namespace Backend.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Backend.Models.UserChargeCard", b =>
+                {
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChargeCardId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("UserId", "ChargeCardId");
+
+                    b.HasIndex("ChargeCardId")
+                        .IsUnique();
+
+                    b.ToTable("UserChargeCards");
+                });
+
             modelBuilder.Entity("Backend.Models.ChargingSession", b =>
                 {
                     b.HasOne("Backend.Models.ChargeCard", null)
@@ -448,6 +461,15 @@ namespace Backend.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Backend.Models.MolliePayment", b =>
+                {
+                    b.HasOne("Backend.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("AppUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Backend.Models.PasswordResetToken", b =>
                 {
                     b.HasOne("Backend.Models.User", "User")
@@ -457,6 +479,35 @@ namespace Backend.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Backend.Models.UserChargeCard", b =>
+                {
+                    b.HasOne("Backend.Models.ChargeCard", "ChargeCard")
+                        .WithMany("UserChargeCards")
+                        .HasForeignKey("ChargeCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Backend.Models.User", "User")
+                        .WithMany("UserChargeCards")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChargeCard");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Backend.Models.ChargeCard", b =>
+                {
+                    b.Navigation("UserChargeCards");
+                });
+
+            modelBuilder.Entity("Backend.Models.User", b =>
+                {
+                    b.Navigation("UserChargeCards");
                 });
 #pragma warning restore 612, 618
         }

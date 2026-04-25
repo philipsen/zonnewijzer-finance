@@ -227,10 +227,11 @@ public class ChargingSessionsController : ControllerBase
                 .AsNoTracking()
                 .Where(c => cardIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, c => c.Comment);
-            var linkedByCardId = await _context.Users
+            var linkedByCardId = await _context.UserChargeCards
                 .AsNoTracking()
-                .Where(u => u.ChargeCardId != null && cardIds.Contains(u.ChargeCardId.Value))
-                .ToDictionaryAsync(u => u.ChargeCardId!.Value, u => u.Name);
+                .Where(ucc => cardIds.Contains(ucc.ChargeCardId))
+                .Join(_context.Users.AsNoTracking(), ucc => ucc.UserId, u => u.Id, (ucc, u) => new { ucc.ChargeCardId, u.Name })
+                .ToDictionaryAsync(x => x.ChargeCardId, x => x.Name);
 
             string? ChargeCardLabel(int cid)
             {
