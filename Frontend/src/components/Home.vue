@@ -531,7 +531,6 @@ export default {
     }
 
     let googlePollTimer = null
-    let homeChargingSquaresPollTimer = null
 
     const startGoogleReadyPoll = () => {
       if (googlePollTimer) return
@@ -594,7 +593,6 @@ export default {
 
       requestAnimationFrame(() => tryRenderGoogle())
       startGoogleReadyPoll()
-      homeChargingSquaresPollTimer = setInterval(loadChargingStationSquares, 45_000)
     })
 
     onBeforeUnmount(() => {
@@ -602,10 +600,6 @@ export default {
       if (googlePollTimer) {
         clearInterval(googlePollTimer)
         googlePollTimer = null
-      }
-      if (homeChargingSquaresPollTimer) {
-        clearInterval(homeChargingSquaresPollTimer)
-        homeChargingSquaresPollTimer = null
       }
     })
 
