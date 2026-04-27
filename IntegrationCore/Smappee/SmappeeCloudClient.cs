@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Backend.Services.Smappee;
 
@@ -11,6 +12,9 @@ public class SmappeeCloudClient : ISmappeeCloudClient
     private readonly SmappeeOptions _options;
     private readonly ILogger<SmappeeCloudClient> _logger;
     private readonly string _normalizedApiBase;
+    private readonly SemaphoreSlim _tokenLock = new(1, 1);
+    private string? _cachedToken;
+    private DateTimeOffset _tokenValidUntil = DateTimeOffset.MinValue;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -28,58 +32,66 @@ public class SmappeeCloudClient : ISmappeeCloudClient
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
-        var missing = _options.GetMissingCredentialFields();
-        if (missing.Count > 0)
+        var now = DateTimeOffset.UtcNow;
+        if (!string.IsNullOrWhiteSpace(_cachedToken) && now < _tokenValidUntil.AddSeconds(-30))
+            return _cachedToken;
+
+        await _tokenLock.WaitAsync(cancellationToken);
+        try
         {
-            _logger.LogError(
-                "Smappee OAuth: required fields are null or empty. Missing: {Missing}. Set Smappee__* or Smappee:… in configuration.",
-                string.Join(", ", missing));
-            throw new InvalidOperationException(
-                "Smappee OAuth: " + string.Join(", ", missing) + " not set. Use Smappee__ClientId, Smappee__ClientSecret, Smappee__Username, Smappee__Password (or SMAPPEE_* env names).");
+            now = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(_cachedToken) && now < _tokenValidUntil.AddSeconds(-30))
+                return _cachedToken;
+
+            var missing = _options.GetMissingCredentialFields();
+            if (missing.Count > 0)
+            {
+                _logger.LogError(
+                    "Smappee OAuth: required fields are null or empty. Missing: {Missing}. Set Smappee__* or Smappee:… in configuration.",
+                    string.Join(", ", missing));
+                throw new InvalidOperationException(
+                    "Smappee OAuth: " + string.Join(", ", missing) + " not set. Use Smappee__ClientId, Smappee__ClientSecret, Smappee__Username, Smappee__Password (or SMAPPEE_* env names).");
+            }
+
+            var tokenUri = new Uri($"{ResolveOAuthTokenBase().TrimEnd('/')}/oauth2/token");
+            var body = new Dictionary<string, string>
+            {
+                ["grant_type"] = "password",
+                ["client_id"] = _options.ClientId,
+                ["client_secret"] = _options.ClientSecret ?? "",
+                ["username"] = _options.Username,
+                ["password"] = _options.Password
+            };
+            using var content = new FormUrlEncodedContent(body);
+            using var tokenReq = new HttpRequestMessage(HttpMethod.Post, tokenUri) { Content = content };
+            using var response = await SendAndLogSmappeeAsync(tokenReq, cancellationToken);
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError(
+                    "Smappee token request failed: {Status} {Body}. TokenEndpoint was {TokenEndpoint}.",
+                    response.StatusCode,
+                    Truncate(payload),
+                    tokenUri);
+                throw new InvalidOperationException(
+                    $"Smappee authentication failed ({(int)response.StatusCode}). " +
+                    $"Check Smappee token URL (tried {tokenUri}) and credentials in production env.");
+            }
+
+            var token = JsonSerializer.Deserialize<SmappeeTokenResponse>(payload, JsonOptions);
+            if (string.IsNullOrEmpty(token?.AccessToken))
+                throw new InvalidOperationException("Smappee token response missing access_token.");
+
+            _cachedToken = token.AccessToken;
+            var ttlSeconds = token.ExpiresInSeconds.GetValueOrDefault(3600);
+            if (ttlSeconds <= 0) ttlSeconds = 3600;
+            _tokenValidUntil = DateTimeOffset.UtcNow.AddSeconds(ttlSeconds);
+            return _cachedToken;
         }
-
-        // Token endpoint is on API v1; data calls use v3 (see Smappee docs / REST clients).
-        var tokenUri = new Uri($"{ResolveOAuthTokenBase().TrimEnd('/')}/oauth2/token");
-        var body = new Dictionary<string, string>
+        finally
         {
-            ["grant_type"] = "password",
-            ["client_id"] = _options.ClientId,
-            ["client_secret"] = _options.ClientSecret ?? "",
-            ["username"] = _options.Username,
-            ["password"] = _options.Password
-        };
-        using var content = new FormUrlEncodedContent(body);
-        using var tokenReq = new HttpRequestMessage(HttpMethod.Post, tokenUri) { Content = content };
-        using var response = await SendAndLogSmappeeAsync(tokenReq, cancellationToken);
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError(
-                "Smappee token request failed: {Status} {Body}. " +
-                "TokenEndpoint was {TokenEndpoint} (Smappee:OAuthBaseUrl empty: {WithoutOAuthOverride}; " +
-                "normalized API base has /v3: {BaseUrlLikeV3}). " +
-                "Config snapshot: client_id length {ClientIdLen}, client_secret {SecretPresent}, username length {UsernameLen}. " +
-                "Smappee:BaseUrl (raw) was {BaseUrlRaw}; normalized API base is {ApiBaseNorm}.",
-                response.StatusCode,
-                Truncate(payload),
-                tokenUri,
-                string.IsNullOrWhiteSpace(_options.OAuthBaseUrl),
-                _normalizedApiBase.Contains("/v3", StringComparison.OrdinalIgnoreCase),
-                _options.ClientId?.Length ?? 0,
-                string.IsNullOrEmpty(_options.ClientSecret) ? "empty" : "set",
-                _options.Username?.Length ?? 0,
-                _options.BaseUrl ?? "(null)",
-                _normalizedApiBase);
-            throw new InvalidOperationException(
-                $"Smappee authentication failed ({(int)response.StatusCode}). " +
-                $"Check Smappee token URL (tried {tokenUri}) and credentials in production env.");
+            _tokenLock.Release();
         }
-
-        var token = JsonSerializer.Deserialize<SmappeeTokenResponse>(payload, JsonOptions);
-        if (string.IsNullOrEmpty(token?.AccessToken))
-            throw new InvalidOperationException("Smappee token response missing access_token.");
-
-        return token.AccessToken;
     }
 
     public async Task<IReadOnlyList<SmappeeRfidDto>> GetWhitelistedRfidsAsync(int serviceLocationId, CancellationToken cancellationToken = default)
@@ -316,7 +328,6 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         return SmappeeUrl.ApiV3ToOAuthV1Base(_normalizedApiBase);
     }
 
-    /// <summary>Handles documented object shape and a top-level array fallback if the API variant returns rows only.</summary>
     private (string? AppName, List<SmappeeServiceLocationRowDto> Rows) ParseServiceLocationsListPayload(string payload)
     {
         try

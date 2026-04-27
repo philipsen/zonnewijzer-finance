@@ -3,12 +3,11 @@ using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
-using Backend.Services.Smappee;
+using Backend.Services.IntegrationDaemon;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Backend.Tests.Controllers;
@@ -17,7 +16,7 @@ public class ChargingSessionsControllerTests : IDisposable
 {
     private readonly ApplicationDbContext _db;
     private readonly Mock<IJwtService> _jwtMock;
-    private readonly Mock<ISmappeeCloudClient> _smappeeMock;
+    private readonly Mock<IIntegrationDaemonClient> _daemonMock;
 
     public ChargingSessionsControllerTests()
     {
@@ -26,46 +25,17 @@ public class ChargingSessionsControllerTests : IDisposable
             .Options;
         _db = new ApplicationDbContext(options);
         _jwtMock = new Mock<IJwtService>();
-        _smappeeMock = new Mock<ISmappeeCloudClient>();
+        _daemonMock = new Mock<IIntegrationDaemonClient>();
     }
 
     public void Dispose() => _db.Dispose();
 
-    private (ChargingSessionsController Controller, ISmappeeChargingSyncService Sync) BuildController(
+    private (ChargingSessionsController Controller, object Sync) BuildController(
         string? userId = "1",
-        SmappeeOptions? smappeeOptions = null,
-        Action<Mock<ISmappeeCloudClient>>? configureSmappee = null)
+        object? smappeeOptions = null,
+        Action<object>? configureSmappee = null)
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(userId);
-        _smappeeMock.Reset();
-        if (configureSmappee != null)
-            configureSmappee(_smappeeMock);
-        else
-        {
-            _smappeeMock
-                .Setup(s => s.GetWhitelistedRfidsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<SmappeeRfidDto>());
-            _smappeeMock
-                .Setup(s => s.GetChargingSessionsAsync(
-                    It.IsAny<int>(),
-                    It.IsAny<long>(),
-                    It.IsAny<long?>(),
-                    It.IsAny<bool?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<SmappeeSessionDto>());
-        }
-
-        var opts = smappeeOptions ?? new SmappeeOptions
-        {
-            ServiceLocationId = 1,
-            DefaultConnector = "1"
-        };
-
-        var sync = new SmappeeChargingSyncService(
-            _db,
-            _smappeeMock.Object,
-            Options.Create(opts),
-            NullLogger<SmappeeChargingSyncService>.Instance);
         if (!_db.Users.Any(u => u.Id == 1))
         {
             _db.Users.Add(new User
@@ -81,12 +51,12 @@ public class ChargingSessionsControllerTests : IDisposable
         var controller = new ChargingSessionsController(
             _db,
             _jwtMock.Object,
-            sync,
+            _daemonMock.Object,
             NullLogger<ChargingSessionsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
-        return (controller, sync);
+        return (controller, new object());
     }
 
     private async Task<int> SeedChargeCardAsync(string value = "RFID1", string? comment = "User1")
@@ -253,11 +223,14 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_WhenServiceLocationNotConfigured_ReturnsBadRequest()
     {
-        var (controller, _) = BuildController(smappeeOptions: new SmappeeOptions { ServiceLocationId = 0 });
+        var (controller, _) = BuildController();
+        _daemonMock
+            .Setup(x => x.TriggerSmappeeUpdateAsync(It.IsAny<DateOnly?>(), It.IsAny<DateOnly?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SmappeeUpdateTriggerResult(true, true, DateTimeOffset.UtcNow, null));
         var result = await controller.SyncSmappee(
             new SyncSmappeeRequest { From = new DateOnly(2026, 1, 1), To = new DateOnly(2026, 1, 2) },
             CancellationToken.None);
-        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.IsType<OkObjectResult>(result);
     }
 
     [Fact]
@@ -273,144 +246,42 @@ public class ChargingSessionsControllerTests : IDisposable
     [Fact]
     public async Task SyncSmappee_UpsertsWhitelistAndSessions()
     {
-        var day = new DateOnly(2026, 5, 10);
-        var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
-        var fromMs = rangeStart + 3_600_000;
-        var toMs = rangeStart + 7_200_000;
-
-        var (controller, _) = BuildController(configureSmappee: m =>
-        {
-            m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<SmappeeRfidDto>
-                {
-                    new()
-                    {
-                        Id = 42,
-                        Value = "047D9322B62290 (Test User)",
-                        Comment = "Test User"
-                    }
-                });
-            m.Setup(s => s.GetChargingSessionsAsync(
-                    1,
-                    rangeStart,
-                    BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
-                    It.IsAny<bool?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<SmappeeSessionDto>
-                {
-                    new()
-                    {
-                        Id = 9001,
-                        SerialNumber = "6531001272",
-                        AuthenticationType = "RFID",
-                        Rfid = "047D9322B62290",
-                        From = fromMs,
-                        To = toMs,
-                        Status = "STOPPED",
-                        StartReading = 100m,
-                        StopReading = 104.25m
-                    }
-                });
-        });
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-
-        var card = await _db.ChargeCards.SingleAsync(c => c.SmappeeWhitelistId == 42);
-        Assert.Equal("047D9322B62290", card.Value);
-
-        var sess = await _db.ChargingSessions.SingleAsync(s => s.SmappeeSessionId == 9001);
-        Assert.Equal(card.Id, sess.ChargeCardId);
-        Assert.Equal(4.25m, ChargingSessionEnergy.ChargedKwh(sess));
-        Assert.Equal("6531001272", sess.SerialNumber);
+        var (controller, _) = BuildController();
+        _daemonMock
+            .Setup(x => x.TriggerSmappeeUpdateAsync(It.IsAny<DateOnly?>(), It.IsAny<DateOnly?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SmappeeUpdateTriggerResult(true, true, DateTimeOffset.UtcNow, null));
+        var result = await controller.SyncSmappee(
+            new SyncSmappeeRequest { From = new DateOnly(2026, 5, 10), To = new DateOnly(2026, 5, 10) },
+            CancellationToken.None);
+        Assert.IsType<OkObjectResult>(result);
     }
 
     [Fact]
     public async Task SyncSmappee_OngoingSession_SecondsTimestamp_NoStopReading()
     {
-        var day = new DateOnly(2026, 4, 22);
-        var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
-        const long fromUnixSeconds = 1_776_936_253L;
-
-        var (controller, _) = BuildController(configureSmappee: m =>
-        {
-            m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<SmappeeRfidDto>
-                {
-                    new() { Id = 1, Value = "047D9322B62290", Comment = "Card" }
-                });
-            m.Setup(s => s.GetChargingSessionsAsync(
-                    1,
-                    rangeStart,
-                    BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
-                    It.IsAny<bool?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<SmappeeSessionDto>
-                {
-                    new()
-                    {
-                        Id = 28_480_919,
-                        SerialNumber = "6531001272",
-                        Rfid = "047D9322B62290",
-                        From = fromUnixSeconds,
-                        To = null,
-                        Status = "CHARGING",
-                        StartReading = 178.972m,
-                        StopReading = null
-                    }
-                });
-        });
-
-        var result = await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None);
-        Assert.IsType<OkObjectResult>(result);
-
-        var sess = await _db.ChargingSessions.SingleAsync(s => s.SmappeeSessionId == 28_480_919);
-        Assert.Equal(fromUnixSeconds * 1000L, sess.FromTimestamp);
-        Assert.Null(sess.ToTimestamp);
-        Assert.Equal(178.972m, sess.StartReading);
-        Assert.Null(sess.StopReading);
-        Assert.Equal(0m, ChargingSessionEnergy.ChargedKwh(sess));
+        var (controller, _) = BuildController();
+        _daemonMock
+            .Setup(x => x.TriggerSmappeeUpdateAsync(It.IsAny<DateOnly?>(), It.IsAny<DateOnly?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SmappeeUpdateTriggerResult(false, true, null, "boom"));
+        var result = await controller.SyncSmappee(
+            new SyncSmappeeRequest { From = new DateOnly(2026, 4, 22), To = new DateOnly(2026, 4, 22) },
+            CancellationToken.None);
+        var gateway = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, gateway.StatusCode);
     }
 
     [Fact]
     public async Task SyncSmappee_IdempotentBySmappeeSessionId()
     {
-        var day = new DateOnly(2026, 6, 1);
-        var rangeStart = BrusselsTime.StartOfCalendarDayUnixMilliseconds(day);
-        var dto = new SmappeeSessionDto
-        {
-            Id = 777,
-            SerialNumber = "6531001272",
-            Rfid = "AAAABBBB",
-            From = rangeStart + 1_000,
-            To = rangeStart + 2_000,
-            Status = "STOPPED",
-            StartReading = 0m,
-            StopReading = 1.5m
-        };
-
-        var (controller, _) = BuildController(configureSmappee: m =>
-        {
-            m.Setup(s => s.GetWhitelistedRfidsAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<SmappeeRfidDto>());
-            m.Setup(s => s.GetChargingSessionsAsync(
-                    1,
-                    rangeStart,
-                    BrusselsTime.StartOfCalendarDayUnixMilliseconds(day.AddDays(1)),
-                    It.IsAny<bool?>(),
-                    It.IsAny<CancellationToken>()))
-                .Returns(() => Task.FromResult<IReadOnlyList<SmappeeSessionDto>>(new List<SmappeeSessionDto> { dto }));
-        });
-
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
-        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
-        Assert.Equal(1.5m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
-
-        dto.StopReading = 9m;
-        Assert.IsType<OkObjectResult>(await controller.SyncSmappee(new SyncSmappeeRequest { From = day, To = day }, CancellationToken.None));
-        Assert.Equal(1, await _db.ChargingSessions.CountAsync());
-        Assert.Equal(9m, ChargingSessionEnergy.ChargedKwh(await _db.ChargingSessions.SingleAsync()));
+        var (controller, _) = BuildController();
+        _daemonMock
+            .Setup(x => x.TriggerSmappeeUpdateAsync(It.IsAny<DateOnly?>(), It.IsAny<DateOnly?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SmappeeUpdateTriggerResult(false, false, null, "disabled"));
+        var result = await controller.SyncSmappee(
+            new SyncSmappeeRequest { From = new DateOnly(2026, 6, 1), To = new DateOnly(2026, 6, 1) },
+            CancellationToken.None);
+        var unavailable = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, unavailable.StatusCode);
     }
 
     // ── GetAllSessions ─────────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
-using Backend.Services.Sigenergy;
+using Microsoft.EntityFrameworkCore;
+using Backend.Data;
+using System.Text.Json;
 
 namespace Backend.Controllers;
 
@@ -9,17 +10,14 @@ namespace Backend.Controllers;
 [Route("api/sigenergy")]
 public class SigenergyController : ControllerBase
 {
-    private readonly ISigenergyCloudClient _client;
-    private readonly SigenergyOptions _options;
+    private readonly ApplicationDbContext _db;
     private readonly ILogger<SigenergyController> _logger;
 
     public SigenergyController(
-        ISigenergyCloudClient client,
-        IOptions<SigenergyOptions> options,
+        ApplicationDbContext db,
         ILogger<SigenergyController> logger)
     {
-        _client = client;
-        _options = options.Value;
+        _db = db;
         _logger = logger;
     }
 
@@ -28,27 +26,23 @@ public class SigenergyController : ControllerBase
     [Authorize]
     public async Task<IActionResult> GetLive(CancellationToken cancellationToken)
     {
-        if (!_options.IsConfigured)
-        {
-            return Ok(new SigenergyLiveResponse { Configured = false });
-        }
-
         try
         {
-            var d = await _client.GetEnergyFlowAsync(cancellationToken);
-            double? remainingBatteryKwh = null;
-            if (_options.UsableBatteryCapacityKwh.HasValue && _options.UsableBatteryCapacityKwh.Value > 0)
+            var latest = await _db.SigenergyStatusSnapshots
+                .AsNoTracking()
+                .Where(x => x.IsSuccess)
+                .OrderByDescending(x => x.FetchedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (latest != null && !string.IsNullOrWhiteSpace(latest.PayloadJson))
             {
-                remainingBatteryKwh = Math.Round((d.BatterySoc / 100.0) * _options.UsableBatteryCapacityKwh.Value, 2);
+                var dto = JsonSerializer.Deserialize<SigenergyLiveResponse>(latest.PayloadJson);
+                if (dto != null)
+                    return Ok(dto);
             }
-
             return Ok(new SigenergyLiveResponse
             {
-                Configured = true,
-                BatterySocPercent = d.BatterySoc,
-                BatteryPowerKw = d.BatteryPower,
-                SolarPowerKw = d.PvPower,
-                RemainingBatteryKwh = remainingBatteryKwh
+                Configured = false,
+                Error = "No Sigenergy snapshot available yet. Wait for integration daemon polling."
             });
         }
         catch (Exception ex)
@@ -56,8 +50,8 @@ public class SigenergyController : ControllerBase
             _logger.LogWarning(ex, "Sigenergy live snapshot failed");
             return Ok(new SigenergyLiveResponse
             {
-                Configured = true,
-                Error = "Could not read Sigenergy (Sigen Cloud). Check server logs and Sigenergy settings."
+                Configured = false,
+                Error = "Could not read stored Sigenergy snapshot."
             });
         }
     }

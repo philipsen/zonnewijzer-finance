@@ -8,8 +8,10 @@ RUN cd Frontend && npm run build
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
 WORKDIR /src
 COPY Backend/Backend.csproj ./Backend/
+COPY IntegrationCore/IntegrationCore.csproj ./IntegrationCore/
 RUN dotnet restore "Backend/Backend.csproj"
 COPY Backend ./Backend
+COPY IntegrationCore ./IntegrationCore
 RUN dotnet publish "Backend/Backend.csproj" -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final

@@ -4,8 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Backend;
 using Backend.Data;
 using Backend.Models;
+using Backend.Services.IntegrationDaemon;
 using Backend.Services;
-using Backend.Services.Smappee;
 
 namespace Backend.Controllers;
 
@@ -15,18 +15,18 @@ public class ChargingSessionsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
-    private readonly ISmappeeChargingSyncService _smappeeSync;
+    private readonly IIntegrationDaemonClient _integrationDaemonClient;
     private readonly ILogger<ChargingSessionsController> _logger;
 
     public ChargingSessionsController(
         ApplicationDbContext context,
         IJwtService jwtService,
-        ISmappeeChargingSyncService smappeeSync,
+        IIntegrationDaemonClient integrationDaemonClient,
         ILogger<ChargingSessionsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
-        _smappeeSync = smappeeSync;
+        _integrationDaemonClient = integrationDaemonClient;
         _logger = logger;
     }
 
@@ -109,48 +109,43 @@ public class ChargingSessionsController : ControllerBase
         }
     }
 
+    [Authorize(Roles = "Admin,Owner")]
     [HttpPost("sync-smappee")]
     public async Task<IActionResult> SyncSmappee([FromBody] SyncSmappeeRequest body, CancellationToken cancellationToken)
     {
-        var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-        var userIdString = _jwtService.ValidateToken(token);
-        if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-            return Unauthorized();
+        if (body.To < body.From)
+            return BadRequest(new { message = "To date must be on or after From date." });
 
-        var requestingUser = await _context.Users.FindAsync(currentUserId);
-        if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
-            return Forbid();
-
-        try
+        var result = await _integrationDaemonClient.TriggerSmappeeUpdateAsync(body.From, body.To, cancellationToken);
+        if (!result.Enabled)
         {
-            var result = await _smappeeSync.SyncSmappeeCalendarAsync(
-                body.From,
-                body.To,
-                requestingUser.Name,
-                cancellationToken);
-
-            if (!result.Success)
-                return BadRequest(result.ErrorMessage);
-
-            return Ok(new
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
-                message = "Smappee sync completed",
-                chargeCards = new { added = result.CardsAdded, updated = result.CardsUpdated },
-                sessions = new
-                {
-                    added = result.SessionsAdded,
-                    updated = result.SessionsUpdated,
-                    skipped = result.SessionsSkipped,
-                    errors = result.SessionsErrors,
-                    total = result.SessionsAdded + result.SessionsUpdated + result.SessionsSkipped + result.SessionsErrors
-                }
+                message = result.Error ?? "Integration daemon trigger is disabled."
             });
         }
-        catch (Exception ex)
+
+        if (!result.Success)
         {
-            _logger.LogError(ex, "Smappee sync failed");
-            return BadRequest($"Smappee sync failed: {ex.Message}");
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = result.Error ?? "Integration daemon update failed."
+            });
         }
+
+        return Ok(new
+        {
+            message = "Smappee daemon update triggered successfully.",
+            fetchedAtUtc = result.FetchedAtUtc,
+            chargeCards = new { added = result.CardsAdded, updated = result.CardsUpdated },
+            sessions = new
+            {
+                added = result.SessionsAdded,
+                updated = result.SessionsUpdated,
+                skipped = result.SessionsSkipped,
+                errors = result.SessionsErrors
+            }
+        });
     }
 
     [HttpGet("available-months")]
