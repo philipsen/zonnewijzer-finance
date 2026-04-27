@@ -29,6 +29,9 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
     public Task<SmappeeUpdateTriggerResult> TriggerSmappeeServiceLocationsRefreshAsync(CancellationToken cancellationToken)
         => TriggerAsync("/api/smappee/update-service-locations", null, cancellationToken);
 
+    public Task<SigenergyUpdateTriggerResult> TriggerSigenergyUpdateAsync(CancellationToken cancellationToken)
+        => TriggerSigenergyAsync(cancellationToken);
+
     public async Task<SmappeeServiceLocationsResult> GetSmappeeServiceLocationsAsync(CancellationToken cancellationToken)
     {
         var options = _options.CurrentValue;
@@ -156,6 +159,62 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
         }
     }
 
+    private async Task<SigenergyUpdateTriggerResult> TriggerSigenergyAsync(CancellationToken cancellationToken)
+    {
+        var options = _options.CurrentValue;
+        if (!options.Enabled)
+        {
+            return new SigenergyUpdateTriggerResult(
+                Success: false,
+                Enabled: false,
+                FetchedAtUtc: null,
+                Error: "Integration daemon trigger is disabled in backend configuration.");
+        }
+
+        try
+        {
+            var endpoint = BuildEndpoint(options.BaseUrl, "/api/sigenergy/update");
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            if (!string.IsNullOrWhiteSpace(options.ApiKey))
+                request.Headers.Add("x-api-key", options.ApiKey);
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning(
+                    "Integration daemon Sigenergy update failed with status {StatusCode}: {Body}. Endpoint={Endpoint}, apiKeyConfigured={ApiKeyConfigured}, apiKeyLength={ApiKeyLength}",
+                    (int)response.StatusCode,
+                    body,
+                    endpoint,
+                    !string.IsNullOrWhiteSpace(options.ApiKey),
+                    options.ApiKey?.Length ?? 0);
+
+                return new SigenergyUpdateTriggerResult(
+                    Success: false,
+                    Enabled: true,
+                    FetchedAtUtc: null,
+                    Error: $"Daemon Sigenergy update failed with HTTP {(int)response.StatusCode}.");
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<DaemonSigenergyUpdateResponse>(cancellationToken: cancellationToken);
+            return new SigenergyUpdateTriggerResult(
+                Success: payload?.Ok ?? true,
+                Enabled: true,
+                FetchedAtUtc: payload?.FetchedAtUtc,
+                Error: payload?.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to trigger Sigenergy update via integration daemon");
+            return new SigenergyUpdateTriggerResult(
+                Success: false,
+                Enabled: true,
+                FetchedAtUtc: null,
+                Error: "Could not reach integration daemon Sigenergy update endpoint.");
+        }
+    }
+
     private static string BuildEndpoint(string? baseUrl, string path)
     {
         var root = string.IsNullOrWhiteSpace(baseUrl)
@@ -191,5 +250,12 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
     {
         public List<SmappeeServiceLocationListItemResponse>? ServiceLocations { get; set; }
         public DateTimeOffset? FetchedAt { get; set; }
+    }
+
+    private sealed class DaemonSigenergyUpdateResponse
+    {
+        public bool Ok { get; set; }
+        public DateTimeOffset? FetchedAtUtc { get; set; }
+        public string? Error { get; set; }
     }
 }

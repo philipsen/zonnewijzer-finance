@@ -14,6 +14,7 @@ import ResetPassword from '../components/ResetPassword.vue'
 import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 import ChargingStationsPage from '../components/ChargingStationsPage.vue'
+import AdminSigenergyState from '../components/AdminSigenergyState.vue'
 import { isAppAdmin, roleFromToken, canManageUserProfiles } from '../utils/roles'
 
 function requireManageUserProfiles () {
@@ -121,6 +122,16 @@ const routes = [
     path: '/energy-prices',
     name: 'EnergyPrices',
     component: EnergyPrices
+  },
+  {
+    path: '/admin/sigenergy-state',
+    name: 'AdminSigenergyState',
+    component: AdminSigenergyState,
+    beforeEnter: () => {
+      const token = localStorage.getItem('token')
+      const role = roleFromToken(token)
+      if (!isAppAdmin(role)) return '/'
+    }
   }
 ]
 

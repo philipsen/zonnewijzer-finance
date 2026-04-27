@@ -87,8 +87,8 @@ services:
       - SmappeeDaemon__PollIntervalMinutes=5
       - SigenergyDaemon__Enabled=true
       - SigenergyDaemon__PollIntervalMinutes=5
-    ports:
-      - "7071:7071"
+    expose:
+      - "7071"
     volumes:
       - ./data:/app/database
       - ./logs:/app/logs

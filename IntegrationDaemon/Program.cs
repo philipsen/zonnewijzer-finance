@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Serilog.Events;
 using Serilog;
 using System.Text.Json;
+using System.Net;
 
 Directory.CreateDirectory("logs");
 
@@ -141,7 +142,7 @@ app.MapPost("/api/smappee/update", async (
     if (!opts.Enabled)
         return Results.StatusCode(StatusCodes.Status404NotFound);
 
-    if (!string.IsNullOrWhiteSpace(opts.ApiKey))
+    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
     {
         var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
         if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
@@ -222,7 +223,7 @@ app.MapPost("/api/smappee/update-service-locations", async (
     if (!opts.Enabled)
         return Results.StatusCode(StatusCodes.Status404NotFound);
 
-    if (!string.IsNullOrWhiteSpace(opts.ApiKey))
+    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
     {
         var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
         if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
@@ -258,7 +259,7 @@ app.MapGet("/api/smappee/service-locations", async (
     if (!opts.Enabled)
         return Results.StatusCode(StatusCodes.Status404NotFound);
 
-    if (!string.IsNullOrWhiteSpace(opts.ApiKey))
+    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
     {
         var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
         if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
@@ -333,10 +334,76 @@ app.MapGet("/api/smappee/service-locations", async (
     return Results.Ok(new { serviceLocations = items, fetchedAt });
 });
 
+app.MapPost("/api/sigenergy/update", async (
+    HttpContext httpContext,
+    IServiceScopeFactory scopeFactory,
+    IOptions<DaemonApiOptions> apiOptions,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    var logger = loggerFactory.CreateLogger("ManualSigenergyUpdate");
+    var opts = apiOptions.Value;
+    if (!opts.Enabled)
+        return Results.StatusCode(StatusCodes.Status404NotFound);
+
+    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
+    {
+        var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
+        if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Rejected manual Sigenergy update due to invalid API key (provided={Provided}, providedLength={ProvidedLength}, configuredLength={ConfiguredLength})",
+                !string.IsNullOrWhiteSpace(apiKey),
+                apiKey.Length,
+                opts.ApiKey?.Length ?? 0);
+            return Results.Unauthorized();
+        }
+    }
+
+    logger.LogInformation("Manual Sigenergy update requested");
+    using var scope = scopeFactory.CreateScope();
+    var poller = scope.ServiceProvider.GetRequiredService<ISigenergyPollingService>();
+    var snapshot = await poller.PollEnergyFlowAsync(cancellationToken);
+
+    logger.LogInformation(
+        "Manual Sigenergy update completed. Success={Success}, FetchedAtUtc={FetchedAtUtc}, Error={Error}",
+        snapshot.IsSuccess,
+        snapshot.FetchedAtUtc,
+        snapshot.Error);
+
+    return Results.Ok(new
+    {
+        ok = snapshot.IsSuccess,
+        fetchedAtUtc = snapshot.FetchedAtUtc,
+        error = snapshot.Error
+    });
+});
+
 app.Lifetime.ApplicationStarted.Register(() =>
     app.Logger.LogInformation("Integration daemon listening on {Urls}", string.Join(", ", app.Urls)));
 
 await app.RunAsync();
+
+static bool ShouldEnforceApiKey(HttpContext httpContext, DaemonApiOptions options, Microsoft.AspNetCore.Hosting.IWebHostEnvironment environment)
+{
+    if (string.IsNullOrWhiteSpace(options.ApiKey))
+        return false;
+
+    if (environment.IsDevelopment())
+        return false;
+
+    var remoteIp = httpContext.Connection.RemoteIpAddress;
+    if (remoteIp == null)
+        return false;
+
+    if (IPAddress.IsLoopback(remoteIp))
+        return false;
+
+    if (remoteIp.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(remoteIp.MapToIPv4()))
+        return false;
+
+    return true;
+}
 
 internal sealed class SmappeeUpdateRequest
 {
