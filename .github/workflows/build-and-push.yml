@@ -38,6 +38,14 @@ jobs:
           push: true
           tags: philipsen/finance-gnucash-sync:latest
 
+      - name: Build and push integration-daemon image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./IntegrationDaemon/Dockerfile
+          push: true
+          tags: philipsen/finance-integration-daemon:latest
+
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest

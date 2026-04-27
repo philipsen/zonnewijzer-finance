@@ -8,6 +8,7 @@ using Backend.Services.IntegrationDaemon;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -38,6 +39,7 @@ public class ChargingStationsControllerTests : IDisposable
             _db,
             _jwtMock.Object,
             _daemonMock.Object,
+            Options.Create(new Backend.Services.Smappee.SmappeeOptions()),
             NullLogger<ChargingStationsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer t";
@@ -179,6 +181,263 @@ public class ChargingStationsControllerTests : IDisposable
         Assert.Equal(2, squares.GetArrayLength());
         Assert.Equal("Alpha", squares[0].GetProperty("name").GetString());
         Assert.Equal("zebra", squares[1].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_UsesLiveSnapshotByNormalizedStationName()
+    {
+        var now = DateTime.UtcNow;
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":1,"name":"Paal 4","type":"Charging station","sourceType":"CT"}]"""
+        });
+        _db.SmappeeStatusSnapshots.Add(new SmappeeStatusSnapshot
+        {
+            ServiceLocationId = 1,
+            FetchedAtUtc = now,
+            IsSuccess = true,
+            PayloadJson = """
+                          {
+                            "FetchedAt":"2026-04-27T14:00:00Z",
+                            "ServiceLocationId":1,
+                            "Points":[
+                              {
+                                "SerialNumber":"6531001274",
+                                "StationName":"Paal 4 - 1",
+                                "UiState":"charging"
+                              }
+                            ],
+                            "RangeStartMs":0,
+                            "RangeEndMsExclusive":0
+                          }
+                          """
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetSmappeeChargingStationDisplayNames(default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var square = Assert.Single(doc.RootElement.GetProperty("squares").EnumerateArray());
+        Assert.Equal("Paal 4", square.GetProperty("name").GetString());
+        Assert.Equal(ChargingStationHomeSquareDto.LiveStateActive, square.GetProperty("liveState").GetString());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_PrefersActiveWhenDuplicateLiveNamesExist()
+    {
+        var now = DateTime.UtcNow;
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":1,"name":"Paal 4","type":"Charging station","sourceType":"CT"}]"""
+        });
+        _db.SmappeeStatusSnapshots.Add(new SmappeeStatusSnapshot
+        {
+            ServiceLocationId = 1,
+            FetchedAtUtc = now,
+            IsSuccess = true,
+            PayloadJson = """
+                          {
+                            "FetchedAt":"2026-04-27T14:00:00Z",
+                            "ServiceLocationId":1,
+                            "Points":[
+                              {
+                                "SerialNumber":"6531001274",
+                                "StationName":"Paal 4",
+                                "UiState":"available"
+                              },
+                              {
+                                "SerialNumber":"6531001274",
+                                "StationName":"Paal 4 - 1",
+                                "UiState":"charging"
+                              }
+                            ],
+                            "RangeStartMs":0,
+                            "RangeEndMsExclusive":0
+                          }
+                          """
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetSmappeeChargingStationDisplayNames(default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var square = Assert.Single(doc.RootElement.GetProperty("squares").EnumerateArray());
+        Assert.Equal(ChargingStationHomeSquareDto.LiveStateActive, square.GetProperty("liveState").GetString());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_InUseAndPowerKwAreReturned()
+    {
+        var now = DateTime.UtcNow;
+        var started = now.AddHours(-2);
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":1,"name":"Paal 4","type":"Charging station","sourceType":"CT"}]"""
+        });
+        _db.SmappeeStatusSnapshots.Add(new SmappeeStatusSnapshot
+        {
+            ServiceLocationId = 1,
+            FetchedAtUtc = now,
+            IsSuccess = true,
+            PayloadJson = $$"""
+                          {
+                            "FetchedAt":"{{now:O}}",
+                            "ServiceLocationId":1,
+                            "Points":[
+                              {
+                                "SerialNumber":"6531001274",
+                                "StationName":"Paal 4",
+                                "UiState":"charging",
+                                "EnergyKwh":14,
+                                "StartedAtUtc":"{{started:O}}"
+                              }
+                            ],
+                            "RangeStartMs":0,
+                            "RangeEndMsExclusive":0
+                          }
+                          """
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetSmappeeChargingStationDisplayNames(default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var square = Assert.Single(doc.RootElement.GetProperty("squares").EnumerateArray());
+        Assert.True(square.GetProperty("inUse").GetBoolean());
+        Assert.Equal(7m, square.GetProperty("powerKw").GetDecimal());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_DeduplicatesByNameAndKeepsStrongestLiveState()
+    {
+        var now = DateTime.UtcNow;
+        _db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """
+                             [
+                               {"id":1,"name":"Paal 4","type":"Charging station","sourceType":"CT"},
+                               {"id":2,"name":"Paal 4 - 1","type":"Charging station","sourceType":"CT"}
+                             ]
+                             """
+        });
+        _db.SmappeeStatusSnapshots.Add(new SmappeeStatusSnapshot
+        {
+            ServiceLocationId = 1,
+            FetchedAtUtc = now,
+            IsSuccess = true,
+            PayloadJson = """
+                          {
+                            "FetchedAt":"2026-04-27T14:00:00Z",
+                            "ServiceLocationId":1,
+                            "Points":[
+                              {
+                                "SerialNumber":"6531001274",
+                                "StationName":"Paal 4",
+                                "UiState":"charging",
+                                "EnergyKwh":10,
+                                "StartedAtUtc":"2026-04-27T12:00:00Z"
+                              }
+                            ],
+                            "RangeStartMs":0,
+                            "RangeEndMsExclusive":0
+                          }
+                          """
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetSmappeeChargingStationDisplayNames(default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(1, squares.GetArrayLength());
+        var square = squares[0];
+        Assert.Equal("Paal 4", square.GetProperty("name").GetString());
+        Assert.Equal(ChargingStationHomeSquareDto.LiveStateActive, square.GetProperty("liveState").GetString());
+        Assert.True(square.GetProperty("inUse").GetBoolean());
+    }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_UsesConfiguredNameMapWhenSnapshotNameMissing()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new ApplicationDbContext(options);
+        var jwt = new Mock<IJwtService>();
+        jwt.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("1");
+        var daemon = new Mock<IIntegrationDaemonClient>();
+        var controller = new ChargingStationsController(
+            db,
+            jwt.Object,
+            daemon.Object,
+            Options.Create(new Backend.Services.Smappee.SmappeeOptions
+            {
+                StationDisplayNamesBySerial = new Dictionary<string, string>
+                {
+                    ["5821063919"] = "Paal 4"
+                }
+            }),
+            NullLogger<ChargingStationsController>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer t";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var now = DateTime.UtcNow;
+        db.SmappeeServiceLocations.Add(new SmappeeServiceLocation
+        {
+            ServiceLocationId = 1,
+            UpdatedAtUtc = now,
+            AppliancesJson = """[{"id":1,"name":"Paal 4 - 1","type":"Charging station","sourceType":"CT"}]"""
+        });
+        db.SmappeeStatusSnapshots.Add(new SmappeeStatusSnapshot
+        {
+            ServiceLocationId = 1,
+            FetchedAtUtc = now,
+            IsSuccess = true,
+            PayloadJson = """
+                          {
+                            "FetchedAt":"2026-04-27T14:00:00Z",
+                            "ServiceLocationId":1,
+                            "Points":[
+                              {
+                                "SerialNumber":"5821063919",
+                                "StationName":null,
+                                "UiState":"charging",
+                                "EnergyKwh":11.82,
+                                "StartedAtUtc":"2026-04-27T13:22:59Z"
+                              }
+                            ],
+                            "RangeStartMs":0,
+                            "RangeEndMsExclusive":0
+                          }
+                          """
+        });
+        await db.SaveChangesAsync();
+
+        var result = await controller.GetSmappeeChargingStationDisplayNames(default);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var square = Assert.Single(doc.RootElement.GetProperty("squares").EnumerateArray());
+        Assert.Equal("Paal 4", square.GetProperty("name").GetString());
+        Assert.True(square.GetProperty("inUse").GetBoolean());
+        Assert.Equal(ChargingStationHomeSquareDto.LiveStateActive, square.GetProperty("liveState").GetString());
     }
 
     [Fact]

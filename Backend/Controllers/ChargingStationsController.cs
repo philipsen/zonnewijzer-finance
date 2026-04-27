@@ -10,6 +10,7 @@ using Backend.Models;
 using Backend.Services.IntegrationDaemon;
 using Backend.Services;
 using Backend.Services.Smappee;
+using Microsoft.Extensions.Options;
 
 namespace Backend.Controllers;
 
@@ -23,21 +24,30 @@ public class ChargingStationsController : ControllerBase
         PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+    private static readonly Dictionary<string, string> FallbackStationNameBySerial = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Provider live payload serials may diverge from stored device serials.
+        // Keep explicit fallback mappings for known chargers so UI state lands on the correct tile.
+        ["5821063919"] = "Paal 5"
+    };
 
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly IIntegrationDaemonClient _integrationDaemonClient;
+    private readonly SmappeeOptions _smappeeOptions;
     private readonly ILogger<ChargingStationsController> _logger;
 
     public ChargingStationsController(
         ApplicationDbContext context,
         IJwtService jwtService,
         IIntegrationDaemonClient integrationDaemonClient,
+        IOptions<SmappeeOptions> smappeeOptions,
         ILogger<ChargingStationsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
         _integrationDaemonClient = integrationDaemonClient;
+        _smappeeOptions = smappeeOptions.Value;
         _logger = logger;
     }
 
@@ -190,8 +200,9 @@ public class ChargingStationsController : ControllerBase
             .Take(5)
             .ToList();
 
-        Dictionary<string, string>? serialToLiveState = null;
-        Dictionary<string, string>? stationNameToLiveState = null;
+        Dictionary<string, HomeSquareLiveInfo>? serialToLiveInfo = null;
+        Dictionary<string, HomeSquareLiveInfo>? stationNameToLiveInfo = null;
+        List<HomeSquareLiveInfo>? unmatchedLiveInfos = null;
         try
         {
             var latest = await _context.SmappeeStatusSnapshots
@@ -202,17 +213,54 @@ public class ChargingStationsController : ControllerBase
             var live = latest == null ? null : JsonSerializer.Deserialize<SmappeeChargingLiveResponse>(latest.PayloadJson);
             if (live != null)
             {
-                serialToLiveState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                stationNameToLiveState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                serialToLiveInfo = new Dictionary<string, HomeSquareLiveInfo>(StringComparer.OrdinalIgnoreCase);
+                stationNameToLiveInfo = new Dictionary<string, HomeSquareLiveInfo>(StringComparer.OrdinalIgnoreCase);
+                var matchedSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var matchedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                unmatchedLiveInfos = new List<HomeSquareLiveInfo>();
                 foreach (var p in live.Points)
                 {
                     var mapped = MapChargingPointUiStateToHomeLiveState(p.UiState);
+                    var liveInfo = new HomeSquareLiveInfo(mapped, EstimatePowerKwForHomeSquare(p, mapped));
                     var sn = (p.SerialNumber ?? "").Trim();
+                    var hasMatchedSerial = false;
                     if (!string.IsNullOrEmpty(sn))
-                        serialToLiveState[sn] = mapped;
-                    var nm = (p.StationName ?? "").Trim();
+                    {
+                        hasMatchedSerial = ordered.Any(w =>
+                            !string.IsNullOrWhiteSpace(w.Serial) &&
+                            string.Equals(w.Serial, sn, StringComparison.OrdinalIgnoreCase));
+                        serialToLiveInfo[sn] = PickStrongerHomeLiveInfo(serialToLiveInfo.GetValueOrDefault(sn), liveInfo);
+                        if (hasMatchedSerial)
+                            matchedSerials.Add(sn);
+                    }
+                    var configuredName = ResolveConfiguredStationName(sn);
+                    var nm = SmappeeApplianceDisplayName.NormalizeName(
+                        string.IsNullOrWhiteSpace(p.StationName) ? configuredName : p.StationName);
+                    var hasMatchedName = false;
                     if (!string.IsNullOrEmpty(nm))
-                        stationNameToLiveState[nm] = mapped;
+                    {
+                        hasMatchedName = ordered.Any(w =>
+                            string.Equals(
+                                SmappeeApplianceDisplayName.NormalizeName(w.Name) ?? w.Name,
+                                nm,
+                                StringComparison.OrdinalIgnoreCase));
+                        stationNameToLiveInfo[nm] = PickStrongerHomeLiveInfo(stationNameToLiveInfo.GetValueOrDefault(nm), liveInfo);
+                        if (hasMatchedName)
+                            matchedNames.Add(nm);
+                    }
+
+                    // If this point cannot be matched to one of the shown squares by serial or name,
+                    // keep it as fallback so active/idle state is still surfaced instead of all-free.
+                    if (!hasMatchedSerial && !hasMatchedName)
+                        unmatchedLiveInfos.Add(liveInfo);
+                }
+
+                if (unmatchedLiveInfos.Count > 1)
+                {
+                    unmatchedLiveInfos = unmatchedLiveInfos
+                        .OrderByDescending(x => HomeLiveStateRank(x.LiveState))
+                        .ThenByDescending(x => x.PowerKw ?? 0m)
+                        .ToList();
                 }
             }
         }
@@ -222,25 +270,45 @@ public class ChargingStationsController : ControllerBase
         }
 
         var squares = new List<ChargingStationHomeSquareDto>(ordered.Count);
+        var unmatchedLiveIndex = 0;
         foreach (var w in ordered)
         {
-            string? liveState = null;
-            if (serialToLiveState != null)
+            HomeSquareLiveInfo? liveInfo = null;
+            if (serialToLiveInfo != null)
             {
-                if (w.Serial != null && serialToLiveState.TryGetValue(w.Serial, out var bySerial))
-                    liveState = bySerial;
-                else if (stationNameToLiveState != null &&
-                         stationNameToLiveState.TryGetValue(w.Name, out var byName))
-                    liveState = byName;
+                if (w.Serial != null && serialToLiveInfo.TryGetValue(w.Serial, out var bySerial))
+                    liveInfo = bySerial;
+                else if (stationNameToLiveInfo != null)
+                {
+                    var normalizedName = SmappeeApplianceDisplayName.NormalizeName(w.Name) ?? w.Name;
+                    if (stationNameToLiveInfo.TryGetValue(normalizedName, out var byName))
+                        liveInfo = byName;
+                }
+            }
+
+            if (liveInfo == null && unmatchedLiveInfos != null && unmatchedLiveIndex < unmatchedLiveInfos.Count)
+            {
+                // Place unresolved live points from the end of the ordered tiles first.
+                // In current home layout this avoids showing unknown activity on "Paal 1".
+                var sourceIndex = unmatchedLiveInfos.Count - 1 - unmatchedLiveIndex;
+                liveInfo = unmatchedLiveInfos[sourceIndex];
+                unmatchedLiveIndex++;
             }
 
             // No live / misconfigured: assume available (green). Unmatched with live: same — avoids all-white tiles when SL id or serial pairing is off.
-            liveState ??= ChargingStationHomeSquareDto.LiveStateFree;
+            var liveState = liveInfo?.LiveState ?? ChargingStationHomeSquareDto.LiveStateFree;
 
-            squares.Add(new ChargingStationHomeSquareDto { Name = w.Name, LiveState = liveState });
+            squares.Add(new ChargingStationHomeSquareDto
+            {
+                Name = w.Name,
+                LiveState = liveState,
+                InUse = IsHomeSquareInUse(liveState),
+                PowerKw = liveInfo?.PowerKw
+            });
         }
 
-        return Ok(new { squares });
+        var mergedSquares = MergeSquaresByNormalizedNameKeepingStrongest(squares);
+        return Ok(new { squares = mergedSquares });
     }
 
     /// <summary>Green = no session, yellow = idle (preparing/suspended), red = active (charging).</summary>
@@ -252,6 +320,99 @@ public class ChargingStationsController : ControllerBase
             "available" or "finished_recent" => ChargingStationHomeSquareDto.LiveStateFree,
             _ => ChargingStationHomeSquareDto.LiveStateFree
         };
+
+    private static HomeSquareLiveInfo PickStrongerHomeLiveInfo(HomeSquareLiveInfo? current, HomeSquareLiveInfo incoming)
+    {
+        if (current == null)
+            return incoming;
+
+        var incomingRank = HomeLiveStateRank(incoming.LiveState);
+        var currentRank = HomeLiveStateRank(current.LiveState);
+        if (incomingRank > currentRank)
+            return incoming;
+        if (incomingRank < currentRank)
+            return current;
+
+        if (incoming.PowerKw.HasValue && (!current.PowerKw.HasValue || incoming.PowerKw.Value > current.PowerKw.Value))
+            return incoming;
+        return current;
+    }
+
+    private static int HomeLiveStateRank(string? state) => state switch
+    {
+        ChargingStationHomeSquareDto.LiveStateActive => 3,
+        ChargingStationHomeSquareDto.LiveStateIdle => 2,
+        ChargingStationHomeSquareDto.LiveStateFree => 1,
+        _ => 0
+    };
+
+    private static bool IsHomeSquareInUse(string? liveState) =>
+        liveState == ChargingStationHomeSquareDto.LiveStateActive || liveState == ChargingStationHomeSquareDto.LiveStateIdle;
+
+    private static decimal? EstimatePowerKwForHomeSquare(ChargingPointLiveDto point, string homeLiveState)
+    {
+        if (homeLiveState != ChargingStationHomeSquareDto.LiveStateActive)
+            return null;
+        if (!point.EnergyKwh.HasValue || !point.StartedAtUtc.HasValue)
+            return null;
+
+        var endUtc = point.EndedAtUtc ?? DateTime.UtcNow;
+        var hours = (decimal)(endUtc - point.StartedAtUtc.Value).TotalHours;
+        if (hours <= 0m)
+            return null;
+
+        var kw = point.EnergyKwh.Value / hours;
+        if (kw <= 0m)
+            return null;
+        return decimal.Round(kw, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private string? ResolveConfiguredStationName(string? serial)
+    {
+        var sn = (serial ?? "").Trim();
+        if (string.IsNullOrEmpty(sn))
+            return null;
+        var map = _smappeeOptions.StationDisplayNamesBySerial;
+        if (map == null || map.Count == 0)
+            return null;
+        if (map.TryGetValue(sn, out var exact))
+            return exact;
+
+        return FallbackStationNameBySerial.TryGetValue(sn, out var fallback) ? fallback : null;
+    }
+
+    private static List<ChargingStationHomeSquareDto> MergeSquaresByNormalizedNameKeepingStrongest(
+        IReadOnlyList<ChargingStationHomeSquareDto> squares)
+    {
+        var merged = new Dictionary<string, ChargingStationHomeSquareDto>(StringComparer.OrdinalIgnoreCase);
+        var order = new List<string>();
+
+        foreach (var square in squares)
+        {
+            var key = SmappeeApplianceDisplayName.NormalizeName(square.Name) ?? square.Name;
+            if (!merged.TryGetValue(key, out var current))
+            {
+                merged[key] = square;
+                order.Add(key);
+                continue;
+            }
+
+            var stronger = PickStrongerHomeLiveInfo(
+                new HomeSquareLiveInfo(current.LiveState ?? ChargingStationHomeSquareDto.LiveStateFree, current.PowerKw),
+                new HomeSquareLiveInfo(square.LiveState ?? ChargingStationHomeSquareDto.LiveStateFree, square.PowerKw));
+
+            current.LiveState = stronger.LiveState;
+            current.InUse = IsHomeSquareInUse(stronger.LiveState);
+            current.PowerKw = stronger.PowerKw;
+        }
+
+        var result = new List<ChargingStationHomeSquareDto>(order.Count);
+        foreach (var key in order)
+            result.Add(merged[key]);
+        return result;
+    }
+
+    private sealed record HomeSquareLiveInfo(string LiveState, decimal? PowerKw);
 
     private static SmappeeServiceLocationDevice? MatchDeviceToAppliance(
         List<SmappeeServiceLocationDevice> devices,
