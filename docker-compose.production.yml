@@ -83,6 +83,11 @@ services:
       - ASPNETCORE_URLS=http://+:7071
       - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
       - DaemonApi__ApiKey=${DAEMON_API_KEY:-}
+      - Sigenergy__BaseUrl=${SIGENERGY_BASE_URL:-https://api-eu.sigencloud.com}
+      - Sigenergy__Username=${SIGENERGY_USERNAME:-}
+      - Sigenergy__Password=${SIGENERGY_PASSWORD:-}
+      - Sigenergy__SystemId=${SIGENERGY_SYSTEM_ID:-}
+      - Sigenergy__UsableBatteryCapacityKwh=${SIGENERGY_USABLE_BATTERY_CAPACITY_KWH:-}
       - SmappeeDaemon__Enabled=true
       - SmappeeDaemon__PollIntervalMinutes=5
       - SigenergyDaemon__Enabled=true

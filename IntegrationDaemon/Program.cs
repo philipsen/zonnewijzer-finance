@@ -1,6 +1,5 @@
 using Backend.Configuration;
 using Backend.Data;
-using Backend.Models;
 using Backend.Services.Sigenergy;
 using Backend.Services.Smappee;
 using IntegrationDaemon.Services;
@@ -10,7 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Serilog.Events;
 using Serilog;
-using System.Text.Json;
 using System.Net;
 
 Directory.CreateDirectory("logs");
@@ -209,129 +207,6 @@ app.MapPost("/api/smappee/update", async (
         chargeCards = new { added = 0, updated = 0 },
         sessions = new { added = 0, updated = 0, skipped = 0, errors = 0 }
     });
-});
-
-app.MapPost("/api/smappee/update-service-locations", async (
-    HttpContext httpContext,
-    IServiceScopeFactory scopeFactory,
-    IOptions<DaemonApiOptions> apiOptions,
-    ILoggerFactory loggerFactory,
-    CancellationToken cancellationToken) =>
-{
-    var logger = loggerFactory.CreateLogger("ManualSmappeeServiceLocationsUpdate");
-    var opts = apiOptions.Value;
-    if (!opts.Enabled)
-        return Results.StatusCode(StatusCodes.Status404NotFound);
-
-    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
-    {
-        var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
-        if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
-        {
-            logger.LogWarning(
-                "Rejected manual Smappee service-location update due to invalid API key (provided={Provided}, providedLength={ProvidedLength}, configuredLength={ConfiguredLength})",
-                !string.IsNullOrWhiteSpace(apiKey),
-                apiKey.Length,
-                opts.ApiKey?.Length ?? 0);
-            return Results.Unauthorized();
-        }
-    }
-
-    logger.LogInformation("Manual Smappee service-location update requested");
-    using var scope = scopeFactory.CreateScope();
-    var poller = scope.ServiceProvider.GetRequiredService<ISmappeePollingService>();
-    await poller.RefreshServiceLocationsListAsync(cancellationToken);
-    await poller.RefreshServiceLocationInfoAsync(cancellationToken);
-
-    logger.LogInformation("Manual Smappee service-location update completed");
-    return Results.Ok(new { ok = true });
-});
-
-app.MapGet("/api/smappee/service-locations", async (
-    HttpContext httpContext,
-    IServiceScopeFactory scopeFactory,
-    IOptions<DaemonApiOptions> apiOptions,
-    ILoggerFactory loggerFactory,
-    CancellationToken cancellationToken) =>
-{
-    var logger = loggerFactory.CreateLogger("ManualSmappeeServiceLocationsRead");
-    var opts = apiOptions.Value;
-    if (!opts.Enabled)
-        return Results.StatusCode(StatusCodes.Status404NotFound);
-
-    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
-    {
-        var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
-        if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
-        {
-            logger.LogWarning(
-                "Rejected manual Smappee service-location read due to invalid API key (provided={Provided}, providedLength={ProvidedLength}, configuredLength={ConfiguredLength})",
-                !string.IsNullOrWhiteSpace(apiKey),
-                apiKey.Length,
-                opts.ApiKey?.Length ?? 0);
-            return Results.Unauthorized();
-        }
-    }
-
-    using var scope = scopeFactory.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    var devices = await db.SmappeeServiceLocationDevices
-        .AsNoTracking()
-        .OrderBy(d => d.ServiceLocationId)
-        .ThenBy(d => d.DeviceSerialNumber)
-        .ToListAsync(cancellationToken);
-
-    if (devices.Count == 0)
-        return Results.Ok(new { serviceLocations = Array.Empty<SmappeeServiceLocationListItemResponse>(), fetchedAt = (DateTimeOffset?)null });
-
-    var locIds = devices.Select(d => d.ServiceLocationId).Distinct().ToList();
-    var locs = await db.SmappeeServiceLocations
-        .AsNoTracking()
-        .Where(s => locIds.Contains(s.ServiceLocationId))
-        .ToDictionaryAsync(s => s.ServiceLocationId, cancellationToken);
-
-    var items = new List<SmappeeServiceLocationListItemResponse>(devices.Count);
-    foreach (var d in devices)
-    {
-        var item = new SmappeeServiceLocationListItemResponse
-        {
-            ServiceLocationId = d.ServiceLocationId,
-            Name = d.Name,
-            ServiceLocationUuid = d.ServiceLocationUuid,
-            DeviceSerialNumber = string.IsNullOrWhiteSpace(d.DeviceSerialNumber) ? null : d.DeviceSerialNumber
-        };
-        if (locs.TryGetValue(d.ServiceLocationId, out var loc))
-        {
-            item.Longitude = loc.Longitude;
-            item.Latitude = loc.Latitude;
-            item.ElectricityCost = loc.ElectricityCost;
-            item.ElectricityCurrency = loc.ElectricityCurrency;
-            item.Timezone = loc.Timezone;
-            if (!string.IsNullOrEmpty(loc.AppliancesJson))
-            {
-                try
-                {
-                    item.Appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceItemResponse>>(
-                        loc.AppliancesJson,
-                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true });
-                }
-                catch (JsonException ex)
-                {
-                    logger.LogWarning(ex, "Stored appliances JSON invalid for service location {Id}", item.ServiceLocationId);
-                }
-            }
-        }
-        items.Add(item);
-    }
-
-    var tDev = devices.Max(x => x.UpdatedAtUtc);
-    DateTime? tLoc = null;
-    if (locs.Count > 0)
-        tLoc = locs.Values.Max(l => l.UpdatedAtUtc);
-    var latest = tLoc.HasValue && tLoc.Value > tDev ? tLoc.Value : tDev;
-    var fetchedAt = new DateTimeOffset(DateTime.SpecifyKind(latest, DateTimeKind.Utc));
-
-    return Results.Ok(new { serviceLocations = items, fetchedAt });
 });
 
 app.MapPost("/api/sigenergy/update", async (

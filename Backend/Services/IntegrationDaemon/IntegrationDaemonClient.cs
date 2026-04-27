@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using Backend.Models;
 using Microsoft.Extensions.Options;
 
 namespace Backend.Services.IntegrationDaemon;
@@ -26,70 +25,8 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
         CancellationToken cancellationToken)
         => TriggerAsync("/api/smappee/update", new SmappeeUpdateRequest { From = from, To = to }, cancellationToken);
 
-    public Task<SmappeeUpdateTriggerResult> TriggerSmappeeServiceLocationsRefreshAsync(CancellationToken cancellationToken)
-        => TriggerAsync("/api/smappee/update-service-locations", null, cancellationToken);
-
     public Task<SigenergyUpdateTriggerResult> TriggerSigenergyUpdateAsync(CancellationToken cancellationToken)
         => TriggerSigenergyAsync(cancellationToken);
-
-    public async Task<SmappeeServiceLocationsResult> GetSmappeeServiceLocationsAsync(CancellationToken cancellationToken)
-    {
-        var options = _options.CurrentValue;
-        if (!options.Enabled)
-        {
-            return new SmappeeServiceLocationsResult(
-                Success: false,
-                Enabled: false,
-                Error: "Integration daemon trigger is disabled in backend configuration.",
-                ServiceLocations: Array.Empty<SmappeeServiceLocationListItemResponse>(),
-                FetchedAtUtc: null);
-        }
-
-        try
-        {
-            var endpoint = BuildEndpoint(options.BaseUrl, "/api/smappee/service-locations");
-            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            if (!string.IsNullOrWhiteSpace(options.ApiKey))
-                request.Headers.Add("x-api-key", options.ApiKey);
-
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning(
-                    "Integration daemon service-locations fetch failed with status {StatusCode}: {Body}. Endpoint={Endpoint}, apiKeyConfigured={ApiKeyConfigured}, apiKeyLength={ApiKeyLength}",
-                    (int)response.StatusCode,
-                    body,
-                    endpoint,
-                    !string.IsNullOrWhiteSpace(options.ApiKey),
-                    options.ApiKey?.Length ?? 0);
-                return new SmappeeServiceLocationsResult(
-                    Success: false,
-                    Enabled: true,
-                    Error: $"Daemon service-locations failed with HTTP {(int)response.StatusCode}.",
-                    ServiceLocations: Array.Empty<SmappeeServiceLocationListItemResponse>(),
-                    FetchedAtUtc: null);
-            }
-
-            var payload = await response.Content.ReadFromJsonAsync<DaemonServiceLocationsResponse>(cancellationToken: cancellationToken);
-            return new SmappeeServiceLocationsResult(
-                Success: true,
-                Enabled: true,
-                Error: null,
-                ServiceLocations: payload?.ServiceLocations ?? new List<SmappeeServiceLocationListItemResponse>(),
-                FetchedAtUtc: payload?.FetchedAt);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to fetch Smappee service locations via integration daemon");
-            return new SmappeeServiceLocationsResult(
-                Success: false,
-                Enabled: true,
-                Error: "Could not reach integration daemon service-locations endpoint.",
-                ServiceLocations: Array.Empty<SmappeeServiceLocationListItemResponse>(),
-                FetchedAtUtc: null);
-        }
-    }
 
     private async Task<SmappeeUpdateTriggerResult> TriggerAsync(
         string path,
@@ -244,12 +181,6 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
     {
         public DateOnly? From { get; set; }
         public DateOnly? To { get; set; }
-    }
-
-    private sealed class DaemonServiceLocationsResponse
-    {
-        public List<SmappeeServiceLocationListItemResponse>? ServiceLocations { get; set; }
-        public DateTimeOffset? FetchedAt { get; set; }
     }
 
     private sealed class DaemonSigenergyUpdateResponse
