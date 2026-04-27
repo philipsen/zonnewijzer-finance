@@ -21,6 +21,7 @@
           <router-link to="/invoices" class="nav-link">Invoices</router-link>
           <router-link to="/payments" class="nav-link">Payments</router-link>
           <router-link to="/energy-prices" class="nav-link">Prices</router-link>
+          <router-link to="/admin/sigenergy-state" class="nav-link">Sigenergy</router-link>
           <router-link to="/event-log" class="nav-link">Events</router-link>
         </template>
         <template v-else-if="!isAppAdminUser || previewMode">
@@ -51,6 +52,7 @@
             <router-link to="/invoices" class="dropdown-link" @click="dropdownOpen = false">Invoices</router-link>
             <router-link to="/payments" class="dropdown-link" @click="dropdownOpen = false">Payments</router-link>
             <router-link to="/energy-prices" class="dropdown-link" @click="dropdownOpen = false">Prices</router-link>
+            <router-link to="/admin/sigenergy-state" class="dropdown-link" @click="dropdownOpen = false">Sigenergy</router-link>
             <router-link to="/event-log" class="dropdown-link" @click="dropdownOpen = false">Events</router-link>
           </template>
           <template v-else-if="!isAppAdminUser || previewMode">

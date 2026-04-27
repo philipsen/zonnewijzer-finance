@@ -4,6 +4,7 @@ public interface IIntegrationDaemonClient
 {
     Task<SmappeeUpdateTriggerResult> TriggerSmappeeUpdateAsync(DateOnly? from, DateOnly? to, CancellationToken cancellationToken);
     Task<SmappeeUpdateTriggerResult> TriggerSmappeeServiceLocationsRefreshAsync(CancellationToken cancellationToken);
+    Task<SigenergyUpdateTriggerResult> TriggerSigenergyUpdateAsync(CancellationToken cancellationToken);
     Task<SmappeeServiceLocationsResult> GetSmappeeServiceLocationsAsync(CancellationToken cancellationToken);
 }
 
@@ -25,3 +26,9 @@ public sealed record SmappeeServiceLocationsResult(
     string? Error,
     IReadOnlyList<Backend.Models.SmappeeServiceLocationListItemResponse> ServiceLocations,
     DateTimeOffset? FetchedAtUtc);
+
+public sealed record SigenergyUpdateTriggerResult(
+    bool Success,
+    bool Enabled,
+    DateTimeOffset? FetchedAtUtc,
+    string? Error);

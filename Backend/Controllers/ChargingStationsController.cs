@@ -57,12 +57,53 @@ public class ChargingStationsController : ControllerBase
                 var dto = JsonSerializer.Deserialize<SmappeeChargingLiveResponse>(latest.PayloadJson);
                 if (dto != null)
                 {
+                    var storedNameBySerial = await _context.SmappeeServiceLocationDevices
+                        .AsNoTracking()
+                        .Where(d => d.DeviceSerialNumber != null && d.DeviceSerialNumber != "")
+                        .Select(d => new { d.DeviceSerialNumber, d.Name })
+                        .ToListAsync(cancellationToken);
+
+                    var stationNameBySerial = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var row in storedNameBySerial)
+                    {
+                        var serial = (row.DeviceSerialNumber ?? "").Trim();
+                        if (serial.Length == 0)
+                            continue;
+
+                        var normalizedName = SmappeeApplianceDisplayName.NormalizeName(row.Name);
+                        if (string.IsNullOrWhiteSpace(normalizedName))
+                            continue;
+
+                        // Keep first seen stored display name for a serial.
+                        if (!stationNameBySerial.ContainsKey(serial))
+                            stationNameBySerial[serial] = normalizedName;
+                    }
+
+                    var pointsWithStoredNames = dto.Points
+                        .Select(p =>
+                        {
+                            var serial = (p.SerialNumber ?? "").Trim();
+                            stationNameBySerial.TryGetValue(serial, out var storedName);
+                            return new ChargingPointLiveDto
+                            {
+                                SerialNumber = p.SerialNumber ?? "",
+                                StationName = string.IsNullOrWhiteSpace(storedName) ? p.StationName : storedName,
+                                UiState = p.UiState,
+                                SmappeeStatus = p.SmappeeStatus,
+                                EnergyKwh = p.EnergyKwh,
+                                StartedAtUtc = p.StartedAtUtc,
+                                EndedAtUtc = p.EndedAtUtc,
+                                RfidMasked = p.RfidMasked
+                            };
+                        })
+                        .ToList();
+
                     var age = DateTimeOffset.UtcNow - latest.FetchedAtUtc;
                     return Ok(new
                     {
                         dto.FetchedAt,
                         dto.ServiceLocationId,
-                        dto.Points,
+                        points = pointsWithStoredNames,
                         dto.RangeStartMs,
                         dto.RangeEndMsExclusive,
                         stale = age > TimeSpan.FromMinutes(10)

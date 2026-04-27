@@ -144,11 +144,12 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         sw.Stop();
 
         _logger.LogInformation(
-            "Sigenergy {Operation} response: {StatusCode} in {ElapsedMs}ms for {Url}",
-            operation,
+            "Sigenergy {Method} {Url} -> {Status} in {Ms}ms ({Operation})",
+            req.Method,
+            requestUrl,
             (int)response.StatusCode,
             sw.ElapsedMilliseconds,
-            requestUrl);
+            operation);
 
         return (response, payload);
     }

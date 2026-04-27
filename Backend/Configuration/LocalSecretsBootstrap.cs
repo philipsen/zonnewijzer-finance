@@ -65,6 +65,10 @@ public static class LocalSecretsBootstrap
         Alias("Sigenergy__Password", "SIGENERGY_PASSWORD");
         Alias("Sigenergy__SystemId", "SIGENERGY_SYSTEM_ID");
         Alias("Sigenergy__UsableBatteryCapacityKwh", "SIGENERGY_USABLE_BATTERY_CAPACITY_KWH");
+
+        // If only one side is set, mirror it to the other so backend->daemon calls work by default.
+        Alias("IntegrationDaemon__ApiKey", "DaemonApi__ApiKey");
+        Alias("DaemonApi__ApiKey", "IntegrationDaemon__ApiKey");
     }
 
     private static IEnumerable<string> EnumerateDotEnvCandidatePaths()

@@ -90,6 +90,39 @@
         </button>
       </div>
       <div class="dashboard-content">
+        <div class="energy-overview">
+          <div class="energy-bars">
+            <div class="energy-item">
+              <span class="energy-label">Current solar</span>
+              <span class="energy-value">{{ formatEnergyNumber(sigenergyState.solarPowerKw, 'kW') }}</span>
+            </div>
+            <div class="energy-item">
+              <span class="energy-label">Charge level</span>
+              <span class="energy-value">{{ formatEnergyNumber(sigenergyState.batterySocPercent, '%') }}</span>
+            </div>
+            <div class="energy-item">
+              <span class="energy-label">Available battery</span>
+              <span class="energy-value">{{ formatEnergyNumber(availableBatteryKwh, 'kWh') }}</span>
+            </div>
+          </div>
+
+          <div class="stations-bar">
+            <div v-if="stationsError" class="stations-meta">{{ stationsError }}</div>
+            <div v-else-if="!stationSquares.length" class="stations-meta">No station state available.</div>
+            <div v-else class="stations-squares" :style="stationsGridStyle" aria-label="Charging station occupancy">
+              <span
+                v-for="(sq, idx) in stationSquares"
+                :key="`${sq.name || 'station'}-${idx}`"
+                :class="['station-square', sq.inUse ? 'busy' : 'free']"
+                :title="`${sq.name}: ${sq.inUse ? 'In use' : 'Free'}`"
+              >
+                <span class="station-name">{{ sq.name }}</span>
+                <span class="station-number">{{ sq.number }}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div class="features">
           <div class="feature-card">
             <router-link :to="isAppAdminView && !previewMode ? '/charging-sessions' : '/my-sessions'" class="card-link">
@@ -276,6 +309,54 @@ export default {
     const clearChargingLoading = ref(false)
     const clearChargingError = ref('')
     const clearChargingConfirmationPhrase = CLEAR_CHARGING_CONFIRMATION_PHRASE
+    const sigenergyState = ref({})
+    const stationSquares = ref([])
+    const stationsError = ref('')
+    const BATTERY_CAPACITY_KWH = 45.19
+
+    const availableBatteryKwh = computed(() => {
+      const soc = Number(sigenergyState.value?.batterySocPercent)
+      if (Number.isFinite(soc)) return (Math.max(0, Math.min(100, soc)) / 100) * BATTERY_CAPACITY_KWH
+      const remaining = Number(sigenergyState.value?.remainingBatteryKwh)
+      return Number.isFinite(remaining) ? remaining : null
+    })
+
+    const stationsGridStyle = computed(() => {
+      const count = Math.max(1, stationSquares.value.length)
+      return { gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }
+    })
+
+    const formatEnergyNumber = (value, unit) => {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+      return `${Number(value).toFixed(2)} ${unit}`
+    }
+
+    const isPointInUse = (liveState) => {
+      const s = String(liveState || '').toLowerCase()
+      return s === 'active' || s === 'idle' || s === 'charging' || s === 'preparing' || s === 'suspended'
+    }
+
+    const loadHomeEnergyState = async () => {
+      if (!isAuthenticated.value || needsAccess.value) return
+      const token = localStorage.getItem('token')
+      if (!token) return
+      try {
+        const [{ data: sig }, { data: stations }] = await Promise.all([
+          axios.get('/api/sigenergy/live', { headers: { Authorization: `Bearer ${token}` } }),
+          axios.get('/api/chargingstations/smappee-charging-station-display-names', { headers: { Authorization: `Bearer ${token}` } })
+        ])
+        sigenergyState.value = sig || {}
+        const squares = Array.isArray(stations?.squares) ? stations.squares : []
+        stationSquares.value = squares.map((sq, index) => ({
+          number: index + 1,
+          name: sq.name || `Station ${index + 1}`,
+          inUse: isPointInUse(sq.liveState)
+        }))
+        stationsError.value = ''
+      } catch {
+        stationsError.value = 'Could not load station state.'
+      }
+    }
 
     const openClearChargingModal = () => {
       clearChargingError.value = ''
@@ -523,6 +604,7 @@ export default {
 
       requestAnimationFrame(() => tryRenderGoogle())
       startGoogleReadyPoll()
+      loadHomeEnergyState()
     })
 
     onBeforeUnmount(() => {
@@ -574,6 +656,12 @@ export default {
       clearChargingLoading,
       clearChargingError,
       clearChargingConfirmationPhrase,
+      sigenergyState,
+      availableBatteryKwh,
+      stationSquares,
+      stationsError,
+      stationsGridStyle,
+      formatEnergyNumber,
       openClearChargingModal,
       closeClearChargingModal,
       executeClearCharging,
@@ -794,6 +882,104 @@ export default {
   gap: 1rem;
   width: 100%;
   min-width: 0;
+}
+
+.energy-overview {
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.energy-bars {
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  border-bottom: 1px solid #e8edf3;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.energy-item {
+  border-radius: 8px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid #e5e7eb;
+  background: white;
+}
+
+.energy-label {
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.energy-value {
+  font-weight: 700;
+  color: #111827;
+  font-size: 1.15rem;
+}
+
+.stations-bar {
+  padding: 1rem;
+}
+
+.stations-meta {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.stations-squares {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.station-square {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  border: 1px solid rgba(17, 24, 39, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.25rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.station-name,
+.station-number {
+  font-weight: 600;
+  color: #0f172a;
+  font-size: clamp(0.85rem, 1.9vw, 1.35rem);
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+.station-number {
+  display: none;
+  font-size: clamp(0.7rem, 1.5vw, 0.95rem);
+}
+
+.station-square.free { background: rgba(34, 197, 94, 0.35); }
+.station-square.busy { background: rgba(239, 68, 68, 0.35); }
+
+@media (max-width: 900px) {
+  .energy-bars {
+    grid-template-columns: 1fr;
+  }
+
+  .station-name {
+    display: none;
+  }
+
+  .station-number {
+    display: inline;
+  }
 }
 
 .features {
