@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Backend.Services.Sigenergy;
@@ -44,21 +45,12 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     public async Task<SigenergyEnergyFlowData> GetEnergyFlowAsync(CancellationToken cancellationToken = default)
     {
         if (!_options.IsConfigured)
-        {
-            throw new InvalidOperationException(
-                "Sigenergy is not configured. Set Sigenergy:BaseUrl, Username, Password, and SystemId (user secrets or environment).");
-        }
+            throw new InvalidOperationException("Sigenergy is not configured.");
 
         var now = DateTimeOffset.UtcNow;
         var cached = _cachedEnergyFlow;
         if (cached is not null && now - _energyFlowCachedAt < SigenCallCacheTtl)
-        {
-            _logger.LogInformation(
-                "Sigenergy energyFlow cache hit (age={AgeSeconds}s, ttl={TtlSeconds}s)",
-                Math.Round((now - _energyFlowCachedAt).TotalSeconds, 0),
-                SigenCallCacheTtl.TotalSeconds);
             return cached;
-        }
 
         await _energyFlowLock.WaitAsync(cancellationToken);
         try
@@ -66,38 +58,29 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             now = DateTimeOffset.UtcNow;
             cached = _cachedEnergyFlow;
             if (cached is not null && now - _energyFlowCachedAt < SigenCallCacheTtl)
-            {
-                _logger.LogInformation(
-                    "Sigenergy energyFlow cache hit after lock (age={AgeSeconds}s, ttl={TtlSeconds}s)",
-                    Math.Round((now - _energyFlowCachedAt).TotalSeconds, 0),
-                    SigenCallCacheTtl.TotalSeconds);
                 return cached;
+
+            var token = await GetValidAccessTokenAsync(cancellationToken);
+            var id = WebUtility.UrlEncode(_options.SystemId.Trim());
+            var path = $"/openapi/systems/{id}/energyFlow";
+            using var req = new HttpRequestMessage(HttpMethod.Get, path);
+            req.Version = HttpVersion.Version20;
+            req.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            req.Headers.UserAgent.ParseAdd(VsCodeRestClientUserAgent);
+
+            var (response, payload) = await SendAndLogAsync(req, "energyFlow", cancellationToken);
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"Sigenergy energyFlow request failed ({(int)response.StatusCode}).");
+
+                var parsed = ParseSigenEnergyEnvelopeOrThrow(payload);
+                _cachedEnergyFlow = parsed;
+                _energyFlowCachedAt = DateTimeOffset.UtcNow;
+                return parsed;
             }
-
-        var token = await GetValidAccessTokenAsync(cancellationToken);
-        var id = WebUtility.UrlEncode(_options.SystemId.Trim());
-        var path = $"/openapi/systems/{id}/energyFlow";
-        using var req = new HttpRequestMessage(HttpMethod.Get, path);
-        req.Version = HttpVersion.Version20;
-        req.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        req.Headers.UserAgent.ParseAdd(VsCodeRestClientUserAgent);
-
-        var (response, payload) = await SendAndLogAsync(req, "energyFlow", cancellationToken);
-        using (response)
-        {
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogWarning("Sigenergy energyFlow failed: {Status} {Body}", response.StatusCode, Truncate(payload));
-            throw new InvalidOperationException($"Sigenergy energyFlow request failed ({(int)response.StatusCode}).");
-        }
-
-        var parsed = ParseSigenEnergyEnvelopeOrThrow(payload);
-        _cachedEnergyFlow = parsed;
-        _energyFlowCachedAt = DateTimeOffset.UtcNow;
-        return parsed;
-        }
         }
         finally
         {
@@ -139,33 +122,13 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         req.Content = new StringContent(body, Encoding.UTF8, "application/json");
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         req.Headers.UserAgent.ParseAdd(VsCodeRestClientUserAgent);
-        _logger.LogInformation(
-            "Sigenergy login headers: {Headers}",
-            string.Join("; ", GetHeaderPairs(req)));
 
         var (response, payload) = await SendAndLogAsync(req, "login", cancellationToken);
         using (response)
         {
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError("Sigenergy login failed: {Status} {Body}", response.StatusCode, Truncate(payload));
-            throw new InvalidOperationException(
-                $"Sigenergy login failed ({(int)response.StatusCode}). Check credentials and base URL.");
-        }
-
-        return ParseLoginResponseForTokenOrThrow(payload);
-        }
-    }
-
-    private static IEnumerable<string> GetHeaderPairs(HttpRequestMessage req)
-    {
-        foreach (var h in req.Headers)
-            yield return $"{h.Key}={string.Join(",", h.Value)}";
-
-        if (req.Content is not null)
-        {
-            foreach (var h in req.Content.Headers)
-                yield return $"{h.Key}={string.Join(",", h.Value)}";
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Sigenergy login failed ({(int)response.StatusCode}).");
+            return ParseLoginResponseForTokenOrThrow(payload);
         }
     }
 
@@ -176,44 +139,16 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     {
         var sw = Stopwatch.StartNew();
         var requestUrl = ResolveRequestUrl(req);
-        _logger.LogInformation(
-            "Sigenergy {Operation} request: {Method} {Url}",
-            operation,
-            req.Method,
-            requestUrl);
-
-        HttpResponseMessage response;
-        string payload;
-        try
-        {
-            response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            payload = await response.Content.ReadAsStringAsync(cancellationToken);
-            sw.Stop();
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            _logger.LogError(
-                ex,
-                "Sigenergy {Operation} transport failure after {ElapsedMs}ms for {Method} {Url}",
-                operation,
-                sw.ElapsedMilliseconds,
-                req.Method,
-                requestUrl);
-            throw;
-        }
+        var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        sw.Stop();
 
         _logger.LogInformation(
-            "Sigenergy {Operation} response: {StatusCode} in {ElapsedMs}ms for {Url}. Body={Body}",
+            "Sigenergy {Operation} response: {StatusCode} in {ElapsedMs}ms for {Url}",
             operation,
             (int)response.StatusCode,
             sw.ElapsedMilliseconds,
-            requestUrl,
-            Truncate(payload));
-        _logger.LogInformation(
-            "Sigenergy {Operation} response headers: {Headers}",
-            operation,
-            string.Join("; ", response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")));
+            requestUrl);
 
         return (response, payload);
     }
@@ -222,21 +157,14 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     {
         if (req.RequestUri is null)
             return "(null)";
-
         if (req.RequestUri.IsAbsoluteUri)
             return req.RequestUri.ToString();
-
         if (_http.BaseAddress is not null)
             return new Uri(_http.BaseAddress, req.RequestUri).ToString();
-
         return req.RequestUri.ToString();
     }
 
-    /// <summary>
-    /// Sigen open API: envelope <c>code</c>, <c>msg</c>, <c>data</c> (often string or object) may contain
-    /// token fields or only energy snapshot—search recursively for a bearer token and expiry.
-    /// </summary>
-    internal static (string Token, DateTimeOffset ValidUntil) ParseLoginResponseForTokenOrThrow(string payload)
+    public static (string Token, DateTimeOffset ValidUntil) ParseLoginResponseForTokenOrThrow(string payload)
     {
         JsonNode? root;
         try
@@ -254,11 +182,7 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             throw new InvalidOperationException($"Sigenergy login reported code {code}: {msg}");
         }
 
-        var token = FindBearerToken(root) ?? throw new InvalidOperationException(
-            "Sigenergy login response did not contain a bearer token. " +
-            "Expected accessToken, authToken, or token in the JSON (including nested in data). " +
-            "If your API only returns a power snapshot in data, add the token response fields to the client parser.");
-
+        var token = FindBearerToken(root) ?? throw new InvalidOperationException("Sigenergy login response did not contain a bearer token.");
         var validUntil = FindExpiryFromLogin(root) ?? GetJwtExpiry(token) ?? DateTimeOffset.UtcNow.AddMinutes(30);
         if (validUntil <= DateTimeOffset.UtcNow)
             validUntil = DateTimeOffset.UtcNow.AddMinutes(5);
@@ -268,10 +192,7 @@ public class SigenergyCloudClient : ISigenergyCloudClient
 
     private static string? FindBearerToken(JsonNode? node, int depth = 0)
     {
-        if (node is null || depth > 8)
-            return null;
-
-        if (node is not JsonObject o2)
+        if (node is null || depth > 8 || node is not JsonObject o2)
             return null;
 
         foreach (var key in new[] { "accessToken", "authToken", "access_token", "id_token", "token" })
@@ -291,10 +212,7 @@ public class SigenergyCloudClient : ISigenergyCloudClient
                     var t = FindBearerToken(inner, depth + 1);
                     if (t != null) return t;
                 }
-                catch (JsonException)
-                {
-                    // not JSON — ignore
-                }
+                catch (JsonException) { }
             }
         }
 
@@ -311,10 +229,8 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     {
         if (string.IsNullOrWhiteSpace(s) || s.Length < 20)
             return false;
-        // JWT: three base64url segments; many APIs return JWT for Bearer
         if (s.Count(c => c == '.') == 2 && s.StartsWith("eyJ", StringComparison.Ordinal))
             return true;
-        // Opaque long token
         if (s.Length >= 32 && !s.Contains('"'))
             return true;
         return false;
@@ -347,15 +263,11 @@ public class SigenergyCloudClient : ISigenergyCloudClient
                     var n = FindExpiryFromLogin(inner, depth + 1);
                     if (n.HasValue) return n;
                 }
-                catch (JsonException)
-                {
-                    // ignore
-                }
+                catch (JsonException) { }
             }
 
             if (o["expireTime"] is JsonValue ex && ex.TryGetValue<long>(out var unix) && unix > 1_000_000_000L)
             {
-                // seconds or ms
                 if (unix > 10_000_000_000L)
                     return DateTimeOffset.FromUnixTimeMilliseconds(unix);
                 return DateTimeOffset.FromUnixTimeSeconds(unix);
@@ -392,7 +304,6 @@ public class SigenergyCloudClient : ISigenergyCloudClient
 
     private static string Base64UrlDecodeTo(string base64url)
     {
-        // pad for .NET
         var s = base64url.Replace('-', '+').Replace('_', '/');
         switch (s.Length % 4)
         {
@@ -405,7 +316,7 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     private static string Base64UrlDecodeToString(string base64url) =>
         Encoding.UTF8.GetString(Convert.FromBase64String(Base64UrlDecodeTo(base64url)));
 
-    internal static SigenergyEnergyFlowData ParseSigenEnergyEnvelopeOrThrow(string payload)
+    public static SigenergyEnergyFlowData ParseSigenEnergyEnvelopeOrThrow(string payload)
     {
         using var doc = JsonDocument.Parse(payload);
         var root = doc.RootElement;
@@ -437,11 +348,5 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         if (data is null)
             throw new InvalidOperationException("Could not parse Sigenergy energy data.");
         return data;
-    }
-
-    private static string Truncate(string? s, int max = 500)
-    {
-        if (string.IsNullOrEmpty(s) || s.Length <= max) return s ?? "";
-        return s[..max] + "…";
     }
 }

@@ -65,6 +65,7 @@
         <table class="sessions-table">
           <thead>
             <tr>
+              <th>Row ID</th>
               <th>Start Time</th>
               <th>End Time</th>
               <th>Duration</th>
@@ -77,6 +78,7 @@
           </thead>
           <tbody>
             <tr v-for="session in sessions" :key="session.id" class="session-row">
+              <td class="mono-cell">{{ session.id }}</td>
               <td>{{ formatDateTime(session.start) }}</td>
               <td>
                 <span v-if="session.end" class="mono-cell">{{ formatDateTime(session.end) }}</span>
@@ -1235,7 +1237,7 @@ export default {
   }
 
   .sessions-table {
-    min-width: 600px;
+    min-width: 700px;
   }
 
   .sessions-table th,

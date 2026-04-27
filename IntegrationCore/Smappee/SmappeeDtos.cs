@@ -6,6 +6,9 @@ public class SmappeeTokenResponse
 {
     [JsonPropertyName("access_token")]
     public string? AccessToken { get; set; }
+
+    [JsonPropertyName("expires_in")]
+    public int? ExpiresInSeconds { get; set; }
 }
 
 public class SmappeeRfidDto

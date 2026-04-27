@@ -21,6 +21,8 @@ namespace Backend.Data
         public DbSet<UserChargeCard> UserChargeCards { get; set; }
         public DbSet<SmappeeServiceLocation> SmappeeServiceLocations { get; set; }
         public DbSet<SmappeeServiceLocationDevice> SmappeeServiceLocationDevices { get; set; }
+        public DbSet<SmappeeStatusSnapshot> SmappeeStatusSnapshots { get; set; }
+        public DbSet<SigenergyStatusSnapshot> SigenergyStatusSnapshots { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -152,6 +154,23 @@ namespace Backend.Data
                 entity.Property(e => e.Name).HasMaxLength(512);
                 entity.Property(e => e.ServiceLocationUuid).HasMaxLength(128);
                 entity.HasIndex(e => new { e.ServiceLocationId, e.DeviceSerialNumber }).IsUnique();
+            });
+
+            modelBuilder.Entity<SmappeeStatusSnapshot>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Error).HasMaxLength(2048);
+                entity.Property(e => e.PayloadJson).IsRequired();
+                entity.HasIndex(e => e.FetchedAtUtc);
+                entity.HasIndex(e => new { e.ServiceLocationId, e.FetchedAtUtc });
+            });
+
+            modelBuilder.Entity<SigenergyStatusSnapshot>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Error).HasMaxLength(2048);
+                entity.Property(e => e.PayloadJson).IsRequired();
+                entity.HasIndex(e => e.FetchedAtUtc);
             });
         }
     }

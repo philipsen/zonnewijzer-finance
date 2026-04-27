@@ -312,6 +312,48 @@ namespace Backend.Migrations
                     b.ToTable("PasswordResetTokens");
                 });
 
+            modelBuilder.Entity("Backend.Models.SigenergyStatusSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("BatteryPowerKw")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("BatterySocPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<bool>("Configured")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FetchedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSuccess")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("RemainingBatteryKwh")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("SolarPowerKw")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FetchedAtUtc");
+
+                    b.ToTable("SigenergyStatusSnapshots");
+                });
+
             modelBuilder.Entity("Backend.Models.SmappeeServiceLocation", b =>
                 {
                     b.Property<int>("ServiceLocationId")
@@ -380,6 +422,50 @@ namespace Backend.Migrations
                         .IsUnique();
 
                     b.ToTable("SmappeeServiceLocationDevices");
+                });
+
+            modelBuilder.Entity("Backend.Models.SmappeeStatusSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ActiveSessionCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CompletedSessionCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FetchedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSuccess")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RangeEndMsExclusive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("RangeStartMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ServiceLocationId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FetchedAtUtc");
+
+                    b.HasIndex("ServiceLocationId", "FetchedAtUtc");
+
+                    b.ToTable("SmappeeStatusSnapshots");
                 });
 
             modelBuilder.Entity("Backend.Models.User", b =>
