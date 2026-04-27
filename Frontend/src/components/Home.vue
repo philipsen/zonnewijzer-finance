@@ -118,6 +118,7 @@
               >
                 <span class="station-name">{{ sq.name }}</span>
                 <span class="station-number">{{ sq.number }}</span>
+                <span v-if="sq.inUse && sq.loadKw !== null" class="station-load">{{ formatLoadKw(sq.loadKw) }}</span>
               </span>
             </div>
           </div>
@@ -330,6 +331,10 @@ export default {
       if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
       return `${Number(value).toFixed(2)} ${unit}`
     }
+    const formatLoadKw = (value) => {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+      return `${Number(value).toFixed(2)} kW`
+    }
 
     const isPointInUse = (liveState) => {
       const s = String(liveState || '').toLowerCase()
@@ -350,7 +355,8 @@ export default {
         stationSquares.value = squares.map((sq, index) => ({
           number: index + 1,
           name: sq.name || `Station ${index + 1}`,
-          inUse: isPointInUse(sq.liveState)
+          inUse: isPointInUse(sq.liveState),
+          loadKw: Number.isFinite(Number(sq.powerKw)) ? Number(sq.powerKw) : null
         }))
         stationsError.value = ''
       } catch {
@@ -662,6 +668,7 @@ export default {
       stationsError,
       stationsGridStyle,
       formatEnergyNumber,
+      formatLoadKw,
       openClearChargingModal,
       closeClearChargingModal,
       executeClearCharging,
@@ -949,13 +956,15 @@ export default {
   padding: 0.25rem;
   position: relative;
   overflow: hidden;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .station-name,
 .station-number {
   font-weight: 600;
   color: #0f172a;
-  font-size: clamp(0.85rem, 1.9vw, 1.35rem);
+  font-size: clamp(0.95rem, 2.2vw, 1.6rem);
   line-height: 1.1;
   word-break: break-word;
 }
@@ -963,6 +972,13 @@ export default {
 .station-number {
   display: none;
   font-size: clamp(0.7rem, 1.5vw, 0.95rem);
+}
+
+.station-load {
+  font-size: clamp(0.7rem, 1.35vw, 0.9rem);
+  font-weight: 700;
+  color: #111827;
+  line-height: 1;
 }
 
 .station-square.free { background: rgba(34, 197, 94, 0.35); }

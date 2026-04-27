@@ -119,9 +119,19 @@ public class SmappeePollingService : ISmappeePollingService
             // (for example long-running session ids) are closed in local DB.
             var syncLookbackHours = Math.Clamp(_daemonOptions.LookbackHours, 1, 24 * 14);
             var lookbackDays = Math.Clamp((int)Math.Ceiling(syncLookbackHours / 24.0), 1, 14);
+            var brusselsTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Brussels");
             var todayBrussels = DateOnly.FromDateTime(
-                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Europe/Brussels")));
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, brusselsTimeZone));
             var from = todayBrussels.AddDays(-lookbackDays);
+            var oldestActiveFromDate = FindOldestActiveSessionDate(active, brusselsTimeZone);
+            if (oldestActiveFromDate.HasValue && oldestActiveFromDate.Value < from)
+            {
+                _logger.LogInformation(
+                    "Extending Smappee daemon calendar sync lookback from {DefaultFrom} to {ExtendedFrom} to include active sessions started earlier.",
+                    from,
+                    oldestActiveFromDate.Value);
+                from = oldestActiveFromDate.Value;
+            }
             var syncResult = await _chargingSync.SyncSmappeeCalendarAsync(
                 from,
                 todayBrussels,
@@ -163,6 +173,29 @@ public class SmappeePollingService : ISmappeePollingService
             await _db.SaveChangesAsync(cancellationToken);
             return failed;
         }
+    }
+
+    private static DateOnly? FindOldestActiveSessionDate(
+        IReadOnlyList<SmappeeSessionDto> activeSessions,
+        TimeZoneInfo brusselsTimeZone)
+    {
+        long? oldestFromMs = null;
+        foreach (var session in activeSessions)
+        {
+            var fromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(session.From);
+            if (fromMs <= 0)
+                continue;
+
+            if (!oldestFromMs.HasValue || fromMs < oldestFromMs.Value)
+                oldestFromMs = fromMs;
+        }
+
+        if (!oldestFromMs.HasValue)
+            return null;
+
+        var fromUtc = DateTimeOffset.FromUnixTimeMilliseconds(oldestFromMs.Value).UtcDateTime;
+        var fromBrussels = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, brusselsTimeZone);
+        return DateOnly.FromDateTime(fromBrussels);
     }
 
     private static List<string>? MergeExpectedAndSmappeeSerials(
