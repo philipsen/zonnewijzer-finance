@@ -10,7 +10,6 @@ using Backend.Models;
 using Backend.Services.IntegrationDaemon;
 using Backend.Services;
 using Backend.Services.Smappee;
-using Microsoft.Extensions.Options;
 
 namespace Backend.Controllers;
 
@@ -24,30 +23,31 @@ public class ChargingStationsController : ControllerBase
         PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
-    private static readonly Dictionary<string, string> FallbackStationNameBySerial = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> HardcodedStationNameBySerial = new(StringComparer.OrdinalIgnoreCase)
     {
         // Provider live payload serials may diverge from stored device serials.
         // Keep explicit fallback mappings for known chargers so UI state lands on the correct tile.
-        ["5821063919"] = "Paal 5"
+        ["5821063866"] = "Paal 1",
+        ["5821063800"] = "Paal 2",
+        ["5821063911"] = "Paal 3",
+        ["5821063919"] = "Paal 4",
+        ["5821063914"] = "Paal 5"
     };
 
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly IIntegrationDaemonClient _integrationDaemonClient;
-    private readonly SmappeeOptions _smappeeOptions;
     private readonly ILogger<ChargingStationsController> _logger;
 
     public ChargingStationsController(
         ApplicationDbContext context,
         IJwtService jwtService,
         IIntegrationDaemonClient integrationDaemonClient,
-        IOptions<SmappeeOptions> smappeeOptions,
         ILogger<ChargingStationsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
         _integrationDaemonClient = integrationDaemonClient;
-        _smappeeOptions = smappeeOptions.Value;
         _logger = logger;
     }
 
@@ -203,6 +203,8 @@ public class ChargingStationsController : ControllerBase
         Dictionary<string, HomeSquareLiveInfo>? serialToLiveInfo = null;
         Dictionary<string, HomeSquareLiveInfo>? stationNameToLiveInfo = null;
         List<HomeSquareLiveInfo>? unmatchedLiveInfos = null;
+        var discoveredSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var discoveredSerialsMatchedByName = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             var latest = await _context.SmappeeStatusSnapshots
@@ -226,6 +228,7 @@ public class ChargingStationsController : ControllerBase
                     var hasMatchedSerial = false;
                     if (!string.IsNullOrEmpty(sn))
                     {
+                        discoveredSerials.Add(sn);
                         hasMatchedSerial = ordered.Any(w =>
                             !string.IsNullOrWhiteSpace(w.Serial) &&
                             string.Equals(w.Serial, sn, StringComparison.OrdinalIgnoreCase));
@@ -233,7 +236,7 @@ public class ChargingStationsController : ControllerBase
                         if (hasMatchedSerial)
                             matchedSerials.Add(sn);
                     }
-                    var configuredName = ResolveConfiguredStationName(sn);
+                    var configuredName = ResolveHardcodedStationName(sn);
                     var nm = SmappeeApplianceDisplayName.NormalizeName(
                         string.IsNullOrWhiteSpace(p.StationName) ? configuredName : p.StationName);
                     var hasMatchedName = false;
@@ -246,7 +249,11 @@ public class ChargingStationsController : ControllerBase
                                 StringComparison.OrdinalIgnoreCase));
                         stationNameToLiveInfo[nm] = PickStrongerHomeLiveInfo(stationNameToLiveInfo.GetValueOrDefault(nm), liveInfo);
                         if (hasMatchedName)
+                        {
                             matchedNames.Add(nm);
+                            if (!string.IsNullOrEmpty(sn))
+                                discoveredSerialsMatchedByName.Add(sn);
+                        }
                     }
 
                     // If this point cannot be matched to one of the shown squares by serial or name,
@@ -267,6 +274,53 @@ public class ChargingStationsController : ControllerBase
         catch (OperationCanceledException)
         {
             throw;
+        }
+
+        if (discoveredSerials.Count == 0)
+        {
+            var serialsFromSessions = await _context.ChargingSessions
+                .AsNoTracking()
+                .Where(s => s.SerialNumber != null && s.SerialNumber != "")
+                .Select(s => s.SerialNumber!)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            foreach (var serial in serialsFromSessions)
+            {
+                var normalized = serial.Trim();
+                if (normalized.Length > 0)
+                    discoveredSerials.Add(normalized);
+            }
+        }
+
+        if (discoveredSerials.Count > 0)
+        {
+            var existingSerials = new HashSet<string>(
+                work.Where(w => !string.IsNullOrWhiteSpace(w.Serial)).Select(w => w.Serial!),
+                StringComparer.OrdinalIgnoreCase);
+            var existingNames = new HashSet<string>(
+                work.Select(w => SmappeeApplianceDisplayName.NormalizeName(w.Name) ?? w.Name),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var serial in discoveredSerials.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                if (existingSerials.Contains(serial))
+                    continue;
+                if (discoveredSerialsMatchedByName.Contains(serial))
+                    continue;
+                var name = ResolveHardcodedStationName(serial);
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    var normalizedName = SmappeeApplianceDisplayName.NormalizeName(name) ?? name;
+                    if (existingNames.Contains(normalizedName))
+                        continue;
+                }
+                if (string.IsNullOrWhiteSpace(name))
+                    name = $"Unknown {serial}";
+                work.Add((name, serial, 0));
+            }
+            ordered = work
+                .OrderBy(w => w.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .ToList();
         }
 
         var squares = new List<ChargingStationHomeSquareDto>(ordered.Count);
@@ -308,7 +362,10 @@ public class ChargingStationsController : ControllerBase
         }
 
         var mergedSquares = MergeSquaresByNormalizedNameKeepingStrongest(squares);
-        return Ok(new { squares = mergedSquares });
+        var serialNumbers = discoveredSerials
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return Ok(new { squares = mergedSquares, serialNumbers });
     }
 
     /// <summary>Green = no session, yellow = idle (preparing/suspended), red = active (charging).</summary>
@@ -367,18 +424,12 @@ public class ChargingStationsController : ControllerBase
         return decimal.Round(kw, 2, MidpointRounding.AwayFromZero);
     }
 
-    private string? ResolveConfiguredStationName(string? serial)
+    private static string? ResolveHardcodedStationName(string? serial)
     {
         var sn = (serial ?? "").Trim();
         if (string.IsNullOrEmpty(sn))
             return null;
-        var map = _smappeeOptions.StationDisplayNamesBySerial;
-        if (map == null || map.Count == 0)
-            return null;
-        if (map.TryGetValue(sn, out var exact))
-            return exact;
-
-        return FallbackStationNameBySerial.TryGetValue(sn, out var fallback) ? fallback : null;
+        return HardcodedStationNameBySerial.TryGetValue(sn, out var fallback) ? fallback : null;
     }
 
     private static List<ChargingStationHomeSquareDto> MergeSquaresByNormalizedNameKeepingStrongest(
@@ -521,165 +572,6 @@ public class ChargingStationsController : ControllerBase
         {
             _logger.LogError(ex, "Error listing charging stations");
             return BadRequest($"Failed to list charging stations: {ex.Message}");
-        }
-    }
-
-    /// <summary>Stored Smappee service locations (devices + last <c>…/info</c> snapshot). No Smappee call.</summary>
-    [HttpGet("smappee-servicelocations")]
-    public async Task<IActionResult> GetSmappeeServiceLocations(CancellationToken cancellationToken = default)
-    {
-        var (auth, _) = await RequireAdminForSmappeeServiceLocationsAsync(cancellationToken);
-        if (auth != null)
-            return auth;
-
-        var daemonResult = await _integrationDaemonClient.GetSmappeeServiceLocationsAsync(cancellationToken);
-        if (!daemonResult.Enabled)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-            {
-                error = daemonResult.Error ?? "Integration daemon trigger is disabled."
-            });
-        }
-        if (!daemonResult.Success)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, new
-            {
-                error = daemonResult.Error ?? "Could not load service locations from integration daemon."
-            });
-        }
-        return Ok(new
-        {
-            appName = (string?)null,
-            serviceLocations = daemonResult.ServiceLocations,
-            fetchedAt = daemonResult.FetchedAtUtc
-        });
-    }
-
-    /// <summary>Refresh is daemon-owned; backend no longer calls Smappee cloud directly.</summary>
-    [HttpPost("smappee-servicelocations/refresh")]
-    public async Task<IActionResult> PostSmappeeServiceLocationsRefresh(CancellationToken cancellationToken = default)
-    {
-        var (auth, _) = await RequireAdminForSmappeeServiceLocationsAsync(cancellationToken);
-        if (auth != null)
-            return auth;
-
-        var result = await _integrationDaemonClient.TriggerSmappeeServiceLocationsRefreshAsync(cancellationToken);
-        if (!result.Enabled)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-            {
-                error = result.Error ?? "Integration daemon trigger is disabled."
-            });
-        }
-
-        if (!result.Success)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, new
-            {
-                error = result.Error ?? "Could not refresh service locations from integration daemon."
-            });
-        }
-
-        var daemonResult = await _integrationDaemonClient.GetSmappeeServiceLocationsAsync(cancellationToken);
-        if (!daemonResult.Success)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, new
-            {
-                error = daemonResult.Error ?? "Could not load refreshed service locations from integration daemon."
-            });
-        }
-
-        return Ok(new
-        {
-            appName = (string?)null,
-            serviceLocations = daemonResult.ServiceLocations,
-            fetchedAt = daemonResult.FetchedAtUtc
-        });
-    }
-
-    private async Task<(IActionResult? Error, int? UserId)> RequireAdminForSmappeeServiceLocationsAsync(
-        CancellationToken cancellationToken)
-    {
-        var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-        var userIdString = _jwtService.ValidateToken(token);
-
-        if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-        {
-            _logger.LogWarning("Unauthorized attempt to access Smappee service locations");
-            return (Unauthorized(), null);
-        }
-
-        var requestingUser = await _context.Users.FindAsync(new object[] { currentUserId }, cancellationToken);
-        if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
-            return (Forbid(), null);
-
-        return (null, currentUserId);
-    }
-
-    private async Task<(List<SmappeeServiceLocationListItemResponse> Items, DateTimeOffset? FetchedAt)> LoadSmappeeServiceLocationsFromDbAsync(
-        CancellationToken cancellationToken)
-    {
-        var devices = await _context.SmappeeServiceLocationDevices.AsNoTracking()
-            .OrderBy(d => d.ServiceLocationId)
-            .ThenBy(d => d.DeviceSerialNumber)
-            .ToListAsync(cancellationToken);
-
-        if (devices.Count == 0)
-            return (new List<SmappeeServiceLocationListItemResponse>(), null);
-
-        var locIds = devices.Select(d => d.ServiceLocationId).Distinct().ToList();
-        var locs = await _context.SmappeeServiceLocations.AsNoTracking()
-            .Where(s => locIds.Contains(s.ServiceLocationId))
-            .ToDictionaryAsync(s => s.ServiceLocationId, cancellationToken);
-
-        var items = new List<SmappeeServiceLocationListItemResponse>(devices.Count);
-        foreach (var d in devices)
-        {
-            var item = new SmappeeServiceLocationListItemResponse
-            {
-                ServiceLocationId = d.ServiceLocationId,
-                Name = d.Name,
-                ServiceLocationUuid = d.ServiceLocationUuid,
-                DeviceSerialNumber = string.IsNullOrWhiteSpace(d.DeviceSerialNumber) ? null : d.DeviceSerialNumber
-            };
-            if (locs.TryGetValue(d.ServiceLocationId, out var loc))
-                EnrichListItemFromStoredLocation(item, loc);
-            items.Add(item);
-        }
-
-        var tDev = devices.Max(x => x.UpdatedAtUtc);
-        DateTime? tLoc = null;
-        if (locs.Count > 0)
-            tLoc = locs.Values.Max(l => l.UpdatedAtUtc);
-        var latest = tLoc.HasValue && tLoc.Value > tDev ? tLoc.Value : tDev;
-        var fetchedAt = new DateTimeOffset(DateTime.SpecifyKind(latest, DateTimeKind.Utc));
-
-        return (items, fetchedAt);
-    }
-
-    private void EnrichListItemFromStoredLocation(SmappeeServiceLocationListItemResponse item, SmappeeServiceLocation loc)
-    {
-        item.Longitude = loc.Longitude;
-        item.Latitude = loc.Latitude;
-        item.ElectricityCost = loc.ElectricityCost;
-        item.ElectricityCurrency = loc.ElectricityCurrency;
-        item.Timezone = loc.Timezone;
-        if (string.IsNullOrEmpty(loc.AppliancesJson))
-            return;
-        try
-        {
-            item.Appliances = JsonSerializer.Deserialize<List<SmappeeServiceLocationApplianceItemResponse>>(
-                loc.AppliancesJson,
-                SmappeeAppliancesJson);
-            if (item.Appliances != null)
-            {
-                foreach (var a in item.Appliances)
-                    a.Name = SmappeeApplianceDisplayName.NormalizeName(a.Name);
-            }
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "Stored appliances JSON invalid for service location {Id}", item.ServiceLocationId);
         }
     }
 

@@ -52,6 +52,15 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
 
         var rangeStartMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(from);
         var rangeEndMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(to.AddDays(1));
+        var triggerKind = eventLogUserName.Contains("manual", StringComparison.OrdinalIgnoreCase) ? "manual" : "scheduled";
+        _logger.LogInformation(
+            "Smappee sync trigger context: trigger={Trigger}, actor={Actor}, serviceLocationId={ServiceLocationId}, from={From}, to={To}, cancellationRequested={CancellationRequested}",
+            triggerKind,
+            eventLogUserName,
+            _options.ServiceLocationId,
+            from,
+            to,
+            cancellationToken.IsCancellationRequested);
 
         _logger.LogInformation(
             "Smappee sync calendar From={From} To={To} (request); API range query startMs={StartMs} ({StartDesc}) endMs={EndMs} ({EndDesc}) (end is exclusive: start of Brussels day after To)",
