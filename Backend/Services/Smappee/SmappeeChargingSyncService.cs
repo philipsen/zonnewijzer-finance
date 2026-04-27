@@ -294,8 +294,22 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
 
                 if (existing != null)
                 {
+                    var wasOpen = !existing.ToTimestamp.HasValue;
+                    var closingNow = wasOpen && dto.To.HasValue;
                     MapDtoToSession(existing, dto, card.Id, stationId, serial, defaultConn);
                     updated++;
+
+                    if (closingNow)
+                    {
+                        _logger.LogInformation(
+                            "Smappee session closed: sessionId={SessionId}, dbRowId={DbRowId}, from={FromTimestamp}, to={ToTimestamp}, stationId={StationId}, chargeCardId={ChargeCardId}",
+                            existing.SmappeeSessionId,
+                            existing.Id,
+                            existing.FromTimestamp,
+                            existing.ToTimestamp,
+                            existing.StationId,
+                            existing.ChargeCardId);
+                    }
                 }
                 else
                 {
@@ -304,6 +318,14 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
                     session.SmappeeSessionId = dto.Id;
                     _context.ChargingSessions.Add(session);
                     added++;
+
+                    _logger.LogInformation(
+                        "Smappee session created: sessionId={SessionId}, from={FromTimestamp}, to={ToTimestamp}, stationId={StationId}, chargeCardId={ChargeCardId}",
+                        session.SmappeeSessionId,
+                        session.FromTimestamp,
+                        session.ToTimestamp,
+                        session.StationId,
+                        session.ChargeCardId);
                 }
             }
             catch (Exception ex)

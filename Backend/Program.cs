@@ -5,24 +5,16 @@ using Microsoft.IdentityModel.Tokens;
 using Yarp.ReverseProxy.Configuration;
 using System.Text;
 using System.Security.Claims;
-using Backend.Configuration;
 using Backend.Data;
 using Backend.Services;
+using Backend.Services.IntegrationDaemon;
 using Backend.Services.GnuCash;
-using Backend.Services.Sigenergy;
-using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
-using Microsoft.Extensions.Options;
 
 // Configure Serilog early
 Directory.CreateDirectory("logs");
-
-if (LocalSecretsBootstrap.IsDevelopmentEnvironment())
-    LocalSecretsBootstrap.Apply();
-else
-    LocalSecretsBootstrap.MapSmappeeAliases();
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -124,30 +116,15 @@ builder.Services.AddReverseProxy().LoadFromMemory(
 
 // Add custom services
 builder.Services.Configure<GnuCashSyncOptions>(builder.Configuration.GetSection(GnuCashSyncOptions.SectionName));
-builder.Services.Configure<SmappeeOptions>(builder.Configuration.GetSection(SmappeeOptions.SectionName));
-builder.Services.Configure<SigenergyOptions>(builder.Configuration.GetSection(SigenergyOptions.SectionName));
-builder.Services.AddHttpClient(SigenergyCloudClient.HttpClientName, (sp, client) =>
-{
-    var o = sp.GetRequiredService<IOptions<SigenergyOptions>>().Value;
-    var raw = (string.IsNullOrWhiteSpace(o.BaseUrl) ? "https://api-eu.sigencloud.com" : o.BaseUrl).Trim().TrimEnd('/');
-    if (Uri.TryCreate(raw + "/", UriKind.Absolute, out var baseUri))
-        client.BaseAddress = baseUri;
-    client.Timeout = TimeSpan.FromMinutes(2);
-});
-builder.Services.AddSingleton<ISigenergyCloudClient, SigenergyCloudClient>();
 builder.Services.AddHttpClient<IGnuCashSyncClient, GnuCashSyncClient>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
 });
-builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =>
+builder.Services.Configure<IntegrationDaemonOptions>(builder.Configuration.GetSection(IntegrationDaemonOptions.SectionName));
+builder.Services.AddHttpClient<IIntegrationDaemonClient, IntegrationDaemonClient>(client =>
 {
-    client.Timeout = TimeSpan.FromMinutes(2);
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
-builder.Services.Configure<SmappeeBackgroundSyncOptions>(
-    builder.Configuration.GetSection(SmappeeBackgroundSyncOptions.SectionName));
-    builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
-    builder.Services.AddScoped<ISmappeeChargingLiveService, SmappeeChargingLiveService>();
-builder.Services.AddHostedService<SmappeeHourlySyncBackgroundService>();
 
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
@@ -187,42 +164,7 @@ var app = builder.Build();
         context.Database.Migrate();
         DevelopmentAdminSeed.Apply(builder.Configuration, context);
 
-        var smappeeOpts = scope.ServiceProvider.GetRequiredService<IOptions<SmappeeOptions>>().Value;
-        var smappeeBg = scope.ServiceProvider.GetRequiredService<IOptions<SmappeeBackgroundSyncOptions>>().Value;
-        var missingSmappee = smappeeOpts.GetMissingCredentialFields();
-        if (smappeeBg.Enabled && smappeeOpts.ServiceLocationId > 0 && missingSmappee.Count > 0)
-        {
-            Log.Error(
-                "Smappee: BackgroundSync is enabled and ServiceLocationId is set, but required credentials are null or empty. Missing: {Missing}.",
-                string.Join(", ", missingSmappee));
-        }
-
-        Log.Information(
-            "Smappee: credentials {CredentialStatus} (ServiceLocationId={ServiceLocationId}, BackgroundSync={BgEnabled})",
-            missingSmappee.Count == 0
-                ? "OK — ClientId, ClientSecret, Username, Password are all non-empty"
-                : "incomplete — missing: " + string.Join(", ", missingSmappee),
-            smappeeOpts.ServiceLocationId,
-            smappeeBg.Enabled);
-
-        var se = scope.ServiceProvider.GetRequiredService<IOptions<SigenergyOptions>>().Value;
-        var missingSigenergy = se.GetMissingSettings();
-        if (missingSigenergy.Count == 0)
-        {
-            Log.Information(
-                "Sigenergy: configured (BaseUrl, Username, Password, SystemId are all non-empty)");
-        }
-        else if (missingSigenergy.Count < 4)
-        {
-            Log.Warning(
-                "Sigenergy: partially configured. Missing: {Missing}. Home snapshot calls will fail until all required fields are set.",
-                string.Join(", ", missingSigenergy));
-        }
-        else
-        {
-            Log.Information(
-                "Sigenergy: not configured — home page will omit solar/battery until Sigenergy:… is set");
-        }
+        Log.Information("Backend started in integration-agnostic mode (provider polling handled by integration daemon).");
     }
 
     // Configure the HTTP request pipeline.
