@@ -10,8 +10,6 @@ namespace IntegrationDaemon.Services;
 public interface ISmappeePollingService
 {
     Task<SmappeeStatusSnapshot> PollSessionsAsync(CancellationToken cancellationToken = default);
-    Task RefreshServiceLocationInfoAsync(CancellationToken cancellationToken = default);
-    Task RefreshServiceLocationsListAsync(CancellationToken cancellationToken = default);
     Task RefreshRfidsAsync(CancellationToken cancellationToken = default);
 }
 
@@ -124,6 +122,15 @@ public class SmappeePollingService : ISmappeePollingService
                 TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, brusselsTimeZone));
             var from = todayBrussels.AddDays(-lookbackDays);
             var oldestActiveFromDate = FindOldestActiveSessionDate(active, brusselsTimeZone);
+            _logger.LogInformation(
+                "Smappee daemon calendar sync planning: trigger=scheduled, serviceLocationId={ServiceLocationId}, lookbackHours={LookbackHours}, lookbackDays={LookbackDays}, todayBrussels={TodayBrussels}, defaultFrom={DefaultFrom}, activeSessions={ActiveSessions}, completedSessions={CompletedSessions}",
+                _options.ServiceLocationId,
+                syncLookbackHours,
+                lookbackDays,
+                todayBrussels,
+                from,
+                active.Count,
+                completed.Count);
             if (oldestActiveFromDate.HasValue && oldestActiveFromDate.Value < from)
             {
                 _logger.LogInformation(
@@ -132,6 +139,10 @@ public class SmappeePollingService : ISmappeePollingService
                     oldestActiveFromDate.Value);
                 from = oldestActiveFromDate.Value;
             }
+            _logger.LogInformation(
+                "Smappee daemon calendar sync executing: trigger=scheduled, from={From}, to={To}",
+                from,
+                todayBrussels);
             var syncResult = await _chargingSync.SyncSmappeeCalendarAsync(
                 from,
                 todayBrussels,
@@ -161,7 +172,12 @@ public class SmappeePollingService : ISmappeePollingService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Smappee daemon poll failed");
+            _logger.LogWarning(
+                ex,
+                "Smappee daemon poll failed (serviceLocationId={ServiceLocationId}, credentialsComplete={CredentialsComplete}, daemonLookbackHours={LookbackHours})",
+                _options.ServiceLocationId,
+                _options.HasAllCredentials,
+                _daemonOptions.LookbackHours);
             var failed = new SmappeeStatusSnapshot
             {
                 ServiceLocationId = _options.ServiceLocationId,
@@ -222,52 +238,6 @@ public class SmappeePollingService : ISmappeePollingService
             add(s);
 
         return list.Count == 0 ? null : list;
-    }
-
-    public async Task RefreshServiceLocationInfoAsync(CancellationToken cancellationToken = default)
-    {
-        if (_options.ServiceLocationId <= 0 || !_options.HasAllCredentials)
-            return;
-
-        var token = await _cloudClient.GetAccessTokenAsync(cancellationToken);
-        var info = await _cloudClient.GetServiceLocationInfoAsync(token, _options.ServiceLocationId, cancellationToken);
-        var now = DateTime.UtcNow;
-        var loc = await _db.SmappeeServiceLocations.FindAsync(new object[] { _options.ServiceLocationId }, cancellationToken)
-            ?? new SmappeeServiceLocation { ServiceLocationId = _options.ServiceLocationId };
-
-        loc.Longitude = info.Lon;
-        loc.Latitude = info.Lat;
-        loc.ElectricityCost = (decimal)info.ElectricityCost;
-        loc.ElectricityCurrency = string.IsNullOrWhiteSpace(info.ElectricityCurrency) ? null : info.ElectricityCurrency.Trim();
-        loc.Timezone = string.IsNullOrWhiteSpace(info.Timezone) ? null : info.Timezone.Trim();
-        loc.AppliancesJson = info.Appliances is { Count: > 0 } ? JsonSerializer.Serialize(info.Appliances) : null;
-        loc.InfoFetchedAtUtc = now;
-        loc.UpdatedAtUtc = now;
-        _db.Update(loc);
-        await _db.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task RefreshServiceLocationsListAsync(CancellationToken cancellationToken = default)
-    {
-        if (!_options.HasAllCredentials)
-            return;
-
-        var (_, rows) = await _cloudClient.GetServiceLocationsListAsync(cancellationToken);
-        var now = DateTime.UtcNow;
-        _db.SmappeeServiceLocationDevices.RemoveRange(_db.SmappeeServiceLocationDevices);
-        foreach (var row in rows)
-        {
-            _db.SmappeeServiceLocationDevices.Add(new SmappeeServiceLocationDevice
-            {
-                ServiceLocationId = row.ServiceLocationId,
-                DeviceSerialNumber = (row.DeviceSerialNumber ?? string.Empty).Trim(),
-                Name = string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim(),
-                ServiceLocationUuid = string.IsNullOrWhiteSpace(row.ServiceLocationUuid) ? null : row.ServiceLocationUuid.Trim(),
-                UpdatedAtUtc = now
-            });
-        }
-
-        await _db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task RefreshRfidsAsync(CancellationToken cancellationToken = default)

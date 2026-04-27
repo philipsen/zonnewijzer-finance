@@ -3,9 +3,7 @@ namespace Backend.Services.IntegrationDaemon;
 public interface IIntegrationDaemonClient
 {
     Task<SmappeeUpdateTriggerResult> TriggerSmappeeUpdateAsync(DateOnly? from, DateOnly? to, CancellationToken cancellationToken);
-    Task<SmappeeUpdateTriggerResult> TriggerSmappeeServiceLocationsRefreshAsync(CancellationToken cancellationToken);
     Task<SigenergyUpdateTriggerResult> TriggerSigenergyUpdateAsync(CancellationToken cancellationToken);
-    Task<SmappeeServiceLocationsResult> GetSmappeeServiceLocationsAsync(CancellationToken cancellationToken);
 }
 
 public sealed record SmappeeUpdateTriggerResult(
@@ -19,13 +17,6 @@ public sealed record SmappeeUpdateTriggerResult(
     int SessionsUpdated = 0,
     int SessionsSkipped = 0,
     int SessionsErrors = 0);
-
-public sealed record SmappeeServiceLocationsResult(
-    bool Success,
-    bool Enabled,
-    string? Error,
-    IReadOnlyList<Backend.Models.SmappeeServiceLocationListItemResponse> ServiceLocations,
-    DateTimeOffset? FetchedAtUtc);
 
 public sealed record SigenergyUpdateTriggerResult(
     bool Success,
