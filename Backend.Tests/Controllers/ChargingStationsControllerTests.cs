@@ -8,7 +8,6 @@ using Backend.Services.IntegrationDaemon;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -39,7 +38,6 @@ public class ChargingStationsControllerTests : IDisposable
             _db,
             _jwtMock.Object,
             _daemonMock.Object,
-            Options.Create(new Backend.Services.Smappee.SmappeeOptions()),
             NullLogger<ChargingStationsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer t";
@@ -373,7 +371,7 @@ public class ChargingStationsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSmappeeChargingStationDisplayNames_UsesConfiguredNameMapWhenSnapshotNameMissing()
+    public async Task GetSmappeeChargingStationDisplayNames_UsesHardcodedNameWhenSnapshotNameMissing()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -386,13 +384,6 @@ public class ChargingStationsControllerTests : IDisposable
             db,
             jwt.Object,
             daemon.Object,
-            Options.Create(new Backend.Services.Smappee.SmappeeOptions
-            {
-                StationDisplayNamesBySerial = new Dictionary<string, string>
-                {
-                    ["5821063919"] = "Paal 4"
-                }
-            }),
             NullLogger<ChargingStationsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer t";
@@ -441,61 +432,75 @@ public class ChargingStationsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task PostSmappeeServiceLocationsRefresh_WhenDaemonFails_ReturnsBadGateway()
+    public async Task GetSmappeeChargingStationDisplayNames_NoStoredDataReturnsEmptySquares()
     {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
-        await _db.SaveChangesAsync();
-        _daemonMock
-            .Setup(x => x.TriggerSmappeeServiceLocationsRefreshAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SmappeeUpdateTriggerResult(false, true, null, "daemon failed"));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new ApplicationDbContext(options);
+        var jwt = new Mock<IJwtService>();
+        jwt.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("1");
+        var daemon = new Mock<IIntegrationDaemonClient>();
+        var controller = new ChargingStationsController(
+            db,
+            jwt.Object,
+            daemon.Object,
+            NullLogger<ChargingStationsController>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer t";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
-        var result = await BuildController().PostSmappeeServiceLocationsRefresh();
-
-        var badGateway = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(StatusCodes.Status502BadGateway, badGateway.StatusCode);
-    }
-
-    [Fact]
-    public async Task PostSmappeeServiceLocationsRefresh_WhenDaemonSucceeds_ReturnsStoredData()
-    {
-        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
-        _db.SmappeeServiceLocationDevices.Add(new SmappeeServiceLocationDevice
-        {
-            ServiceLocationId = 307785,
-            DeviceSerialNumber = "6531001272",
-            Name = "Paal 2",
-            ServiceLocationUuid = "loc-uuid",
-            UpdatedAtUtc = DateTime.UtcNow
-        });
-        await _db.SaveChangesAsync();
-        _daemonMock
-            .Setup(x => x.TriggerSmappeeServiceLocationsRefreshAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SmappeeUpdateTriggerResult(true, true, DateTimeOffset.UtcNow, null));
-        _daemonMock
-            .Setup(x => x.GetSmappeeServiceLocationsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SmappeeServiceLocationsResult(
-                Success: true,
-                Enabled: true,
-                Error: null,
-                ServiceLocations: new List<SmappeeServiceLocationListItemResponse>
-                {
-                    new()
-                    {
-                        ServiceLocationId = 307785,
-                        Name = "Paal 2",
-                        ServiceLocationUuid = "loc-uuid",
-                        DeviceSerialNumber = "6531001272"
-                    }
-                },
-                FetchedAtUtc: DateTimeOffset.UtcNow));
-
-        var result = await BuildController().PostSmappeeServiceLocationsRefresh();
+        var result = await controller.GetSmappeeChargingStationDisplayNames(default);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         using var doc = JsonDocument.Parse(json);
-        var rows = doc.RootElement.GetProperty("serviceLocations");
-        Assert.Equal(1, rows.GetArrayLength());
-        Assert.Equal(307785, rows[0].GetProperty("serviceLocationId").GetInt32());
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(0, squares.GetArrayLength());
     }
+
+    [Fact]
+    public async Task GetSmappeeChargingStationDisplayNames_UsesSessionSerialsWhenNoAppliancesStored()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new ApplicationDbContext(options);
+        var jwt = new Mock<IJwtService>();
+        jwt.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns("1");
+        var daemon = new Mock<IIntegrationDaemonClient>();
+
+        db.ChargeCards.Add(new ChargeCard { Value = "RF-1" });
+        await db.SaveChangesAsync();
+        var cardId = db.ChargeCards.Single().Id;
+        var t = new DateTime(2026, 4, 27, 12, 0, 0, DateTimeKind.Utc);
+        db.ChargingSessions.Add(TestData.Session(cardId, 1, t, t.AddHours(1), 3m, "5821063914"));
+        db.ChargingSessions.Add(TestData.Session(cardId, 2, t, t.AddHours(1), 4m, "9999999999"));
+        await db.SaveChangesAsync();
+
+        var controller = new ChargingStationsController(
+            db,
+            jwt.Object,
+            daemon.Object,
+            NullLogger<ChargingStationsController>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer t";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var result = await controller.GetSmappeeChargingStationDisplayNames(default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        using var doc = JsonDocument.Parse(json);
+        var squares = doc.RootElement.GetProperty("squares");
+        Assert.Equal(2, squares.GetArrayLength());
+        Assert.Equal("Paal 5", squares[0].GetProperty("name").GetString());
+        Assert.Equal("Unknown 9999999999", squares[1].GetProperty("name").GetString());
+
+        var serialNumbers = doc.RootElement.GetProperty("serialNumbers");
+        Assert.Equal(2, serialNumbers.GetArrayLength());
+        Assert.Equal("5821063914", serialNumbers[0].GetString());
+        Assert.Equal("9999999999", serialNumbers[1].GetString());
+    }
+
 }
