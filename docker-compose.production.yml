@@ -83,6 +83,12 @@ services:
       - ASPNETCORE_URLS=http://+:7071
       - ConnectionStrings__DefaultConnection=Data Source=/app/database/finance.db
       - DaemonApi__ApiKey=${DAEMON_API_KEY:-}
+      - Smappee__BaseUrl=${SMAPPEE_BASE_URL:-https://app1pub.smappee.net/dev/v3}
+      - Smappee__ClientId=${SMAPPEE_CLIENT_ID:-}
+      - Smappee__ClientSecret=${SMAPPEE_CLIENT_SECRET:-}
+      - Smappee__Username=${SMAPPEE_USERNAME:-}
+      - Smappee__Password=${SMAPPEE_PASSWORD:-}
+      - Smappee__ServiceLocationId=${SMAPPEE_SERVICE_LOCATION_ID:-}
       - Sigenergy__BaseUrl=${SIGENERGY_BASE_URL:-https://api-eu.sigencloud.com}
       - Sigenergy__Username=${SIGENERGY_USERNAME:-}
       - Sigenergy__Password=${SIGENERGY_PASSWORD:-}

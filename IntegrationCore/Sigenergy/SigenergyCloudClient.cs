@@ -16,16 +16,19 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     public const string HttpClientName = "Sigenergy";
     private const string VsCodeRestClientUserAgent = "vscode-restclient";
     private static readonly TimeSpan SigenCallCacheTtl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RpcFailCooldown = TimeSpan.FromHours(1);
 
     private readonly HttpClient _http;
     private readonly SigenergyOptions _options;
     private readonly ILogger<SigenergyCloudClient> _logger;
     private readonly SemaphoreSlim _loginLock = new(1, 1);
     private readonly SemaphoreSlim _energyFlowLock = new(1, 1);
+    private readonly object _cooldownLock = new();
     private string? _cachedToken;
     private DateTimeOffset _tokenValidUntil = DateTimeOffset.MinValue;
     private SigenergyEnergyFlowData? _cachedEnergyFlow;
     private DateTimeOffset _energyFlowCachedAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _rpcFailCooldownUntil = DateTimeOffset.MinValue;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -49,6 +52,13 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             throw new InvalidOperationException("Sigenergy is not configured.");
 
         var now = DateTimeOffset.UtcNow;
+        var cooldownUntil = GetRpcFailCooldownUntil();
+        if (cooldownUntil > now)
+        {
+            throw new InvalidOperationException(
+                $"Sigenergy calls are temporarily held back until {cooldownUntil:O} because a previous energyFlow call failed with 'rpc fail'.");
+        }
+
         var cached = _cachedEnergyFlow;
         if (cached is not null && now - _energyFlowCachedAt < SigenCallCacheTtl)
             return cached;
@@ -75,13 +85,24 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             using (response)
             {
                 if (!response.IsSuccessStatusCode)
-                    throw new InvalidOperationException($"Sigenergy energyFlow request failed ({(int)response.StatusCode}).");
+                    throw new InvalidOperationException(
+                        $"Sigenergy energyFlow request failed ({(int)response.StatusCode}): {ExtractErrorSummary(payload)}");
 
                 var parsed = ParseSigenEnergyEnvelopeOrThrow(payload);
                 _cachedEnergyFlow = parsed;
                 _energyFlowCachedAt = DateTimeOffset.UtcNow;
                 return parsed;
             }
+        }
+        catch (Exception ex) when (IsRpcFail(ex.Message))
+        {
+            var until = DateTimeOffset.UtcNow.Add(RpcFailCooldown);
+            SetRpcFailCooldownUntil(until);
+            _logger.LogWarning(
+                ex,
+                "Sigenergy energyFlow returned 'rpc fail'; blocking further Sigenergy calls until {CooldownUntilUtc}",
+                until);
+            throw;
         }
         finally
         {
@@ -191,6 +212,30 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             .Select(h => $"{h.Key}: {string.Join(", ", h.Value)}")
             .ToArray();
         return lines.Length == 0 ? "(none)" : string.Join('\n', lines);
+    }
+
+    private DateTimeOffset GetRpcFailCooldownUntil()
+    {
+        lock (_cooldownLock)
+            return _rpcFailCooldownUntil;
+    }
+
+    private void SetRpcFailCooldownUntil(DateTimeOffset until)
+    {
+        lock (_cooldownLock)
+            _rpcFailCooldownUntil = until;
+    }
+
+    private static bool IsRpcFail(string? message) =>
+        !string.IsNullOrWhiteSpace(message) &&
+        message.Contains("rpc fail", StringComparison.OrdinalIgnoreCase);
+
+    private static string ExtractErrorSummary(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+            return "(empty response body)";
+        var normalized = payload.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return normalized.Length <= 180 ? normalized : normalized[..180] + "...";
     }
 
     public static (string Token, DateTimeOffset ValidUntil) ParseLoginResponseForTokenOrThrow(string payload)
