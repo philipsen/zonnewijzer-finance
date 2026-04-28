@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Linq;
 
 namespace Backend.Services.Sigenergy;
 
@@ -137,19 +138,38 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         string operation,
         CancellationToken cancellationToken)
     {
+        // Intentionally logs sensitive data for temporary deep production diagnostics.
+        // Remove or redact this once the issue is resolved.
+        var requestHeaders = DumpHeaders(req.Headers);
+        var requestContentHeaders = req.Content is null ? "" : DumpHeaders(req.Content.Headers);
+        var requestBody = req.Content is null ? "" : await req.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogWarning(
+            "Sigenergy outbound request ({Operation}) {Method} {Url}\nRequestHeaders:\n{RequestHeaders}\nRequestContentHeaders:\n{RequestContentHeaders}\nRequestBody:\n{RequestBody}",
+            operation,
+            req.Method,
+            ResolveRequestUrl(req),
+            requestHeaders,
+            string.IsNullOrWhiteSpace(requestContentHeaders) ? "(none)" : requestContentHeaders,
+            string.IsNullOrWhiteSpace(requestBody) ? "(empty)" : requestBody);
+
         var sw = Stopwatch.StartNew();
         var requestUrl = ResolveRequestUrl(req);
         var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         sw.Stop();
+        var responseHeaders = DumpHeaders(response.Headers);
+        var responseContentHeaders = DumpHeaders(response.Content.Headers);
 
-        _logger.LogInformation(
-            "Sigenergy {Method} {Url} -> {Status} in {Ms}ms ({Operation})",
+        _logger.LogWarning(
+            "Sigenergy inbound response ({Operation}) {Method} {Url} -> {Status} in {Ms}ms\nResponseHeaders:\n{ResponseHeaders}\nResponseContentHeaders:\n{ResponseContentHeaders}\nResponseBody:\n{ResponseBody}",
+            operation,
             req.Method,
             requestUrl,
             (int)response.StatusCode,
             sw.ElapsedMilliseconds,
-            operation);
+            responseHeaders,
+            string.IsNullOrWhiteSpace(responseContentHeaders) ? "(none)" : responseContentHeaders,
+            string.IsNullOrWhiteSpace(payload) ? "(empty)" : payload);
 
         return (response, payload);
     }
@@ -163,6 +183,14 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         if (_http.BaseAddress is not null)
             return new Uri(_http.BaseAddress, req.RequestUri).ToString();
         return req.RequestUri.ToString();
+    }
+
+    private static string DumpHeaders(IEnumerable<KeyValuePair<string, IEnumerable<string>>> headers)
+    {
+        var lines = headers
+            .Select(h => $"{h.Key}: {string.Join(", ", h.Value)}")
+            .ToArray();
+        return lines.Length == 0 ? "(none)" : string.Join('\n', lines);
     }
 
     public static (string Token, DateTimeOffset ValidUntil) ParseLoginResponseForTokenOrThrow(string payload)
