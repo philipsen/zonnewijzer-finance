@@ -66,9 +66,56 @@ public static class LocalSecretsBootstrap
         Alias("Sigenergy__SystemId", "SIGENERGY_SYSTEM_ID");
         Alias("Sigenergy__UsableBatteryCapacityKwh", "SIGENERGY_USABLE_BATTERY_CAPACITY_KWH");
 
-        // If only one side is set, mirror it to the other so backend->daemon calls work by default.
-        Alias("IntegrationDaemon__ApiKey", "DaemonApi__ApiKey");
-        Alias("DaemonApi__ApiKey", "IntegrationDaemon__ApiKey");
+        // Keep backend->daemon API keys aligned even when one file still has a placeholder.
+        SynchronizeDaemonApiKeys();
+    }
+
+    private static void SynchronizeDaemonApiKeys()
+    {
+        var backendKey = Environment.GetEnvironmentVariable("IntegrationDaemon__ApiKey");
+        var daemonKey = Environment.GetEnvironmentVariable("DaemonApi__ApiKey");
+
+        var hasBackend = !string.IsNullOrWhiteSpace(backendKey);
+        var hasDaemon = !string.IsNullOrWhiteSpace(daemonKey);
+        var backendPlaceholder = IsPlaceholderSecret(backendKey);
+        var daemonPlaceholder = IsPlaceholderSecret(daemonKey);
+
+        if (hasBackend && !hasDaemon)
+        {
+            Environment.SetEnvironmentVariable("DaemonApi__ApiKey", backendKey);
+            return;
+        }
+
+        if (!hasBackend && hasDaemon)
+        {
+            Environment.SetEnvironmentVariable("IntegrationDaemon__ApiKey", daemonKey);
+            return;
+        }
+
+        if (hasBackend && hasDaemon)
+        {
+            if (backendPlaceholder && !daemonPlaceholder)
+            {
+                Environment.SetEnvironmentVariable("IntegrationDaemon__ApiKey", daemonKey);
+                return;
+            }
+
+            if (!backendPlaceholder && daemonPlaceholder)
+            {
+                Environment.SetEnvironmentVariable("DaemonApi__ApiKey", backendKey);
+            }
+        }
+    }
+
+    private static bool IsPlaceholderSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        var normalized = value.Trim();
+        return normalized.Equals("change-me", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("your-", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("placeholder", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> EnumerateDotEnvCandidatePaths()

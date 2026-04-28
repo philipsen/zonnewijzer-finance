@@ -56,6 +56,7 @@ builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =
 });
 
 builder.Services.AddSingleton<ISigenergyCloudClient, SigenergyCloudClient>();
+builder.Services.AddSingleton<SigenergyDiagnosticsService>();
 builder.Services.AddSingleton<IStatusPublisher, DbOnlyStatusPublisher>();
 builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
 builder.Services.AddScoped<ISmappeePollingService, SmappeePollingService>();
@@ -252,6 +253,27 @@ app.MapPost("/api/sigenergy/update", async (
         fetchedAtUtc = snapshot.FetchedAtUtc,
         error = snapshot.Error
     });
+});
+
+app.MapPost("/api/sigenergy/diagnostics", async (
+    HttpContext httpContext,
+    IOptions<DaemonApiOptions> apiOptions,
+    SigenergyDiagnosticsService diagnosticsService,
+    CancellationToken cancellationToken) =>
+{
+    var opts = apiOptions.Value;
+    if (!opts.Enabled)
+        return Results.StatusCode(StatusCodes.Status404NotFound);
+
+    if (ShouldEnforceApiKey(httpContext, opts, app.Environment))
+    {
+        var apiKey = httpContext.Request.Headers["x-api-key"].ToString();
+        if (!string.Equals(apiKey, opts.ApiKey, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    var report = await diagnosticsService.RunAsync(cancellationToken);
+    return Results.Ok(report);
 });
 
 app.Lifetime.ApplicationStarted.Register(() =>
