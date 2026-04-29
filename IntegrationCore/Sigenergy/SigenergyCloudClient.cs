@@ -16,19 +16,16 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     public const string HttpClientName = "Sigenergy";
     private const string VsCodeRestClientUserAgent = "vscode-restclient";
     private static readonly TimeSpan SigenCallCacheTtl = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan RpcFailCooldown = TimeSpan.FromHours(1);
 
     private readonly HttpClient _http;
     private readonly SigenergyOptions _options;
     private readonly ILogger<SigenergyCloudClient> _logger;
     private readonly SemaphoreSlim _loginLock = new(1, 1);
     private readonly SemaphoreSlim _energyFlowLock = new(1, 1);
-    private readonly object _cooldownLock = new();
     private string? _cachedToken;
     private DateTimeOffset _tokenValidUntil = DateTimeOffset.MinValue;
     private SigenergyEnergyFlowData? _cachedEnergyFlow;
     private DateTimeOffset _energyFlowCachedAt = DateTimeOffset.MinValue;
-    private DateTimeOffset _rpcFailCooldownUntil = DateTimeOffset.MinValue;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -52,13 +49,6 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             throw new InvalidOperationException("Sigenergy is not configured.");
 
         var now = DateTimeOffset.UtcNow;
-        var cooldownUntil = GetRpcFailCooldownUntil();
-        if (cooldownUntil > now)
-        {
-            throw new InvalidOperationException(
-                $"Sigenergy calls are temporarily held back until {cooldownUntil:O} because a previous energyFlow call failed with 'rpc fail'.");
-        }
-
         var cached = _cachedEnergyFlow;
         if (cached is not null && now - _energyFlowCachedAt < SigenCallCacheTtl)
             return cached;
@@ -96,12 +86,9 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         }
         catch (Exception ex) when (IsRpcFail(ex.Message))
         {
-            var until = DateTimeOffset.UtcNow.Add(RpcFailCooldown);
-            SetRpcFailCooldownUntil(until);
             _logger.LogWarning(
                 ex,
-                "Sigenergy energyFlow returned 'rpc fail'; blocking further Sigenergy calls until {CooldownUntilUtc}",
-                until);
+                "Sigenergy energyFlow returned 'rpc fail'; continuing without cooldown hold-back.");
             throw;
         }
         finally
@@ -159,38 +146,48 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         string operation,
         CancellationToken cancellationToken)
     {
-        // Intentionally logs sensitive data for temporary deep production diagnostics.
-        // Remove or redact this once the issue is resolved.
         var requestHeaders = DumpHeaders(req.Headers);
         var requestContentHeaders = req.Content is null ? "" : DumpHeaders(req.Content.Headers);
         var requestBody = req.Content is null ? "" : await req.Content.ReadAsStringAsync(cancellationToken);
-        _logger.LogWarning(
-            "Sigenergy outbound request ({Operation}) {Method} {Url}\nRequestHeaders:\n{RequestHeaders}\nRequestContentHeaders:\n{RequestContentHeaders}\nRequestBody:\n{RequestBody}",
-            operation,
-            req.Method,
-            ResolveRequestUrl(req),
-            requestHeaders,
-            string.IsNullOrWhiteSpace(requestContentHeaders) ? "(none)" : requestContentHeaders,
-            string.IsNullOrWhiteSpace(requestBody) ? "(empty)" : requestBody);
 
         var sw = Stopwatch.StartNew();
         var requestUrl = ResolveRequestUrl(req);
         var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         sw.Stop();
-        var responseHeaders = DumpHeaders(response.Headers);
-        var responseContentHeaders = DumpHeaders(response.Content.Headers);
 
-        _logger.LogWarning(
-            "Sigenergy inbound response ({Operation}) {Method} {Url} -> {Status} in {Ms}ms\nResponseHeaders:\n{ResponseHeaders}\nResponseContentHeaders:\n{ResponseContentHeaders}\nResponseBody:\n{ResponseBody}",
-            operation,
-            req.Method,
-            requestUrl,
-            (int)response.StatusCode,
-            sw.ElapsedMilliseconds,
-            responseHeaders,
-            string.IsNullOrWhiteSpace(responseContentHeaders) ? "(none)" : responseContentHeaders,
-            string.IsNullOrWhiteSpace(payload) ? "(empty)" : payload);
+        var isRpcFail = HasRpcFailMessage(payload);
+        var isErrorResponse = !response.IsSuccessStatusCode;
+
+        if (isRpcFail || isErrorResponse)
+        {
+            var responseHeaders = DumpHeaders(response.Headers);
+            var responseContentHeaders = DumpHeaders(response.Content.Headers);
+            _logger.LogWarning(
+                "Sigenergy {Reason} ({Operation}) {Method} {Url} -> {Status} in {Ms}ms\nRequestHeaders:\n{RequestHeaders}\nRequestContentHeaders:\n{RequestContentHeaders}\nRequestBody:\n{RequestBody}\nResponseHeaders:\n{ResponseHeaders}\nResponseContentHeaders:\n{ResponseContentHeaders}\nResponseBody:\n{ResponseBody}",
+                isRpcFail ? "rpc-fail response" : "error response",
+                operation,
+                req.Method,
+                requestUrl,
+                (int)response.StatusCode,
+                sw.ElapsedMilliseconds,
+                requestHeaders,
+                string.IsNullOrWhiteSpace(requestContentHeaders) ? "(none)" : requestContentHeaders,
+                string.IsNullOrWhiteSpace(requestBody) ? "(empty)" : requestBody,
+                responseHeaders,
+                string.IsNullOrWhiteSpace(responseContentHeaders) ? "(none)" : responseContentHeaders,
+                string.IsNullOrWhiteSpace(payload) ? "(empty)" : payload);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Sigenergy inbound response ({Operation}) {Method} {Url} -> {Status} in {Ms}ms",
+                operation,
+                req.Method,
+                requestUrl,
+                (int)response.StatusCode,
+                sw.ElapsedMilliseconds);
+        }
 
         return (response, payload);
     }
@@ -214,21 +211,32 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         return lines.Length == 0 ? "(none)" : string.Join('\n', lines);
     }
 
-    private DateTimeOffset GetRpcFailCooldownUntil()
-    {
-        lock (_cooldownLock)
-            return _rpcFailCooldownUntil;
-    }
-
-    private void SetRpcFailCooldownUntil(DateTimeOffset until)
-    {
-        lock (_cooldownLock)
-            _rpcFailCooldownUntil = until;
-    }
-
     private static bool IsRpcFail(string? message) =>
         !string.IsNullOrWhiteSpace(message) &&
         message.Contains("rpc fail", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasRpcFailMessage(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("msg", out var msgElement) &&
+                msgElement.ValueKind == JsonValueKind.String)
+            {
+                var msg = msgElement.GetString();
+                return string.Equals(msg, "rpc fail", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore parse issues and fall back to non-verbose logging.
+        }
+
+        return false;
+    }
 
     private static string ExtractErrorSummary(string payload)
     {

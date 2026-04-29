@@ -133,7 +133,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.MapGet("/health", () => Results.Ok(new { ok = true, service = "integration-daemon" }));
+app.MapGet("/health", () => Results.Ok(new HealthResponse(true, "integration-daemon")));
 
 app.MapPost("/api/smappee/update", async (
     HttpContext httpContext,
@@ -173,9 +173,9 @@ app.MapPost("/api/smappee/update", async (
     if (from.HasValue || to.HasValue)
     {
         if (!from.HasValue || !to.HasValue)
-            return Results.BadRequest(new { ok = false, error = "Both 'from' and 'to' are required when specifying a range." });
+            return Results.BadRequest(new ErrorResponse(false, "Both 'from' and 'to' are required when specifying a range."));
         if (to.Value < from.Value)
-            return Results.BadRequest(new { ok = false, error = "'to' date must be on or after 'from' date." });
+            return Results.BadRequest(new ErrorResponse(false, "'to' date must be on or after 'from' date."));
 
         var syncResult = await sync.SyncSmappeeCalendarAsync(
             from.Value,
@@ -183,20 +183,16 @@ app.MapPost("/api/smappee/update", async (
             "Integration daemon manual range sync",
             cancellationToken);
 
-        return Results.Ok(new
-        {
-            ok = syncResult.Success,
-            fetchedAtUtc = DateTimeOffset.UtcNow,
-            error = syncResult.ErrorMessage,
-            chargeCards = new { added = syncResult.CardsAdded, updated = syncResult.CardsUpdated },
-            sessions = new
-            {
-                added = syncResult.SessionsAdded,
-                updated = syncResult.SessionsUpdated,
-                skipped = syncResult.SessionsSkipped,
-                errors = syncResult.SessionsErrors
-            }
-        });
+        return Results.Ok(new SmappeeUpdateResponse(
+            syncResult.Success,
+            DateTimeOffset.UtcNow,
+            syncResult.ErrorMessage,
+            new SmappeeChargeCardsStats(syncResult.CardsAdded, syncResult.CardsUpdated),
+            new SmappeeSessionsStats(
+                syncResult.SessionsAdded,
+                syncResult.SessionsUpdated,
+                syncResult.SessionsSkipped,
+                syncResult.SessionsErrors)));
     }
 
     var snapshot = await poller.PollSessionsAsync(cancellationToken);
@@ -207,14 +203,12 @@ app.MapPost("/api/smappee/update", async (
         snapshot.FetchedAtUtc,
         snapshot.Error);
 
-    return Results.Ok(new
-    {
-        ok = snapshot.IsSuccess,
-        fetchedAtUtc = snapshot.FetchedAtUtc,
-        error = snapshot.Error,
-        chargeCards = new { added = 0, updated = 0 },
-        sessions = new { added = 0, updated = 0, skipped = 0, errors = 0 }
-    });
+    return Results.Ok(new SmappeeUpdateResponse(
+        snapshot.IsSuccess,
+        snapshot.FetchedAtUtc,
+        snapshot.Error,
+        new SmappeeChargeCardsStats(0, 0),
+        new SmappeeSessionsStats(0, 0, 0, 0)));
 });
 
 app.MapPost("/api/sigenergy/update", async (
@@ -254,12 +248,10 @@ app.MapPost("/api/sigenergy/update", async (
         snapshot.FetchedAtUtc,
         snapshot.Error);
 
-    return Results.Ok(new
-    {
-        ok = snapshot.IsSuccess,
-        fetchedAtUtc = snapshot.FetchedAtUtc,
-        error = snapshot.Error
-    });
+    return Results.Ok(new SigenergyUpdateResponse(
+        snapshot.IsSuccess,
+        snapshot.FetchedAtUtc,
+        snapshot.Error));
 });
 
 app.MapPost("/api/sigenergy/diagnostics", async (
@@ -314,3 +306,23 @@ internal sealed class SmappeeUpdateRequest
     public DateOnly? From { get; set; }
     public DateOnly? To { get; set; }
 }
+
+internal sealed record HealthResponse(bool Ok, string Service);
+
+internal sealed record ErrorResponse(bool Ok, string Error);
+
+internal sealed record SmappeeChargeCardsStats(int Added, int Updated);
+
+internal sealed record SmappeeSessionsStats(int Added, int Updated, int Skipped, int Errors);
+
+internal sealed record SmappeeUpdateResponse(
+    bool Ok,
+    DateTimeOffset FetchedAtUtc,
+    string? Error,
+    SmappeeChargeCardsStats ChargeCards,
+    SmappeeSessionsStats Sessions);
+
+internal sealed record SigenergyUpdateResponse(
+    bool Ok,
+    DateTime FetchedAtUtc,
+    string? Error);
