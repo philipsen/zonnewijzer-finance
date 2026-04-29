@@ -1,0 +1,2 @@
+# Set this on the server running IntegrationDaemon so Sigenergy calls go via the Pi relay.
+SIGENERGY_BASE_URL=http://10.0.0.3:18080
