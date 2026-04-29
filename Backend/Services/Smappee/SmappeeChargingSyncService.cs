@@ -104,14 +104,19 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         var (sessAdded, sessUpdated, sessSkipped, sessErrors) =
             await UpsertSessionsFromSmappeeAsync(sessionsDto, cancellationToken);
 
-        _context.EventLogs.Add(new EventLog
+        // Avoid noisy event log entries when no new sessions were imported.
+        // Keep logging when at least one session was added or processing errors occurred.
+        if (sessAdded > 0 || sessErrors > 0)
         {
-            Timestamp = DateTime.UtcNow,
-            UserName = eventLogUserName,
-            Action =
-                $"Smappee sync: charge cards +{cardsAdded}/~{cardsUpdated}, sessions +{sessAdded}/~{sessUpdated}, skipped {sessSkipped}, errors {sessErrors}"
-        });
-        await _context.SaveChangesAsync(cancellationToken);
+            _context.EventLogs.Add(new EventLog
+            {
+                Timestamp = DateTime.UtcNow,
+                UserName = eventLogUserName,
+                Action =
+                    $"Smappee sync: charge cards +{cardsAdded}/~{cardsUpdated}, sessions +{sessAdded}/~{sessUpdated}, skipped {sessSkipped}, errors {sessErrors}"
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         return SmappeeSyncServiceResult.Ok(cardsAdded, cardsUpdated, sessAdded, sessUpdated, sessSkipped, sessErrors);
     }
