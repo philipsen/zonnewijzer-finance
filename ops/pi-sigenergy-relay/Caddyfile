@@ -1,0 +1,7 @@
+10.0.0.3:18080 {
+    @onlyServer remote_ip 10.0.0.1
+    handle @onlyServer {
+        reverse_proxy https://api-eu.sigencloud.com
+    }
+    respond "forbidden" 403
+}
