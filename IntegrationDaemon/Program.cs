@@ -20,14 +20,21 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URL
 // This makes local daemon runs work even when DOTNET_ENVIRONMENT is not explicitly set.
 LocalSecretsBootstrap.Apply();
 
-Log.Logger = new LoggerConfiguration()
+var loggerConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Warning)
     .WriteTo.Console()
-    .WriteTo.File("logs/integration-daemon-.txt", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
-    .CreateLogger();
+    .WriteTo.File("logs/integration-daemon-.txt", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7);
+
+var seqServerUrl = Environment.GetEnvironmentVariable("SEQ_SERVER_URL");
+if (!string.IsNullOrWhiteSpace(seqServerUrl))
+{
+    loggerConfig = loggerConfig.WriteTo.Seq(seqServerUrl);
+}
+
+Log.Logger = loggerConfig.CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSerilog();
