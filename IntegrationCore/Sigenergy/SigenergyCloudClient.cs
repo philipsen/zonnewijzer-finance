@@ -16,6 +16,9 @@ public class SigenergyCloudClient : ISigenergyCloudClient
     public const string HttpClientName = "Sigenergy";
     private const string VsCodeRestClientUserAgent = "vscode-restclient";
     private static readonly TimeSpan SigenCallCacheTtl = TimeSpan.FromMinutes(5);
+    private const int RpcFailMaxAttempts = 4;
+    private static readonly TimeSpan RpcFailInitialBackoff = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan RpcFailMaxBackoff = TimeSpan.FromSeconds(8);
 
     private readonly HttpClient _http;
     private readonly SigenergyOptions _options;
@@ -64,6 +67,33 @@ public class SigenergyCloudClient : ISigenergyCloudClient
             var token = await GetValidAccessTokenAsync(cancellationToken);
             var id = WebUtility.UrlEncode(_options.SystemId.Trim());
             var path = $"/openapi/systems/{id}/energyFlow";
+            var parsed = await FetchEnergyFlowWithRetryAsync(path, token, cancellationToken);
+            _cachedEnergyFlow = parsed;
+            _energyFlowCachedAt = DateTimeOffset.UtcNow;
+            return parsed;
+        }
+        catch (Exception ex) when (IsRpcFail(ex.Message))
+        {
+            _logger.LogWarning(
+                ex,
+                "Sigenergy energyFlow returned 'rpc fail'; continuing without cooldown hold-back.");
+            throw;
+        }
+        finally
+        {
+            _energyFlowLock.Release();
+        }
+    }
+
+    private async Task<SigenergyEnergyFlowData> FetchEnergyFlowWithRetryAsync(
+        string path,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        Exception? lastRpcFail = null;
+
+        for (var attempt = 1; attempt <= RpcFailMaxAttempts; attempt++)
+        {
             using var req = new HttpRequestMessage(HttpMethod.Get, path);
             req.Version = HttpVersion.Version20;
             req.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
@@ -78,23 +108,31 @@ public class SigenergyCloudClient : ISigenergyCloudClient
                     throw new InvalidOperationException(
                         $"Sigenergy energyFlow request failed ({(int)response.StatusCode}): {ExtractErrorSummary(payload)}");
 
-                var parsed = ParseSigenEnergyEnvelopeOrThrow(payload);
-                _cachedEnergyFlow = parsed;
-                _energyFlowCachedAt = DateTimeOffset.UtcNow;
-                return parsed;
+                try
+                {
+                    return ParseSigenEnergyEnvelopeOrThrow(payload);
+                }
+                catch (Exception ex) when (IsRpcFail(ex.Message) && attempt < RpcFailMaxAttempts)
+                {
+                    lastRpcFail = ex;
+                    var delay = ComputeRpcFailDelay(attempt);
+                    _logger.LogWarning(
+                        ex,
+                        "Sigenergy energyFlow returned rpc fail; retrying attempt {NextAttempt}/{MaxAttempts} in {DelayMs}ms",
+                        attempt + 1,
+                        RpcFailMaxAttempts,
+                        (int)delay.TotalMilliseconds);
+                    await Task.Delay(delay, cancellationToken);
+                }
+                catch (Exception ex) when (IsRpcFail(ex.Message))
+                {
+                    lastRpcFail = ex;
+                    break;
+                }
             }
         }
-        catch (Exception ex) when (IsRpcFail(ex.Message))
-        {
-            _logger.LogWarning(
-                ex,
-                "Sigenergy energyFlow returned 'rpc fail'; continuing without cooldown hold-back.");
-            throw;
-        }
-        finally
-        {
-            _energyFlowLock.Release();
-        }
+
+        throw lastRpcFail ?? new InvalidOperationException("Sigenergy energyFlow failed with rpc fail.");
     }
 
     private async Task<string> GetValidAccessTokenAsync(CancellationToken cancellationToken)
@@ -236,6 +274,16 @@ public class SigenergyCloudClient : ISigenergyCloudClient
         }
 
         return false;
+    }
+
+    private static TimeSpan ComputeRpcFailDelay(int attempt)
+    {
+        var exponent = Math.Max(0, attempt - 1);
+        var backoffMs = Math.Min(
+            RpcFailMaxBackoff.TotalMilliseconds,
+            RpcFailInitialBackoff.TotalMilliseconds * Math.Pow(2, exponent));
+        var jitterMs = Random.Shared.Next(100, 700);
+        return TimeSpan.FromMilliseconds(backoffMs + jitterMs);
     }
 
     private static string ExtractErrorSummary(string payload)

@@ -44,7 +44,7 @@ public class SmappeePollingService : ISmappeePollingService
     public async Task<SmappeeStatusSnapshot> PollSessionsAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
-        _logger.LogInformation("Polling Smappee sessions at {NowUtc}", now.UtcDateTime);
+        _logger.LogDebug("Polling Smappee sessions at {NowUtc}", now.UtcDateTime);
         if (_options.ServiceLocationId <= 0 || !_options.HasAllCredentials)
         {
             var unconfigured = new SmappeeStatusSnapshot
@@ -95,7 +95,7 @@ public class SmappeePollingService : ISmappeePollingService
                 _options.StationDisplayNamesBySerial,
                 knownSerials,
                 expectedMerged);
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Smappee sessions summary: ServiceLocationId={ServiceLocationId}, ActiveSessions={ActiveSessions}, CompletedSessions={CompletedSessions}, ChargePoints={ChargePoints}, RangeStartMs={RangeStartMs}, RangeEndMsExclusive={RangeEndMsExclusive}",
                 live.ServiceLocationId,
                 active.Count,
@@ -146,7 +146,7 @@ public class SmappeePollingService : ISmappeePollingService
                 TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, brusselsTimeZone));
             var from = todayBrussels.AddDays(-lookbackDays);
             var oldestActiveFromDate = FindOldestActiveSessionDate(active, brusselsTimeZone);
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Smappee daemon calendar sync planning: trigger=scheduled, serviceLocationId={ServiceLocationId}, lookbackHours={LookbackHours}, lookbackDays={LookbackDays}, todayBrussels={TodayBrussels}, defaultFrom={DefaultFrom}, activeSessions={ActiveSessions}, completedSessions={CompletedSessions}",
                 _options.ServiceLocationId,
                 syncLookbackHours,
@@ -163,7 +163,7 @@ public class SmappeePollingService : ISmappeePollingService
                     oldestActiveFromDate.Value);
                 from = oldestActiveFromDate.Value;
             }
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Smappee daemon calendar sync executing: trigger=scheduled, from={From}, to={To}",
                 from,
                 todayBrussels);
