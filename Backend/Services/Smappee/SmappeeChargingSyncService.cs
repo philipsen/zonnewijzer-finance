@@ -53,7 +53,7 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         var rangeStartMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(from);
         var rangeEndMs = BrusselsTime.StartOfCalendarDayUnixMilliseconds(to.AddDays(1));
         var triggerKind = eventLogUserName.Contains("manual", StringComparison.OrdinalIgnoreCase) ? "manual" : "scheduled";
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Smappee sync trigger context: trigger={Trigger}, actor={Actor}, serviceLocationId={ServiceLocationId}, from={From}, to={To}, cancellationRequested={CancellationRequested}",
             triggerKind,
             eventLogUserName,
@@ -62,7 +62,7 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
             to,
             cancellationToken.IsCancellationRequested);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Smappee sync calendar From={From} To={To} (request); API range query startMs={StartMs} ({StartDesc}) endMs={EndMs} ({EndDesc}) (end is exclusive: start of Brussels day after To)",
             from,
             to,
@@ -81,13 +81,13 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
             active: null,
             cancellationToken);
 
-        _logger.LogInformation("Smappee sync: received {Count} session DTOs in range", sessionsDto.Count);
+        _logger.LogDebug("Smappee sync: received {Count} session DTOs in range", sessionsDto.Count);
         if (sessionsDto.Count > 0)
         {
             var s0 = sessionsDto[0];
             var s0FromMs = SmappeeSessionTimestamps.ToStoredMilliseconds(s0.From);
             var s0ToMs = SmappeeSessionTimestamps.ToStoredMilliseconds(s0.To);
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Smappee sync: first session id={Id} FromRaw={FromRaw} {FromStored} ToRaw={ToRaw} {ToStored} Duration={Duration}s Status={Status} " +
                 "FromLooksLikeSecondsNotMs={FromSecHint} ToLooksLikeSecondsNotMs={ToSecHint}",
                 s0.Id,

@@ -360,12 +360,24 @@ public class SmappeeCloudClient : ISmappeeCloudClient
         var sw = Stopwatch.StartNew();
         var response = await _http.SendAsync(request, cancellationToken);
         sw.Stop();
-        _logger.LogInformation(
-            "Smappee {Method} {Url} -> {Status} in {Ms}ms",
-            request.Method,
-            target,
-            (int)response.StatusCode,
-            sw.ElapsedMilliseconds);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "Smappee {Method} {Url} -> {Status} in {Ms}ms",
+                request.Method,
+                target,
+                (int)response.StatusCode,
+                sw.ElapsedMilliseconds);
+        }
+        else
+        {
+            _logger.LogDebug(
+                "Smappee {Method} {Url} -> {Status} in {Ms}ms",
+                request.Method,
+                target,
+                (int)response.StatusCode,
+                sw.ElapsedMilliseconds);
+        }
         return response;
     }
 
