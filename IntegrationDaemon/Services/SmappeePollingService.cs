@@ -61,6 +61,13 @@ public class SmappeePollingService : ISmappeePollingService
 
         try
         {
+            var previousSnapshot = await _db.SmappeeStatusSnapshots
+                .AsNoTracking()
+                .Where(s => s.ServiceLocationId == _options.ServiceLocationId && s.IsSuccess)
+                .OrderByDescending(s => s.FetchedAtUtc)
+                .ThenByDescending(s => s.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+
             var rangeEndMs = now.ToUnixTimeMilliseconds();
             var lookbackHours = Math.Clamp(_daemonOptions.LookbackHours, 1, 24 * 14);
             var rangeStartMs = now.AddHours(-lookbackHours).ToUnixTimeMilliseconds();
@@ -108,6 +115,23 @@ public class SmappeePollingService : ISmappeePollingService
                 CompletedSessionCount = live.Points.Count(p => p.UiState is "finished_recent" or "available"),
                 PayloadJson = payload
             };
+
+            var previousStates = ExtractPointStates(previousSnapshot?.PayloadJson);
+            var currentStates = ExtractPointStates(payload);
+            foreach (var (serial, currentState) in currentStates)
+            {
+                if (!previousStates.TryGetValue(serial, out var previousState))
+                    continue;
+                if (string.Equals(previousState, currentState, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                _db.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = "Integration daemon scheduled sync",
+                    Action = $"Charging station {serial} state changed: {previousState} -> {currentState}"
+                });
+            }
 
             _db.SmappeeStatusSnapshots.Add(snapshot);
             await _db.SaveChangesAsync(cancellationToken);
@@ -247,5 +271,35 @@ public class SmappeePollingService : ISmappeePollingService
 
         var rfids = await _cloudClient.GetWhitelistedRfidsAsync(_options.ServiceLocationId, cancellationToken);
         _logger.LogInformation("Smappee RFID refresh returned {Count} card(s)", rfids.Count);
+    }
+
+    private static Dictionary<string, string> ExtractPointStates(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var dto = JsonSerializer.Deserialize<SmappeeChargingLiveResponse>(payloadJson);
+            if (dto?.Points == null || dto.Points.Count == 0)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            var states = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var point in dto.Points)
+            {
+                var serial = (point.SerialNumber ?? "").Trim();
+                if (string.IsNullOrEmpty(serial))
+                    continue;
+
+                var uiState = string.IsNullOrWhiteSpace(point.UiState) ? "unknown" : point.UiState.Trim();
+                states[serial] = uiState;
+            }
+
+            return states;
+        }
+        catch
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 }
