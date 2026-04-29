@@ -98,6 +98,7 @@ services:
       - SmappeeDaemon__PollIntervalMinutes=5
       - SigenergyDaemon__Enabled=true
       - SigenergyDaemon__PollIntervalMinutes=5
+      - SEQ_SERVER_URL=${DAEMON_SEQ_SERVER_URL:-http://host.docker.internal:5341}
     ports:
       - "7071:7071"
     volumes:
