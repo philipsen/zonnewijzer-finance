@@ -15,6 +15,7 @@ import EventLog from '../components/EventLog.vue'
 import EnergyPrices from '../components/EnergyPrices.vue'
 import ChargingStationsPage from '../components/ChargingStationsPage.vue'
 import AdminSigenergyState from '../components/AdminSigenergyState.vue'
+import CombinedInvoicesAprMay2026 from '../components/CombinedInvoicesAprMay2026.vue'
 import { isAppAdmin, roleFromToken, canManageUserProfiles } from '../utils/roles'
 
 function requireManageUserProfiles () {
@@ -87,6 +88,20 @@ const routes = [
     path: '/invoices',
     name: 'InvoiceGrid',
     component: InvoiceGrid,
+    beforeEnter: () => {
+      const token = localStorage.getItem('token')
+      const role = roleFromToken(token)
+      if (!isAppAdmin(role)) return '/'
+    }
+  },
+  {
+    path: '/invoices/combined-apr-may-2025',
+    redirect: '/invoices/combined-apr-may-2026'
+  },
+  {
+    path: '/invoices/combined-apr-may-2026',
+    name: 'CombinedInvoicesAprMay2026',
+    component: CombinedInvoicesAprMay2026,
     beforeEnter: () => {
       const token = localStorage.getItem('token')
       const role = roleFromToken(token)

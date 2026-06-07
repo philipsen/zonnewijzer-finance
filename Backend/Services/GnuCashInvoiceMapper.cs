@@ -14,7 +14,6 @@ public static class GnuCashInvoiceMapper
     public static GnuCashInvoiceDto ToDto(InvoiceData data, string? customerEmail)
     {
         var lastDay = new DateTime(data.Year, data.Month, DateTime.DaysInMonth(data.Year, data.Month));
-        var unitExclVat = EnergyUnitPriceExclVat(data.RatePerKwh);
         return new GnuCashInvoiceDto
         {
             InvoiceId = data.InvoiceNumber,
@@ -30,12 +29,17 @@ public static class GnuCashInvoiceMapper
             InvoiceDateOpened = lastDay.ToString("yyyy-MM-dd"),
             Currency = "EUR",
             MolliePaid = data.IsPaid,
-            Lines = data.Sessions.Select(s => new GnuCashInvoiceLineDto
+            Lines = data.Sessions.Select(s =>
             {
-                Description = SessionLineDescription(s),
-                Quantity = s.ChargedKwh,
-                UnitPrice = unitExclVat,
-                LineAmount = Math.Round(s.ChargedKwh * unitExclVat, 2, MidpointRounding.AwayFromZero)
+                var unitInclVat = s.ChargedKwh > 0 ? s.Amount / s.ChargedKwh : data.RatePerKwh;
+                var unitExclVat = EnergyUnitPriceExclVat(unitInclVat);
+                return new GnuCashInvoiceLineDto
+                {
+                    Description = SessionLineDescription(s),
+                    Quantity = s.ChargedKwh,
+                    UnitPrice = unitExclVat,
+                    LineAmount = Math.Round(s.ChargedKwh * unitExclVat, 2, MidpointRounding.AwayFromZero)
+                };
             }).ToList()
         };
     }

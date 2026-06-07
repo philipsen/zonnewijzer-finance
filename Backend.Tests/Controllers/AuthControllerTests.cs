@@ -41,7 +41,8 @@ public class AuthControllerTests : IDisposable
     private AuthController BuildController(string? validUserId = "1", bool development = true)
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(validUserId);
-        _envMock.Setup(e => e.EnvironmentName).Returns(development ? Environments.Development : Environments.Production);
+        _emailMock.Setup(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
         var controller = new AuthController(
             _db,
             _jwtMock.Object,
@@ -788,5 +789,46 @@ public class AuthControllerTests : IDisposable
         Assert.Equal(0, await _db.ChargeCards.CountAsync());
         Assert.Equal(0, await _db.UserChargeCards.CountAsync());
         Assert.Equal(1, await _db.Invoices.CountAsync());
+    }
+
+    [Fact]
+    public async Task InviteUser_WithoutEmail_CreatesUserAndSkipsEmail()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+
+        var result = await BuildController().InviteUser(new InviteUserRequest
+        {
+            Email = "silent@example.com",
+            Name = "Silent User",
+            SendInviteEmail = false
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var user = await _db.Users.SingleAsync(u => u.Email == "silent@example.com");
+        Assert.Equal("Silent User", user.Name);
+        Assert.Null(user.PasswordHash);
+        Assert.Equal(0, await _db.PasswordResetTokens.CountAsync());
+        _emailMock.Verify(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        var log = await _db.EventLogs.SingleAsync(e => e.Action.Contains("no invite email"));
+        Assert.Contains("silent@example.com", log.Action);
+    }
+
+    [Fact]
+    public async Task InviteUser_WithEmail_SendsInvite()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+
+        var result = await BuildController().InviteUser(new InviteUserRequest
+        {
+            Email = "invited@example.com",
+            SendInviteEmail = true,
+            ResetBaseUrl = "http://localhost:3000"
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await _db.PasswordResetTokens.CountAsync());
+        _emailMock.Verify(
+            e => e.SendAsync("invited@example.com", It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once);
     }
 }

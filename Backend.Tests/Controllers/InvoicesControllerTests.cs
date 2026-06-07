@@ -5,6 +5,7 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Backend.Services.GnuCash;
+using Backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -37,7 +38,7 @@ public class InvoicesControllerTests : IDisposable
         _pdfMock = new Mock<IPdfService>();
         _mollieMock = new Mock<IMollieService>();
         _configMock = new Mock<IConfiguration>();
-        _invoiceComputation = new InvoiceComputationService(_db);
+        _invoiceComputation = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
         _gnuCashSyncMock = new Mock<IGnuCashSyncClient>();
     }
 
@@ -521,5 +522,116 @@ public class InvoicesControllerTests : IDisposable
 
         var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
         Assert.IsType<ForbidResult>(result);
+    }
+
+    private async Task SeedCombinedInvoiceUserAsync(int appUserId = 2)
+    {
+        _db.Users.Add(new User { Id = appUserId, Email = "combined@test.com", Name = "Combined User", GoogleId = "gc", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("combined-inv");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var april = new DateTime(2026, 4, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, april, april.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task GetCombinedInvoices_NonAdmin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        var regular = new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base };
+        _db.Users.Add(regular);
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").GetCombinedInvoices(2026, 4, 2026, 5, CancellationToken.None);
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task GetCombinedInvoices_Admin_ReturnsUsers()
+    {
+        await SeedAdminAsync();
+        await SeedCombinedInvoiceUserAsync();
+
+        var result = await BuildController().GetCombinedInvoices(2026, 4, 2026, 5, CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("April – Mei 2026", doc.RootElement.GetProperty("PeriodLabel").GetString());
+        Assert.Equal(1, doc.RootElement.GetProperty("Users").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task GenerateCombinedInvoicePdf_WithSessions_ReturnsPdfFile()
+    {
+        await SeedAdminAsync();
+        await SeedCombinedInvoiceUserAsync();
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().GenerateCombinedInvoicePdf(2, 2026, 4, 2026, 5, CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("application/pdf", file.ContentType);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => d.UsePaymentRequestNotice)), Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateCombinedInvoicePdf_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().GenerateCombinedInvoicePdf(99, 2026, 4, 2026, 5, CancellationToken.None);
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task InsertCombinedGnucashInvoices_Admin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        await SeedCombinedInvoiceUserAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+
+        var result = await BuildController().InsertCombinedGnucashInvoices(new GnuCashCombinedInsertBody
+        {
+            StartYear = 2026,
+            StartMonth = 4,
+            EndYear = 2026,
+            EndMonth = 5,
+            AppUserId = 2
+        }, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task InsertCombinedGnucashInvoices_Owner_CallsPython()
+    {
+        await SeedOwnerAsync();
+        await SeedCombinedInvoiceUserAsync();
+        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
+        _gnuCashSyncMock
+            .Setup(g => g.InsertInvoicesAsync(It.IsAny<GnuCashInsertRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GnuCashInsertResponse
+            {
+                Results = [new GnuCashInsertResultItem { InvoiceId = "INV-2026-04-05-U2", Status = "created" }]
+            });
+
+        var result = await BuildController().InsertCombinedGnucashInvoices(new GnuCashCombinedInsertBody
+        {
+            StartYear = 2026,
+            StartMonth = 4,
+            EndYear = 2026,
+            EndMonth = 5,
+            AppUserId = 2
+        }, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        _gnuCashSyncMock.Verify(
+            g => g.InsertInvoicesAsync(
+                It.Is<GnuCashInsertRequest>(r => r.Invoices.Count == 1 && r.Invoices[0].InvoiceId == "INV-2026-04-05-U2"),
+                It.IsAny<string?>(),
+                false,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }
