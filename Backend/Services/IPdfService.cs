@@ -26,6 +26,9 @@ namespace Backend.Services
         public DateTime GeneratedAt { get; set; }
         public string? PaymentUrl { get; set; }
         public bool IsPaid { get; set; }
+
+        /// <summary>When true, omit online payment link/QR and show Dutch payment-request notice instead.</summary>
+        public bool UsePaymentRequestNotice { get; set; }
     }
 
     public class SessionData

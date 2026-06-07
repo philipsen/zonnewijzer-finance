@@ -47,6 +47,9 @@ namespace Backend.Models
         public string Email { get; set; } = string.Empty;
         public string? Name { get; set; }
         public string? ResetBaseUrl { get; set; }
+
+        /// <summary>When false, create the user account but do not send an invite email or password-reset link.</summary>
+        public bool SendInviteEmail { get; set; } = true;
     }
 
     public class UpdateChargingUserRequest

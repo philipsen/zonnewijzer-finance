@@ -258,11 +258,31 @@ namespace Backend.Controllers
                         LastLoginAt = DateTime.UtcNow
                     };
 
-                    // Temporary password hash so the invited account can complete set-password flow.
-                    var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
-                    user.PasswordHash = PasswordHasher.HashPassword(user, temporaryPassword);
+                    if (request.SendInviteEmail)
+                    {
+                        // Temporary password hash so the invited account can complete set-password flow.
+                        var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
+                        user.PasswordHash = PasswordHasher.HashPassword(user, temporaryPassword);
+                    }
+
                     _context.Users.Add(user);
                     await _context.SaveChangesAsync();
+                }
+                else if (!request.SendInviteEmail)
+                {
+                    return Ok(new { message = "User already exists.", userId = user.Id });
+                }
+
+                if (!request.SendInviteEmail)
+                {
+                    _context.EventLogs.Add(new EventLog
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        UserName = invitingUser.Name,
+                        Action = $"Created user '{email}' (no invite email)"
+                    });
+                    await _context.SaveChangesAsync();
+                    return Ok(new { message = "User created.", userId = user.Id });
                 }
 
                 var rawToken = GenerateResetToken();

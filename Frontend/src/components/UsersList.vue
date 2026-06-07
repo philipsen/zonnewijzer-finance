@@ -12,7 +12,7 @@
       class="invite-form"
       @submit.prevent="inviteUserByEmail"
     >
-      <label for="invite-email" class="invite-label">Invite user by email</label>
+      <label for="invite-email" class="invite-label">Add user by email</label>
       <div class="invite-row">
         <input
           id="invite-email"
@@ -22,10 +22,21 @@
           placeholder="name@example.com"
           required
         >
+        <input
+          id="invite-name"
+          v-model="inviteName"
+          type="text"
+          class="invite-input invite-name-input"
+          placeholder="Display name (optional)"
+        >
         <button type="submit" class="btn btn-invite" :disabled="inviting || !inviteEmail.trim()">
-          {{ inviting ? 'Sending...' : 'Invite' }}
+          {{ inviting ? 'Saving...' : (sendInviteEmail ? 'Invite' : 'Create') }}
         </button>
       </div>
+      <label class="invite-checkbox">
+        <input v-model="sendInviteEmail" type="checkbox">
+        Send invite email
+      </label>
       <p v-if="inviteSuccess" class="invite-message success">{{ inviteSuccess }}</p>
       <p v-if="inviteError" class="invite-message error-text">{{ inviteError }}</p>
     </form>
@@ -140,6 +151,8 @@ export default {
     const currentUserRole = ref('')
     const currentUserId = ref(null)
     const inviteEmail = ref('')
+    const inviteName = ref('')
+    const sendInviteEmail = ref(true)
     const inviting = ref(false)
     const inviteSuccess = ref('')
     const inviteError = ref('')
@@ -239,13 +252,18 @@ export default {
 
         await axios.post('/api/auth/users/invite', {
           email,
-          resetBaseUrl: window.location.origin
+          name: inviteName.value.trim() || undefined,
+          resetBaseUrl: window.location.origin,
+          sendInviteEmail: sendInviteEmail.value
         }, {
           headers: { Authorization: `Bearer ${token}` }
         })
 
-        inviteSuccess.value = `Invitation sent to ${email}.`
+        inviteSuccess.value = sendInviteEmail.value
+          ? `Invitation sent to ${email}.`
+          : `User ${email} created (no invite email sent).`
         inviteEmail.value = ''
+        inviteName.value = ''
         await fetchUsers()
       } catch (err) {
         console.error('Failed to invite user:', err)
@@ -372,6 +390,8 @@ export default {
       canManageProfilesView,
       currentUserId,
       inviteEmail,
+      inviteName,
+      sendInviteEmail,
       inviting,
       inviteSuccess,
       inviteError,
@@ -438,6 +458,26 @@ export default {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.invite-name-input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.invite-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  font-size: 0.9rem;
+  color: #444;
+  cursor: pointer;
+}
+
+.invite-checkbox input {
+  cursor: pointer;
 }
 
 .invite-input {

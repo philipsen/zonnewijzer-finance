@@ -12,9 +12,115 @@ namespace Backend.Services
         /// <summary>NL statutory VAT; all invoice line amounts and totals are inclusive of this rate.</summary>
         private const decimal VatRate = 0.21m;
 
-        private const string SupplierKvK = "50323342";
-        private const string SupplierBtwId = "NL003422577B06";
+        private const string SupplierKvK = "68871333";
+        private const string SupplierBtwId = "NL857626693B01";
         private const string CustomerPortalUrl = "https://zonnewijzer.zonneklaar-consulting.com/";
+
+        private sealed record InvoicePdfLabels(
+            string Title,
+            string InvoiceNumber,
+            string Period,
+            string Generated,
+            string TotalKwh,
+            string RatePerKwh,
+            string VatNote,
+            string SubtotalExclVat,
+            string VatLine,
+            string TotalInclVat,
+            string PaymentTitle,
+            string PaymentPaid,
+            string PaymentDue,
+            string PayOnline,
+            string QrHint,
+            string ScanToPay,
+            string PaymentQuestions,
+            string PortalPrefix,
+            string PaymentRequestDue,
+            string PaymentRequestNotice,
+            string PaymentRequestQuestions,
+            string SessionsHeader,
+            string ColStart,
+            string ColEnd,
+            string ColStation,
+            string ColConnector,
+            string ColAmount,
+            string SessionOngoing,
+            string SessionCardPrefix,
+            string TableTotal,
+            string TableVatNote,
+            string Page,
+            string PageOf);
+
+        private static InvoicePdfLabels LabelsFor(bool dutch) =>
+            dutch
+                ? new InvoicePdfLabels(
+                    Title: "Factuur laadsessies",
+                    InvoiceNumber: "Factuurnummer:",
+                    Period: "Periode:",
+                    Generated: "Aangemaakt:",
+                    TotalKwh: "Totaal kWh:",
+                    RatePerKwh: "Tarief per kWh:",
+                    VatNote: "Tarief en bedragen zijn inclusief 21% BTW.",
+                    SubtotalExclVat: "Subtotaal (excl. BTW):",
+                    VatLine: "BTW (21%):",
+                    TotalInclVat: "Totaal (incl. BTW):",
+                    PaymentTitle: "Betaling",
+                    PaymentPaid: "✓ Deze factuur is betaald. Er is geen actie vereist.",
+                    PaymentDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
+                    PayOnline: "Betaal online:",
+                    QrHint: "Scannen kan ook via de QR-code.",
+                    ScanToPay: "Scan om te betalen",
+                    PaymentQuestions: "Voor vragen over deze factuur kunt u contact opnemen met de administratie.",
+                    PortalPrefix: "Bekijk facturen en betaalstatus online:",
+                    PaymentRequestDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
+                    PaymentRequestNotice: "U ontvangt apart een betalingsverzoek voor dit bedrag.",
+                    PaymentRequestQuestions: "Voor vragen over deze factuur kunt u contact opnemen met de administratie.",
+                    SessionsHeader: "Laadsessies",
+                    ColStart: "Start",
+                    ColEnd: "Einde",
+                    ColStation: "Laadpaal",
+                    ColConnector: "Conn.",
+                    ColAmount: "Bedrag (incl. BTW)",
+                    SessionOngoing: "Bezig",
+                    SessionCardPrefix: "Pas",
+                    TableTotal: "Totaal",
+                    TableVatNote: "Alle bedragen in deze tabel zijn inclusief 21% BTW.",
+                    Page: "Pagina",
+                    PageOf: "van")
+                : new InvoicePdfLabels(
+                    Title: "Charging Sessions Invoice",
+                    InvoiceNumber: "Invoice Number:",
+                    Period: "Period:",
+                    Generated: "Generated:",
+                    TotalKwh: "Total kWh:",
+                    RatePerKwh: "Rate per kWh:",
+                    VatNote: "Rate and line amounts include 21% VAT (BTW).",
+                    SubtotalExclVat: "Subtotal (excl. VAT):",
+                    VatLine: "VAT (21%):",
+                    TotalInclVat: "Total (incl. VAT):",
+                    PaymentTitle: "Payment",
+                    PaymentPaid: "✓ This invoice has been paid. No further action required.",
+                    PaymentDue: "Please remit payment within 30 days of invoice date.",
+                    PayOnline: "Pay online:",
+                    QrHint: "If scanning is easier, use the QR code.",
+                    ScanToPay: "Scan to pay",
+                    PaymentQuestions: "For questions regarding this invoice, please contact the billing department.",
+                    PortalPrefix: "View invoices and payment status online:",
+                    PaymentRequestDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
+                    PaymentRequestNotice: "U ontvangt apart een betalingsverzoek voor dit bedrag.",
+                    PaymentRequestQuestions: "Voor vragen over deze factuur kunt u contact opnemen met de administratie.",
+                    SessionsHeader: "Charging Sessions",
+                    ColStart: "Start",
+                    ColEnd: "End",
+                    ColStation: "Station",
+                    ColConnector: "Conn.",
+                    ColAmount: "Amount (incl. VAT)",
+                    SessionOngoing: "Ongoing",
+                    SessionCardPrefix: "Card",
+                    TableTotal: "Total",
+                    TableVatNote: "All amounts in this table include 21% VAT.",
+                    Page: "Page",
+                    PageOf: "of");
 
         private static (decimal ExclVat, decimal VatAmount) SplitVatInclusive(decimal totalInclVat)
         {
@@ -40,7 +146,7 @@ namespace Backend.Services
             return pngQrCode.GetGraphic(8);
         }
 
-        private static void ComposeInvoiceFooter(PageDescriptor page)
+        private static void ComposeInvoiceFooter(PageDescriptor page, InvoicePdfLabels labels)
         {
             page.Footer().Column(col =>
             {
@@ -50,9 +156,9 @@ namespace Backend.Services
                 col.Item().PaddingTop(2).AlignCenter()
                     .Text(text =>
                     {
-                        text.Span("Page ").FontSize(9).FontColor(Colors.Grey.Medium);
+                        text.Span($"{labels.Page} ").FontSize(9).FontColor(Colors.Grey.Medium);
                         text.CurrentPageNumber().FontSize(9).FontColor(Colors.Grey.Medium);
-                        text.Span(" of ").FontSize(9).FontColor(Colors.Grey.Medium);
+                        text.Span($" {labels.PageOf} ").FontSize(9).FontColor(Colors.Grey.Medium);
                         text.TotalPages().FontSize(9).FontColor(Colors.Grey.Medium);
                     });
             });
@@ -62,6 +168,7 @@ namespace Backend.Services
         {
             QuestPDF.Settings.License = LicenseType.Community;
 
+            var labels = LabelsFor(invoiceData.UsePaymentRequestNotice);
             var logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "zonnewijzer_logo.png");
             var hasLogo = File.Exists(logoPath);
             var (totalExclVat, vatAmount) = SplitVatInclusive(invoiceData.TotalAmount);
@@ -69,7 +176,6 @@ namespace Backend.Services
 
             var document = Document.Create(container =>
             {
-                // ── Page 1: Invoice summary ───────────────────────────────────────
                 container.Page(page =>
                 {
                     page.Size(PageSizes.A4);
@@ -85,7 +191,7 @@ namespace Backend.Services
                                 column.Item().AlignCenter().Height(60).Image(logoPath);
 
                             column.Item().PaddingTop(10).AlignCenter()
-                                .Text("Charging Sessions Invoice")
+                                .Text(labels.Title)
                                 .Bold().FontSize(24).FontColor(Colors.Blue.Medium);
                         });
 
@@ -93,14 +199,13 @@ namespace Backend.Services
                         .PaddingVertical(1, Unit.Centimetre)
                         .Column(column =>
                         {
-                            // Invoice number + period  /  Customer address
                             column.Item().Row(row =>
                             {
                                 row.RelativeItem().Column(col =>
                                 {
-                                    col.Item().Text($"Invoice Number: {invoiceData.InvoiceNumber}").Bold();
-                                    col.Item().Text($"Period: {invoiceData.MonthName}");
-                                    col.Item().PaddingTop(5).Text($"Generated: {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
+                                    col.Item().Text($"{labels.InvoiceNumber} {invoiceData.InvoiceNumber}").Bold();
+                                    col.Item().Text($"{labels.Period} {invoiceData.MonthName}");
+                                    col.Item().PaddingTop(5).Text($"{labels.Generated} {invoiceData.GeneratedAt:yyyy-MM-dd HH:mm}");
                                     col.Item().PaddingTop(10).Text($"KvK {SupplierKvK}  ·  BTW-id {SupplierBtwId}")
                                         .FontSize(9).FontColor(Colors.Grey.Darken1);
                                 });
@@ -125,7 +230,6 @@ namespace Backend.Services
 
                             column.Item().PaddingTop(20).LineHorizontal(1);
 
-                            // Summary totals: 3/4 content width, compact type (avoids mid-label wraps)
                             column.Item().PaddingTop(30).Row(outer =>
                             {
                                 outer.RelativeItem(1);
@@ -138,91 +242,101 @@ namespace Backend.Services
 
                                     col.Item().Row(r =>
                                     {
-                                        r.RelativeItem().Text("Total kWh:").FontSize(fsLine);
+                                        r.RelativeItem().Text(labels.TotalKwh).FontSize(fsLine);
                                         r.ConstantItem(valueW).AlignRight().Text($"{invoiceData.TotalKwh:F2} kWh").FontSize(fsLine);
                                     });
                                     col.Item().PaddingTop(4).Row(r =>
                                     {
-                                        r.RelativeItem().Text("Rate per kWh:").FontSize(fsLine);
+                                        r.RelativeItem().Text(labels.RatePerKwh).FontSize(fsLine);
                                         r.ConstantItem(valueW).AlignRight().Text($"€{invoiceData.RatePerKwh:F4}").FontSize(fsLine);
                                     });
-                                    col.Item().PaddingTop(3).Text("Rate and line amounts include 21% VAT (BTW).")
+                                    col.Item().PaddingTop(3).Text(labels.VatNote)
                                         .FontSize(fsNote).FontColor(Colors.Grey.Darken1).Italic();
                                     col.Item().PaddingTop(8).LineHorizontal(0.75f);
                                     col.Item().PaddingTop(6).Row(r =>
                                     {
-                                        r.RelativeItem().Text("Subtotal (excl. VAT):").FontSize(fsLine);
+                                        r.RelativeItem().Text(labels.SubtotalExclVat).FontSize(fsLine);
                                         r.ConstantItem(valueW).AlignRight().Text($"€{totalExclVat:F2}").FontSize(fsLine);
                                     });
                                     col.Item().PaddingTop(4).Row(r =>
                                     {
-                                        r.RelativeItem().Text("VAT (21%):").FontSize(fsLine);
+                                        r.RelativeItem().Text(labels.VatLine).FontSize(fsLine);
                                         r.ConstantItem(valueW).AlignRight().Text($"€{vatAmount:F2}").FontSize(fsLine);
                                     });
                                     col.Item().PaddingTop(6).LineHorizontal(0.75f);
                                     col.Item().PaddingTop(6).Row(r =>
                                     {
-                                        r.RelativeItem().Text("Total (incl. VAT):").Bold().FontSize(fsTotal);
+                                        r.RelativeItem().Text(labels.TotalInclVat).Bold().FontSize(fsTotal);
                                         r.ConstantItem(valueW).AlignRight().Text($"€{invoiceData.TotalAmount:F2}").Bold().FontSize(fsTotal).FontColor(Colors.Blue.Medium);
                                     });
                                 });
                                 outer.RelativeItem(1);
                             });
 
-                            // Payment section
                             column.Item().PaddingTop(40).Column(col =>
                             {
-                                col.Item().Text("Payment").Bold().FontSize(14);
-                                col.Item().PaddingTop(5).LineHorizontal(1);
-
-                                if (invoiceData.IsPaid)
+                                if (invoiceData.UsePaymentRequestNotice)
                                 {
-                                    col.Item().PaddingTop(12).Background(Colors.Green.Lighten4).Padding(10)
-                                        .Text("✓ This invoice has been paid. No further action required.")
-                                        .Bold().FontColor(Colors.Green.Darken2);
+                                    col.Item().Text(labels.PaymentTitle).Bold().FontSize(14);
+                                    col.Item().PaddingTop(5).LineHorizontal(1);
+                                    col.Item().PaddingTop(8).Text(labels.PaymentRequestDue);
+                                    col.Item().PaddingTop(8).Text(labels.PaymentRequestNotice);
+                                    col.Item().PaddingTop(10).Text(labels.PaymentRequestQuestions)
+                                        .FontSize(10).FontColor(Colors.Grey.Medium);
                                 }
                                 else
                                 {
-                                    col.Item().PaddingTop(8).Text("Please remit payment within 30 days of invoice date.");
-                                    if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
-                                    {
-                                        col.Item().PaddingTop(10).Text("Pay online:").Bold();
-                                        col.Item().PaddingTop(6).Row(row =>
-                                        {
-                                            row.RelativeItem().Column(linkCol =>
-                                            {
-                                                linkCol.Item().Text(invoiceData.PaymentUrl)
-                                                    .FontColor(Colors.Blue.Medium).FontSize(10);
-                                                linkCol.Item().PaddingTop(3).Text("If scanning is easier, use the QR code.")
-                                                    .FontSize(9).FontColor(Colors.Grey.Darken1);
-                                            });
+                                    col.Item().Text(labels.PaymentTitle).Bold().FontSize(14);
+                                    col.Item().PaddingTop(5).LineHorizontal(1);
 
-                                            if (paymentQrCode != null)
-                                            {
-                                                row.ConstantItem(120).AlignRight().Column(qrCol =>
-                                                {
-                                                    qrCol.Item().AlignCenter().Text("Scan to pay").FontSize(9).Bold();
-                                                    qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(paymentQrCode);
-                                                });
-                                            }
-                                        });
+                                    if (invoiceData.IsPaid)
+                                    {
+                                        col.Item().PaddingTop(12).Background(Colors.Green.Lighten4).Padding(10)
+                                            .Text(labels.PaymentPaid)
+                                            .Bold().FontColor(Colors.Green.Darken2);
                                     }
+                                    else
+                                    {
+                                        col.Item().PaddingTop(8).Text(labels.PaymentDue);
+                                        if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
+                                        {
+                                            col.Item().PaddingTop(10).Text(labels.PayOnline).Bold();
+                                            col.Item().PaddingTop(6).Row(row =>
+                                            {
+                                                row.RelativeItem().Column(linkCol =>
+                                                {
+                                                    linkCol.Item().Text(invoiceData.PaymentUrl)
+                                                        .FontColor(Colors.Blue.Medium).FontSize(10);
+                                                    linkCol.Item().PaddingTop(3).Text(labels.QrHint)
+                                                        .FontSize(9).FontColor(Colors.Grey.Darken1);
+                                                });
+
+                                                if (paymentQrCode != null)
+                                                {
+                                                    row.ConstantItem(120).AlignRight().Column(qrCol =>
+                                                    {
+                                                        qrCol.Item().AlignCenter().Text(labels.ScanToPay).FontSize(9).Bold();
+                                                        qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(paymentQrCode);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                    col.Item().PaddingTop(10).Text(labels.PaymentQuestions)
+                                        .FontSize(10).FontColor(Colors.Grey.Medium);
+                                    col.Item().PaddingTop(6).Text(text =>
+                                    {
+                                        text.Span($"{labels.PortalPrefix} ").FontSize(10).FontColor(Colors.Grey.Medium);
+                                        text.Hyperlink(CustomerPortalUrl, CustomerPortalUrl.TrimEnd('/'))
+                                            .FontSize(10).FontColor(Colors.Blue.Medium);
+                                    });
                                 }
-                                col.Item().PaddingTop(10).Text("For questions regarding this invoice, please contact the billing department.")
-                                    .FontSize(10).FontColor(Colors.Grey.Medium);
-                                col.Item().PaddingTop(6).Text(text =>
-                                {
-                                    text.Span("View invoices and payment status online: ").FontSize(10).FontColor(Colors.Grey.Medium);
-                                    text.Hyperlink(CustomerPortalUrl, CustomerPortalUrl.TrimEnd('/'))
-                                        .FontSize(10).FontColor(Colors.Blue.Medium);
-                                });
                             });
                         });
 
-                    ComposeInvoiceFooter(page);
+                    ComposeInvoiceFooter(page, labels);
                 });
 
-                // ── Page 2+: Sessions detail ───────────────────────────────────────
                 if (invoiceData.Sessions.Any())
                 {
                     container.Page(page =>
@@ -241,7 +355,7 @@ namespace Backend.Services
 
                                 row.RelativeItem().AlignMiddle().Column(col =>
                                 {
-                                    col.Item().Text($"Charging Sessions – {invoiceData.MonthName}")
+                                    col.Item().Text($"{labels.SessionsHeader} – {invoiceData.MonthName}")
                                         .Bold().FontSize(13).FontColor(Colors.Blue.Medium);
                                     col.Item().Text($"{invoiceData.InvoiceNumber}  ·  {invoiceData.UserName}")
                                         .FontSize(9).FontColor(Colors.Grey.Medium);
@@ -256,22 +370,22 @@ namespace Backend.Services
                                 {
                                     table.ColumnsDefinition(columns =>
                                     {
-                                        columns.RelativeColumn(2f); // Start
-                                        columns.RelativeColumn(2f); // End
-                                        columns.RelativeColumn(2.2f); // Station name + serial
-                                        columns.RelativeColumn(0.65f); // Connector
-                                        columns.RelativeColumn(1.15f); // kWh
-                                        columns.RelativeColumn(1.15f); // Amount
+                                        columns.RelativeColumn(2f);
+                                        columns.RelativeColumn(2f);
+                                        columns.RelativeColumn(2.2f);
+                                        columns.RelativeColumn(0.65f);
+                                        columns.RelativeColumn(1.15f);
+                                        columns.RelativeColumn(1.15f);
                                     });
 
                                     table.Header(header =>
                                     {
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Start").Bold().FontSize(9);
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("End").Bold().FontSize(9);
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Station").Bold().FontSize(9);
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Conn.").Bold().FontSize(9).AlignCenter();
+                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text(labels.ColStart).Bold().FontSize(9);
+                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text(labels.ColEnd).Bold().FontSize(9);
+                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text(labels.ColStation).Bold().FontSize(9);
+                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text(labels.ColConnector).Bold().FontSize(9).AlignCenter();
                                         header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("kWh").Bold().FontSize(9).AlignRight();
-                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text("Amount (incl. VAT)").Bold().FontSize(9).AlignRight();
+                                        header.Cell().Background(Colors.Grey.Lighten2).Padding(4).Text(labels.ColAmount).Bold().FontSize(9).AlignRight();
                                     });
 
                                     var rowIndex = 0;
@@ -281,7 +395,7 @@ namespace Backend.Services
                                         table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                             .Text($"{session.Start:dd/MM HH:mm}").FontSize(9);
                                         table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
-                                            .Text(session.End.HasValue ? $"{session.End.Value:dd/MM HH:mm}" : "Ongoing").FontSize(9);
+                                            .Text(session.End.HasValue ? $"{session.End.Value:dd/MM HH:mm}" : labels.SessionOngoing).FontSize(9);
                                         table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                             .Column(col =>
                                             {
@@ -292,7 +406,7 @@ namespace Backend.Services
                                                 if (!string.IsNullOrWhiteSpace(session.StationSerialNumber))
                                                     col.Item().Text($"S/N {session.StationSerialNumber}").FontSize(8).FontColor(Colors.Grey.Darken1);
                                                 if (session.ChargeCardId != 0)
-                                                    col.Item().Text($"Card {session.ChargeCardId}").FontSize(8).FontColor(Colors.Grey.Darken1);
+                                                    col.Item().Text($"{labels.SessionCardPrefix} {session.ChargeCardId}").FontSize(8).FontColor(Colors.Grey.Darken1);
                                             });
                                         table.Cell().Background(rowBackground).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).Padding(4)
                                             .Text(string.IsNullOrWhiteSpace(session.Connector) ? "—" : session.Connector).FontSize(9).AlignCenter();
@@ -302,9 +416,8 @@ namespace Backend.Services
                                             .Text($"€{session.Amount:F2}").FontSize(9).AlignRight();
                                     }
 
-                                    // Totals row
                                     table.Cell().ColumnSpan(4).Background(Colors.Grey.Lighten2).Padding(4)
-                                        .Text("Total").Bold().FontSize(9);
+                                        .Text(labels.TableTotal).Bold().FontSize(9);
                                     table.Cell().Background(Colors.Grey.Lighten2).Padding(4)
                                         .Text($"{invoiceData.TotalKwh:F2}").Bold().FontSize(9).AlignRight();
                                     table.Cell().Background(Colors.Grey.Lighten2).Padding(4)
@@ -312,11 +425,11 @@ namespace Backend.Services
                                 });
 
                                 detailCol.Item().PaddingTop(8)
-                                    .Text("All amounts in this table include 21% VAT.")
+                                    .Text(labels.TableVatNote)
                                     .FontSize(9).FontColor(Colors.Grey.Darken1).Italic();
                             });
 
-                        ComposeInvoiceFooter(page);
+                        ComposeInvoiceFooter(page, labels);
                     });
                 }
             });

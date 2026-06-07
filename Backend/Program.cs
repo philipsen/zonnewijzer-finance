@@ -1,3 +1,4 @@
+using Backend.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -9,6 +10,7 @@ using Backend.Data;
 using Backend.Services;
 using Backend.Services.IntegrationDaemon;
 using Backend.Services.GnuCash;
+using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
@@ -28,6 +30,8 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     Log.Information("Starting Finance App backend");
+
+    LocalSecretsBootstrap.Apply();
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -127,6 +131,12 @@ builder.Services.AddHttpClient<IIntegrationDaemonClient, IntegrationDaemonClient
 });
 
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.Configure<SmappeeOptions>(builder.Configuration.GetSection(SmappeeOptions.SectionName));
+builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(2);
+});
+builder.Services.AddScoped<ISmappeeCombinedInvoiceSessionSource, SmappeeCombinedInvoiceSessionSource>();
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 builder.Services.AddHttpClient("Mollie");
