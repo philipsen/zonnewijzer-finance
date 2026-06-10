@@ -35,6 +35,8 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    InvoiceFontSetup.EnsureRegistered();
+
     // Replace default logging with Serilog
     builder.Host.UseSerilog((context, services, configuration) => {
         configuration
