@@ -74,14 +74,18 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         var rfids = await _smappee.GetWhitelistedRfidsAsync(_options.ServiceLocationId, cancellationToken);
         var (cardsAdded, cardsUpdated) = await UpsertChargeCardsFromWhitelistAsync(rfids, cancellationToken);
 
-        var sessionsDto = await _smappee.GetChargingSessionsAsync(
+        var (activeDto, completedDto) = await _smappee.GetChargingSessionsActiveAndCompletedAsync(
             _options.ServiceLocationId,
             rangeStartMs,
             rangeEndMs,
-            active: null,
             cancellationToken);
+        var sessionsDto = SmappeeChargingSessionMerge.MergeActiveAndCompleted(activeDto, completedDto);
 
-        _logger.LogDebug("Smappee sync: received {Count} session DTOs in range", sessionsDto.Count);
+        _logger.LogDebug(
+            "Smappee sync: received {ActiveCount} active + {CompletedCount} completed session DTOs ({MergedCount} merged) in range",
+            activeDto.Count,
+            completedDto.Count,
+            sessionsDto.Count);
         if (sessionsDto.Count > 0)
         {
             var s0 = sessionsDto[0];
@@ -104,21 +108,30 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         var (sessAdded, sessUpdated, sessSkipped, sessErrors) =
             await UpsertSessionsFromSmappeeAsync(sessionsDto, cancellationToken);
 
+        var sessInferredClosed = await InferCloseStaleOpenSessionsAsync(cancellationToken);
+
         // Avoid noisy event log entries when no new sessions were imported.
-        // Keep logging when at least one session was added or processing errors occurred.
-        if (sessAdded > 0 || sessErrors > 0)
+        // Keep logging when at least one session was added, inferred closed, or processing errors occurred.
+        if (sessAdded > 0 || sessInferredClosed > 0 || sessErrors > 0)
         {
             _context.EventLogs.Add(new EventLog
             {
                 Timestamp = DateTime.UtcNow,
                 UserName = eventLogUserName,
                 Action =
-                    $"Smappee sync: charge cards +{cardsAdded}/~{cardsUpdated}, sessions +{sessAdded}/~{sessUpdated}, skipped {sessSkipped}, errors {sessErrors}"
+                    $"Smappee sync: charge cards +{cardsAdded}/~{cardsUpdated}, sessions +{sessAdded}/~{sessUpdated}, inferred closed {sessInferredClosed}, skipped {sessSkipped}, errors {sessErrors}"
             });
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        return SmappeeSyncServiceResult.Ok(cardsAdded, cardsUpdated, sessAdded, sessUpdated, sessSkipped, sessErrors);
+        return SmappeeSyncServiceResult.Ok(
+            cardsAdded,
+            cardsUpdated,
+            sessAdded,
+            sessUpdated,
+            sessSkipped,
+            sessErrors,
+            sessInferredClosed);
     }
 
     private async Task<(int Added, int Updated)> UpsertChargeCardsFromWhitelistAsync(
@@ -388,5 +401,22 @@ public class SmappeeChargingSyncService : ISmappeeChargingSyncService
         ChargingSessionEnergy.SetReadingsFromSmappeeDto(session, dto.StartReading, dto.StopReading, dto.Energy);
         session.ChargeCardId = chargeCardId;
         session.StationId = stationId;
+    }
+
+    private async Task<int> InferCloseStaleOpenSessionsAsync(CancellationToken cancellationToken)
+    {
+        var openSessions = await _context.ChargingSessions
+            .Where(s => !s.ToTimestamp.HasValue)
+            .ToListAsync(cancellationToken);
+
+        var inferredClosed = SmappeeChargingSessionMerge.InferCloseFromNextSessionOnSameCard(openSessions);
+        if (inferredClosed == 0)
+            return 0;
+
+        await _context.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation(
+            "Smappee sync: inferred end time for {Count} stale open session(s) from a later session on the same charge card",
+            inferredClosed);
+        return inferredClosed;
     }
 }

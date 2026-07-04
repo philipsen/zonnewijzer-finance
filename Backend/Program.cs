@@ -138,6 +138,8 @@ builder.Services.AddHttpClient<ISmappeeCloudClient, SmappeeCloudClient>(client =
 {
     client.Timeout = TimeSpan.FromMinutes(2);
 });
+builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncService>();
+builder.Services.AddScoped<IChargingSessionReconcileService, ChargingSessionReconcileService>();
 builder.Services.AddScoped<ISmappeeCombinedInvoiceSessionSource, SmappeeCombinedInvoiceSessionSource>();
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
 builder.Services.AddScoped<IPdfService, PdfService>();

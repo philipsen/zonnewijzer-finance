@@ -10,6 +10,7 @@ public sealed class SmappeeSyncServiceResult
     public int SessionsUpdated { get; init; }
     public int SessionsSkipped { get; init; }
     public int SessionsErrors { get; init; }
+    public int SessionsInferredClosed { get; init; }
 
     public static SmappeeSyncServiceResult Fail(string message) =>
         new() { Success = false, ErrorMessage = message };
@@ -20,7 +21,8 @@ public sealed class SmappeeSyncServiceResult
         int sessAdded,
         int sessUpdated,
         int sessSkipped,
-        int sessErrors) =>
+        int sessErrors,
+        int sessInferredClosed = 0) =>
         new()
         {
             Success = true,
@@ -29,6 +31,7 @@ public sealed class SmappeeSyncServiceResult
             SessionsAdded = sessAdded,
             SessionsUpdated = sessUpdated,
             SessionsSkipped = sessSkipped,
-            SessionsErrors = sessErrors
+            SessionsErrors = sessErrors,
+            SessionsInferredClosed = sessInferredClosed
         };
 }

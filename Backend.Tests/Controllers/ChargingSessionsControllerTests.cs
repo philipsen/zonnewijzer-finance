@@ -4,6 +4,7 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Backend.Services.IntegrationDaemon;
+using Backend.Services.Smappee;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,6 +18,7 @@ public class ChargingSessionsControllerTests : IDisposable
     private readonly ApplicationDbContext _db;
     private readonly Mock<IJwtService> _jwtMock;
     private readonly Mock<IIntegrationDaemonClient> _daemonMock;
+    private readonly Mock<IChargingSessionReconcileService> _reconcileMock;
 
     public ChargingSessionsControllerTests()
     {
@@ -26,6 +28,7 @@ public class ChargingSessionsControllerTests : IDisposable
         _db = new ApplicationDbContext(options);
         _jwtMock = new Mock<IJwtService>();
         _daemonMock = new Mock<IIntegrationDaemonClient>();
+        _reconcileMock = new Mock<IChargingSessionReconcileService>();
     }
 
     public void Dispose() => _db.Dispose();
@@ -52,6 +55,7 @@ public class ChargingSessionsControllerTests : IDisposable
             _db,
             _jwtMock.Object,
             _daemonMock.Object,
+            _reconcileMock.Object,
             NullLogger<ChargingSessionsController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer valid-token";
@@ -282,6 +286,55 @@ public class ChargingSessionsControllerTests : IDisposable
             CancellationToken.None);
         var unavailable = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, unavailable.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReconcileOngoing_WhenSyncFails_ReturnsBadGateway()
+    {
+        var (controller, _) = BuildController();
+        _reconcileMock
+            .Setup(x => x.ReconcileOngoingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChargingSessionReconcileResult
+            {
+                Success = false,
+                ErrorMessage = "Smappee unavailable",
+                SyncFrom = new DateOnly(2026, 4, 1),
+                SyncTo = new DateOnly(2026, 6, 10)
+            });
+
+        var result = await controller.ReconcileOngoingSessions(CancellationToken.None);
+
+        var gateway = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, gateway.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReconcileOngoing_WhenSyncSucceeds_ReturnsSummary()
+    {
+        var (controller, _) = BuildController();
+        _reconcileMock
+            .Setup(x => x.ReconcileOngoingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChargingSessionReconcileResult
+            {
+                Success = true,
+                SyncFrom = new DateOnly(2026, 4, 1),
+                SyncTo = new DateOnly(2026, 6, 10),
+                OpenBefore =
+                [
+                    new OpenSessionSummary { Id = 45, ChargeCardId = 18, StartUtc = new DateTime(2026, 4, 27, 15, 35, 9, DateTimeKind.Utc) }
+                ],
+                OpenAfter = [],
+                SessionsUpdated = 3,
+                SessionsInferredClosed = 1
+            });
+
+        var result = await controller.ReconcileOngoingSessions(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(1, doc.RootElement.GetProperty("openBeforeCount").GetInt32());
+        Assert.Equal(0, doc.RootElement.GetProperty("openAfterCount").GetInt32());
     }
 
     // ── GetAllSessions ─────────────────────────────────────────────────────────

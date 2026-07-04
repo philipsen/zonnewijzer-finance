@@ -74,11 +74,12 @@ public sealed class SmappeeHourlySyncBackgroundService : BackgroundService
                     if (result.Success)
                     {
                         _logger.LogInformation(
-                            "Scheduled Smappee sync OK: charge cards +{CardsAdded}/~{CardsUpdated}, sessions +{SessAdded}/~{SessUpdated}, skipped {Skipped}, errors {Errors}",
+                            "Scheduled Smappee sync OK: charge cards +{CardsAdded}/~{CardsUpdated}, sessions +{SessAdded}/~{SessUpdated}, inferred closed {InferredClosed}, skipped {Skipped}, errors {Errors}",
                             result.CardsAdded,
                             result.CardsUpdated,
                             result.SessionsAdded,
                             result.SessionsUpdated,
+                            result.SessionsInferredClosed,
                             result.SessionsSkipped,
                             result.SessionsErrors);
                     }

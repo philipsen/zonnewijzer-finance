@@ -16,7 +16,8 @@ public sealed record SmappeeUpdateTriggerResult(
     int SessionsAdded = 0,
     int SessionsUpdated = 0,
     int SessionsSkipped = 0,
-    int SessionsErrors = 0);
+    int SessionsErrors = 0,
+    int SessionsInferredClosed = 0);
 
 public sealed record SigenergyUpdateTriggerResult(
     bool Success,
