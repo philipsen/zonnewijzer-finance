@@ -60,9 +60,10 @@ public class MyInvoicesController : ControllerBase
                 .ToListAsync();
 
             var monthKeys = allSessions
+                .Where(cs => cs.ToTimestamp.HasValue)
                 .Select(cs =>
                 {
-                    var (y, mo) = BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.FromTimestamp);
+                    var (y, mo) = BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.ToTimestamp!.Value);
                     return new { Year = y, Month = mo };
                 })
                 .Distinct()
@@ -110,7 +111,7 @@ public class MyInvoicesController : ControllerBase
                 var sessions = allSessions
                     .Where(cs =>
                         myCardIds.Contains(cs.ChargeCardId) &&
-                        BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
+                        MonthlyInvoiceSessionRules.IsBillableInMonth(cs.ToTimestamp, m.Year, m.Month))
                     .ToList();
                 var rate = GetRate(m.Year, m.Month);
                 var totalKwh = Math.Round(sessions.Sum(ChargingSessionEnergy.ChargedKwh), 2);

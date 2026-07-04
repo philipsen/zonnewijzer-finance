@@ -87,7 +87,9 @@ public class InvoiceComputationService : IInvoiceComputationService
         CancellationToken cancellationToken)
     {
         var cardIdsInWindow = await _context.ChargingSessions
-            .Where(cs => cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs)
+            .Where(cs => cs.ToTimestamp.HasValue
+                && cs.ToTimestamp >= startMs
+                && cs.ToTimestamp < endMs)
             .Select(cs => cs.ChargeCardId)
             .Distinct()
             .ToListAsync(cancellationToken);
@@ -119,7 +121,10 @@ public class InvoiceComputationService : IInvoiceComputationService
 
         var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
         var chargingSessions = await _context.ChargingSessions
-            .Where(cs => myCards.Contains(cs.ChargeCardId) && cs.FromTimestamp >= startMs && cs.FromTimestamp < endMs)
+            .Where(cs => myCards.Contains(cs.ChargeCardId)
+                && cs.ToTimestamp.HasValue
+                && cs.ToTimestamp >= startMs
+                && cs.ToTimestamp < endMs)
             .OrderBy(cs => cs.FromTimestamp)
             .ToListAsync(cancellationToken);
 

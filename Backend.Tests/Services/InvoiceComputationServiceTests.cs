@@ -23,6 +23,34 @@ public class InvoiceComputationServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public async Task BuildInvoiceDataForAppUser_ExcludesOngoingAndUsesEndMonth()
+    {
+        const int appUserId = 6;
+        _db.Users.Add(new User { Id = appUserId, Email = "billing@test.com", Name = "Billing User", GoogleId = "g6", Role = UserRole.Base });
+        var cid = new ChargeCard { Value = "billing-card" };
+        _db.ChargeCards.Add(cid);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid.Id });
+
+        var aprilStart = new DateTime(2026, 4, 28, 20, 0, 0, DateTimeKind.Utc);
+        var mayEnd = new DateTime(2026, 5, 2, 8, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, aprilStart, null, 5));
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, aprilStart, mayEnd, 12));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 4, PricePerKwh = 0.20m });
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 5, PricePerKwh = 0.30m });
+        await _db.SaveChangesAsync();
+
+        var aprilInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 4);
+        var mayInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 5);
+
+        Assert.Null(aprilInvoice);
+        Assert.NotNull(mayInvoice);
+        Assert.Single(mayInvoice!.Sessions);
+        Assert.Equal(12m, mayInvoice.TotalKwh);
+        Assert.Equal(3.6m, mayInvoice.TotalAmount);
+    }
+
+    [Fact]
     public async Task BuildInvoiceDataForAppUser_UsesBankTransferLayoutLikeCombined()
     {
         const int appUserId = 5;

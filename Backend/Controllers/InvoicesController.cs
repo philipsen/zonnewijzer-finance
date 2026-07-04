@@ -320,7 +320,10 @@ namespace Backend.Controllers
                         g => g.Key,
                         g => g.Select(x => x.ChargeCardId).ToList());
 
-                var sessionTs = allSessions.Select(cs => cs.FromTimestamp).ToList();
+                var sessionTs = allSessions
+                    .Where(cs => cs.ToTimestamp.HasValue)
+                    .Select(cs => cs.ToTimestamp!.Value)
+                    .ToList();
                 var rawMonths = sessionTs
                     .Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds)
                     .Distinct()
@@ -359,7 +362,7 @@ namespace Backend.Controllers
                                 return false;
                             return allSessions.Any(cs =>
                                 cids.Contains(cs.ChargeCardId) &&
-                                BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                                MonthlyInvoiceSessionRules.IsBillableInMonth(cs.ToTimestamp, m.Year, m.Month));
                         })
                         .Select(m => GnucashInvoiceId(user.Id, m.Year, m.Month)))
                     .Distinct()
@@ -408,10 +411,10 @@ namespace Backend.Controllers
                         }
                         var hasCharging = allSessions
                             .Any(cs => cids.Contains(cs.ChargeCardId) &&
-                                      BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                                      MonthlyInvoiceSessionRules.IsBillableInMonth(cs.ToTimestamp, m.Year, m.Month));
                         var kwh = allSessions
                             .Where(cs => cids.Contains(cs.ChargeCardId) &&
-                                        BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
+                                        MonthlyInvoiceSessionRules.IsBillableInMonth(cs.ToTimestamp, m.Year, m.Month))
                             .Sum(ChargingSessionEnergy.ChargedKwh);
                         return new
                         {
