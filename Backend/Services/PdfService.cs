@@ -80,7 +80,7 @@ namespace Backend.Services
                     PayOnline: "Betaal online:",
                     QrHint: "Scannen kan ook via de QR-code.",
                     ScanToPay: "Scan om te betalen",
-                    PaymentRequestNotice: "U ontvangt apart een betalingsverzoek voor dit bedrag.",
+                    PaymentRequestNotice: "Gelieve het bedrag over te maken op rekening NL40 TRIO 0321 2476 04, t.n.v. Coöperatie Deelstroom Delft U.A., onder vermelding van het factuurnummer.",
                     PaymentContact: $"Voor vragen over deze factuur kunt u contact opnemen met de administratie o.v.v. factuurnummer via {BillingEmail}",
                     PortalPrefix: "Bekijk facturen en betaalstatus online:",
                     SessionsTitle: "Specificatie factuurnummer:",

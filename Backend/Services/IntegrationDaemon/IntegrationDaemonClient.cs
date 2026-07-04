@@ -83,7 +83,8 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
                 SessionsAdded: responsePayload?.Sessions?.Added ?? 0,
                 SessionsUpdated: responsePayload?.Sessions?.Updated ?? 0,
                 SessionsSkipped: responsePayload?.Sessions?.Skipped ?? 0,
-                SessionsErrors: responsePayload?.Sessions?.Errors ?? 0);
+                SessionsErrors: responsePayload?.Sessions?.Errors ?? 0,
+                SessionsInferredClosed: responsePayload?.Sessions?.InferredClosed ?? 0);
         }
         catch (Exception ex)
         {
@@ -175,6 +176,7 @@ public sealed class IntegrationDaemonClient : IIntegrationDaemonClient
         public int Updated { get; set; }
         public int Skipped { get; set; }
         public int Errors { get; set; }
+        public int InferredClosed { get; set; }
     }
 
     private sealed class SmappeeUpdateRequest

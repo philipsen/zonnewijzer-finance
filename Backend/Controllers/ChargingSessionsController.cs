@@ -6,6 +6,7 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services.IntegrationDaemon;
 using Backend.Services;
+using Backend.Services.Smappee;
 
 namespace Backend.Controllers;
 
@@ -16,17 +17,20 @@ public class ChargingSessionsController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly IIntegrationDaemonClient _integrationDaemonClient;
+    private readonly IChargingSessionReconcileService _reconcileService;
     private readonly ILogger<ChargingSessionsController> _logger;
 
     public ChargingSessionsController(
         ApplicationDbContext context,
         IJwtService jwtService,
         IIntegrationDaemonClient integrationDaemonClient,
+        IChargingSessionReconcileService reconcileService,
         ILogger<ChargingSessionsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
         _integrationDaemonClient = integrationDaemonClient;
+        _reconcileService = reconcileService;
         _logger = logger;
     }
 
@@ -142,6 +146,55 @@ public class ChargingSessionsController : ControllerBase
             {
                 added = result.SessionsAdded,
                 updated = result.SessionsUpdated,
+                inferredClosed = result.SessionsInferredClosed,
+                skipped = result.SessionsSkipped,
+                errors = result.SessionsErrors
+            }
+        });
+    }
+
+    [Authorize(Roles = "Admin,Owner")]
+    [HttpPost("reconcile-ongoing")]
+    public async Task<IActionResult> ReconcileOngoingSessions(CancellationToken cancellationToken)
+    {
+        var result = await _reconcileService.ReconcileOngoingAsync(
+            "Admin reconcile ongoing sessions",
+            cancellationToken);
+
+        if (!result.Success)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = result.ErrorMessage ?? "Failed to reconcile ongoing sessions.",
+                syncFrom = result.SyncFrom,
+                syncTo = result.SyncTo,
+                openBefore = result.OpenBefore
+            });
+        }
+
+        var closedCount = result.OpenBefore.Count - result.OpenAfter.Count;
+        return Ok(new
+        {
+            message = result.OpenAfter.Count == 0
+                ? "All sessions are closed."
+                : result.OpenBefore.Count > result.OpenAfter.Count
+                    ? $"Closed {closedCount} stale ongoing session(s); {result.OpenAfter.Count} still ongoing."
+                    : result.OpenBefore.Count < result.OpenAfter.Count
+                        ? $"{result.OpenAfter.Count} session(s) still ongoing (new activity during sync)."
+                        : $"{result.OpenAfter.Count} session(s) still ongoing in Smappee.",
+            syncFrom = result.SyncFrom,
+            syncTo = result.SyncTo,
+            openBeforeCount = result.OpenBefore.Count,
+            openAfterCount = result.OpenAfter.Count,
+            closedCount = Math.Max(0, closedCount),
+            openBefore = result.OpenBefore,
+            openAfter = result.OpenAfter,
+            chargeCards = new { added = result.CardsAdded, updated = result.CardsUpdated },
+            sessions = new
+            {
+                added = result.SessionsAdded,
+                updated = result.SessionsUpdated,
+                inferredClosed = result.SessionsInferredClosed,
                 skipped = result.SessionsSkipped,
                 errors = result.SessionsErrors
             }

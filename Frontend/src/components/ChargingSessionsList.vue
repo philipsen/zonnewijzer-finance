@@ -12,6 +12,9 @@
         <button v-if="isAdmin" type="button" class="btn btn-primary" @click="openSyncModal">
           Sync from Smappee
         </button>
+        <button v-if="isAdmin" type="button" class="btn btn-secondary" @click="openReconcileModal">
+          Fix ongoing sessions
+        </button>
       </div>
     </div>
 
@@ -162,13 +165,50 @@
         <div v-if="syncResult" class="sync-result-box">
           <p><strong>{{ syncResult.message }}</strong></p>
           <p>Charge cards: +{{ syncResult.chargeCards.added }} / ~{{ syncResult.chargeCards.updated }}</p>
-          <p>Sessions: +{{ syncResult.sessions.added }} / ~{{ syncResult.sessions.updated }}, skipped {{ syncResult.sessions.skipped }}, errors {{ syncResult.sessions.errors }}</p>
+          <p>Sessions: +{{ syncResult.sessions.added }} / ~{{ syncResult.sessions.updated }}, inferred closed {{ syncResult.sessions.inferredClosed ?? 0 }}, skipped {{ syncResult.sessions.skipped }}, errors {{ syncResult.sessions.errors }}</p>
         </div>
         <div v-if="syncError" class="add-error">{{ syncError }}</div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" @click="closeSyncModal">Close</button>
           <button type="button" class="btn btn-success" :disabled="syncLoading" @click="submitSync">
             {{ syncLoading ? 'Syncing…' : 'Run sync' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reconcile ongoing sessions modal -->
+  <div v-if="showReconcileModal" class="modal-overlay" @click.self="closeReconcileModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Fix ongoing sessions</h2>
+        <button type="button" class="modal-close" @click="closeReconcileModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">
+          Re-syncs from Smappee (active + completed) for all currently ongoing sessions and closes stale rows
+          (for example when a newer session exists on the same charge card). No date range needed.
+        </p>
+        <div v-if="reconcileResult" class="sync-result-box">
+          <p><strong>{{ reconcileResult.message }}</strong></p>
+          <p>Sync range: {{ reconcileResult.syncFrom }} → {{ reconcileResult.syncTo }}</p>
+          <p>Ongoing before: {{ reconcileResult.openBeforeCount }} · after: {{ reconcileResult.openAfterCount }}</p>
+          <p>Sessions: +{{ reconcileResult.sessions.added }} / ~{{ reconcileResult.sessions.updated }}, inferred closed {{ reconcileResult.sessions.inferredClosed }}, errors {{ reconcileResult.sessions.errors }}</p>
+          <div v-if="reconcileResult.openAfter?.length" class="reconcile-open-list">
+            <p><strong>Still ongoing:</strong></p>
+            <ul>
+              <li v-for="s in reconcileResult.openAfter" :key="s.id">
+                #{{ s.id }} · {{ s.chargeCardLabel || ('Card ' + s.chargeCardId) }} · started {{ formatDateTime(s.startUtc) }}
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div v-if="reconcileError" class="add-error">{{ reconcileError }}</div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" @click="closeReconcileModal">Close</button>
+          <button type="button" class="btn btn-success" :disabled="reconcileLoading" @click="submitReconcile">
+            {{ reconcileLoading ? 'Checking…' : 'Check and fix' }}
           </button>
         </div>
       </div>
@@ -333,6 +373,10 @@ export default {
     const syncLoading = ref(false)
     const syncError = ref('')
     const syncResult = ref(null)
+    const showReconcileModal = ref(false)
+    const reconcileLoading = ref(false)
+    const reconcileError = ref('')
+    const reconcileResult = ref(null)
     const showAddModal = ref(false)
     const addLoading = ref(false)
     const addError = ref('')
@@ -440,6 +484,38 @@ export default {
           : err.response?.data?.message || err.message || 'Sync failed.'
       } finally {
         syncLoading.value = false
+      }
+    }
+
+    const openReconcileModal = () => {
+      reconcileResult.value = null
+      reconcileError.value = ''
+      showReconcileModal.value = true
+    }
+
+    const closeReconcileModal = () => {
+      showReconcileModal.value = false
+      reconcileLoading.value = false
+    }
+
+    const submitReconcile = async () => {
+      try {
+        reconcileLoading.value = true
+        reconcileError.value = ''
+        reconcileResult.value = null
+        const token = localStorage.getItem('token')
+        const { data } = await axios.post('/api/chargingsessions/reconcile-ongoing', {}, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        reconcileResult.value = data
+        await fetchSessions(pagination.value.page)
+        await fetchAvailableMonths()
+      } catch (err) {
+        reconcileError.value = typeof err.response?.data === 'string'
+          ? err.response.data
+          : err.response?.data?.message || err.message || 'Reconcile failed.'
+      } finally {
+        reconcileLoading.value = false
       }
     }
 
@@ -711,6 +787,13 @@ export default {
       openSyncModal,
       closeSyncModal,
       submitSync,
+      showReconcileModal,
+      reconcileLoading,
+      reconcileError,
+      reconcileResult,
+      openReconcileModal,
+      closeReconcileModal,
+      submitReconcile,
       showAddModal,
       addLoading,
       addError,
@@ -1191,6 +1274,15 @@ export default {
 
 .sync-result-box p {
   margin: 0.25rem 0;
+}
+
+.reconcile-open-list {
+  margin-top: 0.75rem;
+}
+
+.reconcile-open-list ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.25rem;
 }
 
 @media (max-width: 768px) {

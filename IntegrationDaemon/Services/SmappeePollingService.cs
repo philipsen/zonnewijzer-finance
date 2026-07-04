@@ -180,9 +180,10 @@ public class SmappeePollingService : ISmappeePollingService
             else
             {
                 _logger.LogInformation(
-                    "Smappee daemon calendar sync OK: sessions +{Added}/~{Updated}, skipped {Skipped}, errors {Errors}",
+                    "Smappee daemon calendar sync OK: sessions +{Added}/~{Updated}, inferred closed {InferredClosed}, skipped {Skipped}, errors {Errors}",
                     syncResult.SessionsAdded,
                     syncResult.SessionsUpdated,
+                    syncResult.SessionsInferredClosed,
                     syncResult.SessionsSkipped,
                     syncResult.SessionsErrors);
             }

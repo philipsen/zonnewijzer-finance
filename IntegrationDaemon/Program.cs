@@ -194,7 +194,8 @@ app.MapPost("/api/smappee/update", async (
                 syncResult.SessionsAdded,
                 syncResult.SessionsUpdated,
                 syncResult.SessionsSkipped,
-                syncResult.SessionsErrors)));
+                syncResult.SessionsErrors,
+                syncResult.SessionsInferredClosed)));
     }
 
     var snapshot = await poller.PollSessionsAsync(cancellationToken);
@@ -210,7 +211,7 @@ app.MapPost("/api/smappee/update", async (
         snapshot.FetchedAtUtc,
         snapshot.Error,
         new SmappeeChargeCardsStats(0, 0),
-        new SmappeeSessionsStats(0, 0, 0, 0)));
+        new SmappeeSessionsStats(0, 0, 0, 0, 0)));
 });
 
 app.MapPost("/api/sigenergy/update", async (
@@ -315,7 +316,7 @@ internal sealed record ErrorResponse(bool Ok, string Error);
 
 internal sealed record SmappeeChargeCardsStats(int Added, int Updated);
 
-internal sealed record SmappeeSessionsStats(int Added, int Updated, int Skipped, int Errors);
+internal sealed record SmappeeSessionsStats(int Added, int Updated, int Skipped, int Errors, int InferredClosed = 0);
 
 internal sealed record SmappeeUpdateResponse(
     bool Ok,
