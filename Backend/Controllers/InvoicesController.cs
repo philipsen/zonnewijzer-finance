@@ -767,56 +767,6 @@ namespace Backend.Controllers
                 if (invoiceData == null)
                     return NotFound("No charging sessions found for this user and month");
 
-                var molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
-
-                // Create a payment record on first PDF download
-                if (molliePayment == null)
-                {
-                    try
-                    {
-                        var invoiceNumber = invoiceData.InvoiceNumber;
-                        var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-                        var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
-
-                        var redirectUrl = _configuration["Mollie:RedirectUrl"];
-                        if (string.IsNullOrWhiteSpace(redirectUrl))
-                            redirectUrl = $"{Request.Scheme}://{Request.Host}";
-
-                        var baseUrl = _configuration["Mollie:BaseUrl"];
-                        var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                            ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
-                            : "";
-
-                        var result = await _mollieService.CreatePaymentAsync(
-                            Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
-
-                        molliePayment = new MolliePayment
-                        {
-                            AppUserId = userId,
-                            Year = year,
-                            Month = month,
-                            MolliePaymentId = result.PaymentId,
-                            CheckoutUrl = result.CheckoutUrl,
-                            Amount = Math.Round(invoiceData.TotalAmount, 2),
-                            Status = result.Status,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        _context.MolliePayments.Add(molliePayment);
-                        _logger.LogInformation("Auto-created payment link on PDF download for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Could not auto-create Mollie payment on PDF download for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
-                }
-
-                molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
-                invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
-                invoiceData.IsPaid = molliePayment?.Status == "paid";
-
-                // Generate PDF
                 var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
                 var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
 

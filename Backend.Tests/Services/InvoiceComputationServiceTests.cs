@@ -23,6 +23,40 @@ public class InvoiceComputationServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public async Task BuildInvoiceDataForAppUser_UsesBankTransferLayoutLikeCombined()
+    {
+        const int appUserId = 5;
+        _db.Users.Add(new User { Id = appUserId, Email = "monthly@test.com", Name = "Monthly User", GoogleId = "g5", Role = UserRole.Base });
+        var cid = new ChargeCard { Value = "monthly-card" };
+        _db.ChargeCards.Add(cid);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid.Id });
+
+        var april = new DateTime(2026, 4, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, april, april.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 4, PricePerKwh = 0.20m });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            AppUserId = appUserId,
+            Year = 2026,
+            Month = 4,
+            MolliePaymentId = "tr_monthly",
+            CheckoutUrl = "https://checkout.example",
+            Amount = 2,
+            Status = "paid"
+        });
+        await _db.SaveChangesAsync();
+
+        var data = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 4);
+
+        Assert.NotNull(data);
+        Assert.Equal("April 2026", data!.MonthName);
+        Assert.True(data.UsePaymentRequestNotice);
+        Assert.Null(data.PaymentUrl);
+        Assert.False(data.IsPaid);
+    }
+
+    [Fact]
     public async Task BuildCombinedInvoiceData_UsesPerMonthRates()
     {
         const int appUserId = 2;

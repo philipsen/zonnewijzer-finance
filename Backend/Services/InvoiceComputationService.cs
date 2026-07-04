@@ -138,12 +138,6 @@ public class InvoiceComputationService : IInvoiceComputationService
         var totalKwh = chargingSessions.Sum(ChargingSessionEnergy.ChargedKwh);
         var totalAmount = totalKwh * ratePerKwh;
 
-        var molliePayment = await _context.MolliePayments
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
-                cancellationToken);
-
         return new InvoiceData
         {
             UserId = appUserId,
@@ -154,14 +148,14 @@ public class InvoiceComputationService : IInvoiceComputationService
             PlaceName = profile?.PlaceName,
             Year = year,
             Month = month,
-            MonthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
-                .ToString("MMMM yyyy"),
+            MonthName = CombinedPeriodLabel(year, month, year, month),
             InvoiceNumber = $"INV-{year:D4}-{month:D2}-U{appUserId}",
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = ratePerKwh,
             TotalAmount = Math.Round(totalAmount, 2),
-            PaymentUrl = molliePayment?.CheckoutUrl,
-            IsPaid = molliePayment?.Status == "paid",
+            PaymentUrl = null,
+            IsPaid = false,
+            UsePaymentRequestNotice = true,
             Sessions = chargingSessions.Select(cs => MapDbSession(cs, ratePerKwh)).ToList(),
             GeneratedAt = DateTime.UtcNow
         };

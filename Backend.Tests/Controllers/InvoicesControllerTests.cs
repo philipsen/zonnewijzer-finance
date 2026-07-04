@@ -158,7 +158,7 @@ public class InvoicesControllerTests : IDisposable
         });
         await _db.SaveChangesAsync();
 
-        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => d.UsePaymentRequestNotice))).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
 
         var result = await BuildController().GenerateInvoicePdf(appUserId, 2024, 4, CancellationToken.None);
 
@@ -166,6 +166,7 @@ public class InvoicesControllerTests : IDisposable
         Assert.Equal("application/pdf", file.ContentType);
         Assert.NotEmpty(file.FileContents);
         _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => d.UsePaymentRequestNotice)), Times.Once);
     }
 
     [Fact]
