@@ -59,8 +59,10 @@ BACKEND_PORT=5001
 # App
 APP_PORT=5000
 
-# SMTP (password reset, invoice email — Backend -> SmtpEmailService / MailKit)
+# SMTP — production uses mail.warmoestuin.nl:2525 (587 times out from the container)
 SMTP_PASSWORD=your-warmoestuin-mailbox-password
+# SMTP_HOST=mail.warmoestuin.nl
+# SMTP_PORT=2525
 ```
 
 ### Production secrets (server `.env`)
@@ -69,7 +71,23 @@ Host, port, username, from address, invoice BCC, and certificate skip are in `Ba
 
 | Variable | Used for | Action for Warmoestuin SMTP |
 |----------|----------|-----------------------------|
-| `SMTP_PASSWORD` | `Smtp__Password` | **Replace** old SMTP2GO password with the `zonnewijzer@warmoestuin.nl` mailbox password |
+| `SMTP_PASSWORD` | `Smtp__Password` | Warmoestuin mailbox password for `zonnewijzer@warmoestuin.nl` |
+| `SMTP_HOST` | `Smtp__Host` | Default **`mail.warmoestuin.nl`** |
+| `SMTP_PORT` | `Smtp__Port` | Default **`2525`** (port 587 times out from the container; 2525 is reachable) |
+
+Production sends directly to Warmoestuin mail on **port 2525** with STARTTLS (`SkipCertificateValidation=true` for the bb-host cert mismatch). Local dev uses **587** in `appsettings.Development.json`.
+
+After updating secrets, redeploy or restart:
+
+```bash
+docker compose -f docker-compose.production.yml up -d backend
+```
+
+Test from the backend container:
+
+```bash
+docker exec finance-backend nc -zv -w 5 mail.warmoestuin.nl 2525
+```
 
 Other backend secrets (unchanged by this SMTP move):
 
@@ -158,6 +176,13 @@ cp data/finance.db data/finance.db.backup.$(date +%Y%m%d)
    ```
 
 3. **Container health checks failing**: Check logs with `docker-compose logs`
+
+4. **Invoice email returns 504 or times out**: Check connectivity from the backend container to **`mail.warmoestuin.nl:2525`** (production default). Port **587** often times out from Docker.
+
+   ```bash
+   docker exec finance-backend nc -zv -w 5 mail.warmoestuin.nl 2525
+   docker compose -f docker-compose.production.yml logs backend --tail 50
+   ```
 
 ### Reset Application
 

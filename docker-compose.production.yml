@@ -51,6 +51,8 @@ services:
       - GitHub__CallbackUrl=https://zonnewijzer.zonneklaar-consulting.com/api/auth/github/callback
       - GitHub__FrontendUrl=https://zonnewijzer.zonneklaar-consulting.com
       - Smtp__Password=${SMTP_PASSWORD}
+      - Smtp__Host=${SMTP_HOST:-mail.warmoestuin.nl}
+      - Smtp__Port=${SMTP_PORT:-2525}
       - Smtp__SkipCertificateValidation=true
       - GnuCashSync__BaseUrl=http://gnucash-sync:8787
       - GnuCashSync__ApiKey=${GNUCASH_SYNC_API_KEY}

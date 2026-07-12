@@ -39,9 +39,14 @@ namespace Backend.Services
 
             var port = int.TryParse(portText, out var parsedPort) ? parsedPort : 587;
             var enableSsl = !bool.TryParse(enableSslText, out var parsedEnableSsl) || parsedEnableSsl;
+            var timeoutSeconds = int.TryParse(_configuration["Smtp:TimeoutSeconds"], out var parsedTimeout) && parsedTimeout > 0
+                ? parsedTimeout
+                : 30;
             var secureSocketOptions = enableSsl
                 ? (port == 465 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls)
                 : SecureSocketOptions.None;
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             var message = new MimeMessage();
             message.From.Add(new MailboxAddress(fromName, fromEmail));
@@ -62,11 +67,26 @@ namespace Backend.Services
                 client.ServerCertificateValidationCallback = (_, _, _, _) => true;
             }
 
-            _logger.LogInformation("Sending email to {ToEmail} via SMTP host {Host}", toEmail, host);
-            await client.ConnectAsync(host, port, secureSocketOptions);
-            await client.AuthenticateAsync(username, password);
-            await client.SendAsync(message);
-            await client.DisconnectAsync(true);
+            _logger.LogInformation("Sending email to {ToEmail} via SMTP host {Host}:{Port}", toEmail, host, port);
+            try
+            {
+                await client.ConnectAsync(host, port, secureSocketOptions, timeoutCts.Token);
+                await client.AuthenticateAsync(username, password, timeoutCts.Token);
+                await client.SendAsync(message, timeoutCts.Token);
+                await client.DisconnectAsync(true, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"SMTP connection to {host}:{port} timed out after {timeoutSeconds}s. " +
+                    $"On production, use internal Mailcow Postfix (Smtp:Host=postfix) instead of outbound mail.warmoestuin.nl.");
+            }
+            catch (TimeoutException)
+            {
+                throw new InvalidOperationException(
+                    $"SMTP connection to {host}:{port} timed out. " +
+                    $"On production, use internal Mailcow Postfix (Smtp:Host=postfix) instead of outbound mail.warmoestuin.nl.");
+            }
         }
     }
 }
