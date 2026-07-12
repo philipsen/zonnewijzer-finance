@@ -83,7 +83,7 @@ describe('EditChargingUser.vue', () => {
     expect(wrapper.text()).toContain('Charge card not found')
   })
 
-  it('only disables app users already linked to a different charge card', async () => {
+  it('shows linked charge cards in the app user dropdown labels', async () => {
     axios.get
       .mockResolvedValueOnce({ data: mockChargingUser })
       .mockResolvedValueOnce({ data: mockAppUsers })
@@ -94,8 +94,8 @@ describe('EditChargingUser.vue', () => {
     const options = wrapper.findAll('#linkedUserId option')
     const bobOption = options.find(o => o.text().includes('Bob'))
     const carolOption = options.find(o => o.text().includes('Carol'))
-    expect(bobOption.element.disabled).toBe(false)
-    expect(carolOption.element.disabled).toBe(true)
+    expect(bobOption.text()).toBe('Bob')
+    expect(carolOption.text()).toContain('card(s) 7')
   })
 
   it('Save button is disabled with no changes', async () => {
