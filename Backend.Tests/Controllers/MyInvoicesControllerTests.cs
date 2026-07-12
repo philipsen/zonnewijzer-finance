@@ -6,6 +6,7 @@ using Backend.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -16,6 +17,7 @@ public class MyInvoicesControllerTests : IDisposable
     private readonly ApplicationDbContext _db;
     private readonly Mock<IJwtService> _jwtMock;
     private readonly Mock<IMollieService> _mollieMock;
+    private readonly Mock<IConfiguration> _configMock;
 
     public MyInvoicesControllerTests()
     {
@@ -25,6 +27,8 @@ public class MyInvoicesControllerTests : IDisposable
         _db = new ApplicationDbContext(options);
         _jwtMock = new Mock<IJwtService>();
         _mollieMock = new Mock<IMollieService>();
+        _configMock = new Mock<IConfiguration>();
+        _configMock.Setup(c => c["Invoices:EnableOnlinePaymentLinks"]).Returns("false");
     }
 
     public void Dispose() => _db.Dispose();
@@ -32,7 +36,7 @@ public class MyInvoicesControllerTests : IDisposable
     private MyInvoicesController BuildController(string? userId = "1")
     {
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(userId);
-        var controller = new MyInvoicesController(_db, _jwtMock.Object, _mollieMock.Object, NullLogger<MyInvoicesController>.Instance);
+        var controller = new MyInvoicesController(_db, _jwtMock.Object, _mollieMock.Object, _configMock.Object, NullLogger<MyInvoicesController>.Instance);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "Bearer t";
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };

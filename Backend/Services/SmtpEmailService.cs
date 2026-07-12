@@ -46,8 +46,6 @@ namespace Backend.Services
                 ? (port == 465 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls)
                 : SecureSocketOptions.None;
 
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-
             var message = new MimeMessage();
             message.From.Add(new MailboxAddress(fromName, fromEmail));
             message.To.Add(MailboxAddress.Parse(toEmail));
@@ -59,6 +57,8 @@ namespace Backend.Services
             if (attachment != null)
                 bodyBuilder.Attachments.Add(attachment.FileName, attachment.Content, ContentType.Parse(attachment.ContentType));
             message.Body = bodyBuilder.ToMessageBody();
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
 
             using var client = new SmtpClient();
             if (skipCertValidation)

@@ -170,7 +170,33 @@ public class InvoicesControllerTests : IDisposable
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
         Assert.NotEmpty(file.FileContents);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => d.UsePaymentRequestNotice)), Times.Once);
         _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateInvoicePdf_WithOnlinePaymentLinksEnabled_UsesMollieCheckoutUrl()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "pay@test.com", Name = "Pay", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-pdf-pay");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 8));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        _configMock.Setup(c => c["Invoices:EnableOnlinePaymentLinks"]).Returns("true");
+        _mollieMock.Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new MolliePaymentResult("tr_new", "https://checkout", "open"));
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().GenerateInvoicePdf(appUserId, 2024, 4, CancellationToken.None);
+
+        Assert.IsType<FileContentResult>(result);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => !d.UsePaymentRequestNotice && d.PaymentUrl == "https://checkout")), Times.Once);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
@@ -227,6 +253,38 @@ public class InvoicesControllerTests : IDisposable
         var result = await BuildController().SendInvoiceEmail(2, 2024, 1, CancellationToken.None);
 
         Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task SendInvoiceEmail_OngoingMonth_ReturnsBadRequest()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var (year, month) = BrusselsTime.CurrentBrusselsYearMonth();
+        var result = await BuildController().SendInvoiceEmail(appUserId, year, month, CancellationToken.None);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("current month", bad.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
+        _emailMock.Verify(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_OngoingMonth_ReturnsBadRequest()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "p@test.com", Name = "P", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var (year, month) = BrusselsTime.CurrentBrusselsYearMonth();
+        var result = await BuildController().CreatePaymentLink(appUserId, year, month, CancellationToken.None);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("current month", bad.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

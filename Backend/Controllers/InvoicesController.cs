@@ -75,6 +75,28 @@ namespace Backend.Controllers
             _logger = logger;
         }
 
+        private bool InvoicesEnableOnlinePaymentLinks() =>
+            string.Equals(_configuration["Invoices:EnableOnlinePaymentLinks"], "true", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Same payment block as combined April/May invoices: Dutch bank-transfer notice, no Mollie URL/QR.</summary>
+        private static void ApplyBankTransferInvoicePresentation(InvoiceData invoiceData)
+        {
+            invoiceData.UsePaymentRequestNotice = true;
+            invoiceData.PaymentUrl = null;
+            invoiceData.IsPaid = false;
+        }
+
+        private static bool IsOngoingInvoiceMonth(int year, int month) =>
+            BrusselsTime.IsCurrentBrusselsMonth(year, month);
+
+        private static IActionResult? RejectIfOngoingInvoiceMonth(int year, int month)
+        {
+            if (!IsOngoingInvoiceMonth(year, month))
+                return null;
+            return new BadRequestObjectResult(
+                "Email and payment links are not available for the current month until the billing period ends.");
+        }
+
         /// <summary>Admin: insert computed invoices into GnuCash via the Python service (insert-only).</summary>
         [HttpPost("gnucash/insert")]
         public async Task<IActionResult> InsertGnucashInvoices([FromBody] GnuCashInsertBody body, CancellationToken cancellationToken)
@@ -349,7 +371,8 @@ namespace Backend.Controllers
                     Year = d.Year,
                     Month = d.Month,
                     Name = $"{new DateTime(d.Year, d.Month, 1):MMM yyyy}",
-                    RatePerKwh = Math.Round(GetRate(d.Year, d.Month), 2)
+                    RatePerKwh = Math.Round(GetRate(d.Year, d.Month), 2),
+                    IsOngoingMonth = IsOngoingInvoiceMonth(d.Year, d.Month)
                 }).ToList();
 
                 static string GnucashInvoiceId(int appUserId, int year, int month) =>
@@ -407,7 +430,8 @@ namespace Backend.Controllers
                                 TotalKwh = 0m,
                                 RatePerKwh = GetRate(m.Year, m.Month),
                                 TotalAmount = 0m,
-                                GnucashInvoiceInserted = false
+                                GnucashInvoiceInserted = false,
+                                IsOngoingMonth = m.IsOngoingMonth
                             };
                         }
                         var hasCharging = allSessions
@@ -427,12 +451,19 @@ namespace Backend.Controllers
                             RatePerKwh = GetRate(m.Year, m.Month),
                             TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2),
                             GnucashInvoiceInserted = hasCharging
-                                && existingInvoiceIds.Contains(GnucashInvoiceId(user.Id, m.Year, m.Month))
+                                && existingInvoiceIds.Contains(GnucashInvoiceId(user.Id, m.Year, m.Month)),
+                            IsOngoingMonth = m.IsOngoingMonth
                         };
                     }).ToList()
                 }).ToList();
 
-                return Ok(new { Users = users, Months = months, GridData = gridData });
+                return Ok(new
+                {
+                    Users = users,
+                    Months = months,
+                    GridData = gridData,
+                    EnableOnlinePaymentLinks = InvoicesEnableOnlinePaymentLinks()
+                });
             }
             catch (Exception ex)
             {
@@ -807,6 +838,9 @@ namespace Backend.Controllers
                 if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
                     return Forbid();
 
+                if (RejectIfOngoingInvoiceMonth(year, month) is { } ongoingReject)
+                    return ongoingReject;
+
                 var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
                 if (targetUser == null)
                     return NotFound("User not found.");
@@ -879,51 +913,58 @@ namespace Backend.Controllers
             var molliePayment = await _context.MolliePayments
                 .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
 
-            if (molliePayment == null && createPaymentIfMissing)
+            if (InvoicesEnableOnlinePaymentLinks())
             {
-                try
+                if (molliePayment == null && createPaymentIfMissing)
                 {
-                    var invoiceNumber = invoiceData.InvoiceNumber;
-                    var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-                    var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
-
-                    var redirectUrl = _configuration["Mollie:RedirectUrl"];
-                    if (string.IsNullOrWhiteSpace(redirectUrl))
-                        redirectUrl = $"{Request.Scheme}://{Request.Host}";
-
-                    var baseUrl = _configuration["Mollie:BaseUrl"];
-                    var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                        ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
-                        : "";
-
-                    var result = await _mollieService.CreatePaymentAsync(
-                        Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
-
-                    molliePayment = new MolliePayment
+                    try
                     {
-                        AppUserId = userId,
-                        Year = year,
-                        Month = month,
-                        MolliePaymentId = result.PaymentId,
-                        CheckoutUrl = result.CheckoutUrl,
-                        Amount = Math.Round(invoiceData.TotalAmount, 2),
-                        Status = result.Status,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    _context.MolliePayments.Add(molliePayment);
-                    await _context.SaveChangesAsync(cancellationToken);
-                    _logger.LogInformation("Auto-created payment link for user {UserId}, {Year}-{Month}", userId, year, month);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not auto-create Mollie payment for user {UserId}, {Year}-{Month}", userId, year, month);
-                }
-            }
+                        var invoiceNumber = invoiceData.InvoiceNumber;
+                        var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
+                        var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
 
-            molliePayment = await _context.MolliePayments
-                .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
-            invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
-            invoiceData.IsPaid = molliePayment?.Status == "paid";
+                        var redirectUrl = _configuration["Mollie:RedirectUrl"];
+                        if (string.IsNullOrWhiteSpace(redirectUrl))
+                            redirectUrl = $"{Request.Scheme}://{Request.Host}";
+
+                        var baseUrl = _configuration["Mollie:BaseUrl"];
+                        var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                            ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
+                            : "";
+
+                        var result = await _mollieService.CreatePaymentAsync(
+                            Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
+
+                        molliePayment = new MolliePayment
+                        {
+                            AppUserId = userId,
+                            Year = year,
+                            Month = month,
+                            MolliePaymentId = result.PaymentId,
+                            CheckoutUrl = result.CheckoutUrl,
+                            Amount = Math.Round(invoiceData.TotalAmount, 2),
+                            Status = result.Status,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.MolliePayments.Add(molliePayment);
+                        await _context.SaveChangesAsync(cancellationToken);
+                        _logger.LogInformation("Auto-created payment link for user {UserId}, {Year}-{Month}", userId, year, month);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not auto-create Mollie payment for user {UserId}, {Year}-{Month}", userId, year, month);
+                    }
+                }
+
+                molliePayment = await _context.MolliePayments
+                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
+                invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
+                invoiceData.IsPaid = molliePayment?.Status == "paid";
+            }
+            else
+            {
+                ApplyBankTransferInvoicePresentation(invoiceData);
+            }
 
             var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
             return (invoiceData, pdfBytes);
@@ -942,6 +983,9 @@ namespace Backend.Controllers
 
                 if (!await CanAccessAppUserInvoiceAsync(currentUserId, userId, cancellationToken))
                     return Forbid();
+
+                if (RejectIfOngoingInvoiceMonth(year, month) is { } ongoingReject)
+                    return ongoingReject;
 
                 // Check for existing payment link and sync latest status first
                 var existing = await _context.MolliePayments

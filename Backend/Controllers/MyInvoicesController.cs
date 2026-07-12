@@ -14,6 +14,7 @@ public class MyInvoicesController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly IMollieService _mollieService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<MyInvoicesController> _logger;
     private static readonly HashSet<string> FinalPaymentStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -22,11 +23,12 @@ public class MyInvoicesController : ControllerBase
         "canceled"
     };
 
-    public MyInvoicesController(ApplicationDbContext context, IJwtService jwtService, IMollieService mollieService, ILogger<MyInvoicesController> logger)
+    public MyInvoicesController(ApplicationDbContext context, IJwtService jwtService, IMollieService mollieService, IConfiguration configuration, ILogger<MyInvoicesController> logger)
     {
         _context = context;
         _jwtService = jwtService;
         _mollieService = mollieService;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -130,7 +132,8 @@ public class MyInvoicesController : ControllerBase
                     TotalAmount = totalAmount,
                     PaymentStatus = payment?.Status,
                     CheckoutUrl = payment?.CheckoutUrl,
-                    IsPaid = payment?.Status == "paid"
+                    IsPaid = payment?.Status == "paid",
+                    IsOngoingMonth = BrusselsTime.IsCurrentBrusselsMonth(m.Year, m.Month)
                 };
             }).ToList();
 
@@ -139,7 +142,11 @@ public class MyInvoicesController : ControllerBase
                 userName = currentUser.Name,
                 appUserId = currentUserId,
                 chargeCardIds = myCardIds,
-                months = result
+                months = result,
+                enableOnlinePaymentLinks = string.Equals(
+                    _configuration["Invoices:EnableOnlinePaymentLinks"],
+                    "true",
+                    StringComparison.OrdinalIgnoreCase)
             });
         }
         catch (Exception ex)

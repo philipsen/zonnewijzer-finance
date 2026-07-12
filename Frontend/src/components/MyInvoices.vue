@@ -27,7 +27,7 @@
               <th>Rate</th>
               <th>Amount</th>
               <th>Invoice</th>
-              <th>Pay</th>
+              <th v-if="enableOnlinePaymentLinks">Pay</th>
             </tr>
           </thead>
           <tbody>
@@ -40,20 +40,22 @@
               <td class="invoice-cell">
                 <a href="#" class="invoice-link" @click.prevent="downloadInvoice(m)">Invoice</a>
               </td>
-              <td class="pay-cell">
-                <a
-                  v-if="canOpenPayment(m)"
-                  href="#"
-                  class="get-link-btn"
-                  @click.prevent="openPayment(m.checkoutUrl)"
-                >Pay</a>
-                <span v-else-if="m.isPaid" class="paid-text">✓ Paid</span>
-                <button
-                  v-else
-                  class="get-link-btn"
-                  :disabled="m._loading"
-                  @click="createPaymentLink(m)"
-                >{{ m._loading ? '...' : paymentActionLabel(m) }}</button>
+              <td v-if="enableOnlinePaymentLinks" class="pay-cell">
+                <template v-if="!m.isOngoingMonth">
+                  <a
+                    v-if="canOpenPayment(m)"
+                    href="#"
+                    class="get-link-btn"
+                    @click.prevent="openPayment(m.checkoutUrl)"
+                  >Pay</a>
+                  <span v-else-if="m.isPaid" class="paid-text">✓ Paid</span>
+                  <button
+                    v-else
+                    class="get-link-btn"
+                    :disabled="m._loading"
+                    @click="createPaymentLink(m)"
+                  >{{ m._loading ? '...' : paymentActionLabel(m) }}</button>
+                </template>
               </td>
             </tr>
           </tbody>
@@ -91,6 +93,7 @@ export default {
     const userName = ref('')
     const months = ref([])
     const hasChargingAccount = ref(true)
+    const enableOnlinePaymentLinks = ref(false)
 
     const fetchMyInvoices = async () => {
       try {
@@ -110,6 +113,7 @@ export default {
           return
         }
         months.value = response.data.months
+        enableOnlinePaymentLinks.value = response.data.enableOnlinePaymentLinks === true
       } catch (err) {
         console.error('Failed to fetch invoices:', err)
         if (err.response?.status === 401) {
@@ -197,7 +201,8 @@ export default {
       downloadInvoice,
       openPayment,
       canOpenPayment,
-      paymentActionLabel
+      paymentActionLabel,
+      enableOnlinePaymentLinks
     }
   }
 }

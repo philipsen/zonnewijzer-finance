@@ -81,30 +81,32 @@
                       <div class="invoice-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</div>
                       <div class="invoice-amount">€{{ monthData.totalAmount.toFixed(2) }}</div>
                     </a>
-                    <div class="payment-link-area">
-                      <template v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month)">
-                        <span :class="['payment-status-badge', getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status }}</span>
-                        <a
-                          v-if="canOpenPaymentLink(userRow.user.id, monthData.year, monthData.month)"
-                          :href="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).checkoutUrl"
-                          target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                    <div class="invoice-actions-area">
+                      <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
+                        <template v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month)">
+                          <span :class="['payment-status-badge', getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status }}</span>
+                          <a
+                            v-if="canOpenPaymentLink(userRow.user.id, monthData.year, monthData.month)"
+                            :href="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).checkoutUrl"
+                            target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                          <button
+                            v-else-if="!isPaymentPaid(userRow.user.id, monthData.year, monthData.month)"
+                            class="btn-payment-link"
+                            :disabled="isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month)"
+                            @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
+                          >
+                            {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                          </button>
+                        </template>
                         <button
-                          v-else-if="!isPaymentPaid(userRow.user.id, monthData.year, monthData.month)"
+                          v-else
                           class="btn-payment-link"
                           :disabled="isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month)"
                           @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
                         >
-                          {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                          {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Payment link' }}
                         </button>
                       </template>
-                      <button
-                        v-else
-                        class="btn-payment-link"
-                        :disabled="isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month)"
-                        @click="handlePaymentLink(userRow.user.id, monthData.year, monthData.month)"
-                      >
-                        {{ isPaymentLinkLoading(userRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Payment link' }}
-                      </button>
                       <button
                         v-if="isOwnerRole"
                         type="button"
@@ -116,6 +118,7 @@
                         {{ gnucashCellLoading[gnucashCellKey(userRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
                       </button>
                       <button
+                        v-if="!monthData.isOngoingMonth"
                         type="button"
                         class="btn-email-invoice"
                         :disabled="isEmailLoading(userRow.user.id, monthData.year, monthData.month)"
@@ -166,30 +169,32 @@
                 <span class="mobile-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</span>
                 <span class="mobile-amount">€{{ monthData.totalAmount.toFixed(2) }}</span>
               </a>
-              <div class="mobile-payment-link-area">
-                <template v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month)">
-                  <span :class="['payment-status-badge', getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status }}</span>
-                  <a
-                    v-if="canOpenPaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
-                    :href="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).checkoutUrl"
-                    target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+              <div class="invoice-actions-area mobile-invoice-actions">
+                <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
+                  <template v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month)">
+                    <span :class="['payment-status-badge', getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status }}</span>
+                    <a
+                      v-if="canOpenPaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
+                      :href="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).checkoutUrl"
+                      target="_blank" rel="noopener noreferrer" class="payment-open-link">Open</a>
+                    <button
+                      v-else-if="!isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                      class="btn-payment-link"
+                      :disabled="isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
+                      @click="handlePaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
+                    >
+                      {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                    </button>
+                  </template>
                   <button
-                    v-else-if="!isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                    v-else
                     class="btn-payment-link"
                     :disabled="isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
                     @click="handlePaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
                   >
-                    {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : 'New link' }}
+                    {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Pay' }}
                   </button>
                 </template>
-                <button
-                  v-else
-                  class="btn-payment-link"
-                  :disabled="isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
-                  @click="handlePaymentLink(selectedUserRow.user.id, monthData.year, monthData.month)"
-                >
-                  {{ isPaymentLinkLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '...' : '💳 Pay' }}
-                </button>
                 <button
                   v-if="isOwnerRole"
                   type="button"
@@ -201,6 +206,7 @@
                   {{ gnucashCellLoading[gnucashCellKey(selectedUserRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
                 </button>
                 <button
+                  v-if="!monthData.isOngoingMonth"
                   type="button"
                   class="btn-email-invoice mobile-email"
                   :disabled="isEmailLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
@@ -237,6 +243,7 @@ export default {
     const gnucashBulkLoading = ref(false)
     const gnucashCellLoading = ref({})
     const isOwnerRole = ref(false)
+    const enableOnlinePaymentLinks = ref(false)
 
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
@@ -274,6 +281,7 @@ export default {
         gridData.value = response.data.gridData
         users.value = response.data.users
         months.value = response.data.months
+        enableOnlinePaymentLinks.value = response.data.enableOnlinePaymentLinks === true
 
         if (response.data.months?.length) {
           const last = response.data.months[response.data.months.length - 1]
@@ -285,6 +293,10 @@ export default {
           const prev = selectedUserId.value
           const still = prev != null && response.data.gridData.some(r => r.user.id === prev)
           selectedUserId.value = still ? prev : response.data.gridData[0].user.id
+        }
+
+        if (enableOnlinePaymentLinks.value) {
+          await fetchExistingPayments()
         }
         
       } catch (err) {
@@ -486,7 +498,6 @@ export default {
     onMounted(() => {
       isOwnerRole.value = isOwner(roleFromToken(localStorage.getItem('token')))
       fetchInvoicesGrid()
-      fetchExistingPayments()
     })
 
     return {
@@ -516,7 +527,8 @@ export default {
       gnucashCellTitle,
       insertGnucashMonth,
       insertGnucashCell,
-      isOwnerRole
+      isOwnerRole,
+      enableOnlinePaymentLinks
     }
   }
 }
@@ -1036,7 +1048,8 @@ export default {
   font-size: 0.85rem;
 }
 
-.payment-link-area {
+.payment-link-area,
+.invoice-actions-area {
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -1045,7 +1058,8 @@ export default {
   margin-top: 0.25rem;
 }
 
-.mobile-payment-link-area {
+.mobile-payment-link-area,
+.mobile-invoice-actions {
   display: flex;
   align-items: center;
   gap: 0.4rem;

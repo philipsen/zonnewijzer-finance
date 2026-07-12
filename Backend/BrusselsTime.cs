@@ -53,6 +53,19 @@ public static class BrusselsTime
         return y == year && m == month;
     }
 
+    public static (int Year, int Month) CurrentBrusselsYearMonth()
+    {
+        var brussels = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BrusselsTz);
+        return (brussels.Year, brussels.Month);
+    }
+
+    /// <summary>True while the Brussels calendar month is still in progress (not yet billable).</summary>
+    public static bool IsCurrentBrusselsMonth(int year, int month)
+    {
+        var (y, m) = CurrentBrusselsYearMonth();
+        return y == year && m == month;
+    }
+
     /// <summary>Assumes <paramref name="unixMs"/> is <strong>milliseconds</strong> (EF / Smappee convention).</summary>
     public static string DescribeUnixMilliseconds(long unixMs)
     {
