@@ -115,6 +115,14 @@
                       >
                         {{ gnucashCellLoading[gnucashCellKey(userRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
                       </button>
+                      <button
+                        type="button"
+                        class="btn-email-invoice"
+                        :disabled="isEmailLoading(userRow.user.id, monthData.year, monthData.month)"
+                        @click="sendInvoiceEmail(userRow.user.id, monthData.year, monthData.month)"
+                      >
+                        {{ isEmailLoading(userRow.user.id, monthData.year, monthData.month) ? '…' : '✉ Email' }}
+                      </button>
                     </div>
                   </template>
                   <template v-else>
@@ -191,6 +199,14 @@
                   @click="insertGnucashCell(selectedUserRow.user.id, monthData.year, monthData.month)"
                 >
                   {{ gnucashCellLoading[gnucashCellKey(selectedUserRow.user.id, monthData.year, monthData.month)] ? '…' : 'GnuCash' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn-email-invoice mobile-email"
+                  :disabled="isEmailLoading(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  @click="sendInvoiceEmail(selectedUserRow.user.id, monthData.year, monthData.month)"
+                >
+                  {{ isEmailLoading(selectedUserRow.user.id, monthData.year, monthData.month) ? '…' : '✉ Email' }}
                 </button>
               </div>
             </template>
@@ -314,6 +330,7 @@ export default {
     // Payment links state: keyed by `${userId}_${year}_${month}`
     const paymentLinks = ref({})
     const paymentLinksLoading = ref({})
+    const emailLoading = ref({})
     const normalizePaymentStatus = (status) =>
       String(status || '').trim().toLowerCase().replace(/^state/, '')
 
@@ -335,6 +352,27 @@ export default {
 
     const isPaymentLinkLoading = (userId, year, month) =>
       !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
+
+    const isEmailLoading = (userId, year, month) =>
+      !!emailLoading.value[paymentLinkKey(userId, year, month)]
+
+    const sendInvoiceEmail = async (userId, year, month) => {
+      const key = paymentLinkKey(userId, year, month)
+      emailLoading.value = { ...emailLoading.value, [key]: true }
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.post(`/api/invoices/${userId}/${year}/${month}/send-email`, null, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        alert(response.data?.message || 'Invoice sent by email.')
+      } catch (err) {
+        console.error('Failed to send invoice email:', err)
+        const msg = err.response?.data?.message || err.response?.data || 'Failed to send invoice email'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        emailLoading.value = { ...emailLoading.value, [key]: false }
+      }
+    }
 
     const handlePaymentLink = async (userId, year, month) => {
       const key = paymentLinkKey(userId, year, month)
@@ -466,6 +504,8 @@ export default {
       canOpenPaymentLink,
       isPaymentPaid,
       isPaymentLinkLoading,
+      isEmailLoading,
+      sendInvoiceEmail,
       handlePaymentLink,
       gnucashPeriodKey,
       gnucashBulkLoading,
@@ -593,6 +633,32 @@ export default {
 .btn-gnucash-cell:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-email-invoice {
+  margin-top: 0.35rem;
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid #6c757d;
+  border-radius: 4px;
+  background: white;
+  color: #495057;
+  cursor: pointer;
+}
+
+.btn-email-invoice:hover:not(:disabled) {
+  background: #495057;
+  color: white;
+}
+
+.btn-email-invoice:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mobile-email {
+  margin-top: 0.5rem;
 }
 
 .mobile-gnucash {

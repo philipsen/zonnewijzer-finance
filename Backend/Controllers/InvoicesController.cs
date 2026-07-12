@@ -6,6 +6,7 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Backend.Services.GnuCash;
+using System.Net;
 
 namespace Backend.Controllers
 {
@@ -19,6 +20,7 @@ namespace Backend.Controllers
         private readonly IMollieService _mollieService;
         private readonly IInvoiceComputationService _invoiceComputation;
         private readonly IGnuCashSyncClient _gnuCashSyncClient;
+        private readonly IEmailService _emailService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<InvoicesController> _logger;
 
@@ -58,6 +60,7 @@ namespace Backend.Controllers
             IMollieService mollieService,
             IInvoiceComputationService invoiceComputation,
             IGnuCashSyncClient gnuCashSyncClient,
+            IEmailService emailService,
             IConfiguration configuration,
             ILogger<InvoicesController> logger)
         {
@@ -67,6 +70,7 @@ namespace Backend.Controllers
             _mollieService = mollieService;
             _invoiceComputation = invoiceComputation;
             _gnuCashSyncClient = gnuCashSyncClient;
+            _emailService = emailService;
             _configuration = configuration;
             _logger = logger;
         }
@@ -763,71 +767,21 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("Generating on-the-fly invoice for app user {UserId}, {Year}-{Month}", userId, year, month);
 
-                var invoiceData = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(userId, year, month, cancellationToken);
-                if (invoiceData == null)
+                var prepared = await BuildInvoicePdfAsync(userId, year, month, createPaymentIfMissing: true, cancellationToken);
+                if (prepared == null)
                     return NotFound("No charging sessions found for this user and month");
 
-                var molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
-
-                // Create a payment record on first PDF download
-                if (molliePayment == null)
-                {
-                    try
-                    {
-                        var invoiceNumber = invoiceData.InvoiceNumber;
-                        var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-                        var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
-
-                        var redirectUrl = _configuration["Mollie:RedirectUrl"];
-                        if (string.IsNullOrWhiteSpace(redirectUrl))
-                            redirectUrl = $"{Request.Scheme}://{Request.Host}";
-
-                        var baseUrl = _configuration["Mollie:BaseUrl"];
-                        var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                            ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
-                            : "";
-
-                        var result = await _mollieService.CreatePaymentAsync(
-                            Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
-
-                        molliePayment = new MolliePayment
-                        {
-                            AppUserId = userId,
-                            Year = year,
-                            Month = month,
-                            MolliePaymentId = result.PaymentId,
-                            CheckoutUrl = result.CheckoutUrl,
-                            Amount = Math.Round(invoiceData.TotalAmount, 2),
-                            Status = result.Status,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        _context.MolliePayments.Add(molliePayment);
-                        _logger.LogInformation("Auto-created payment link on PDF download for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Could not auto-create Mollie payment on PDF download for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
-                }
-
-                molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month);
-                invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
-                invoiceData.IsPaid = molliePayment?.Status == "paid";
-
-                // Generate PDF
-                var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
+                var (invoiceData, pdfBytes) = prepared.Value;
                 var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
 
-                var requester = await _context.Users.FindAsync(currentUserId);
+                var requester = await _context.Users.FindAsync(new object[] { currentUserId }, cancellationToken);
                 _context.EventLogs.Add(new EventLog
                 {
                     Timestamp = DateTime.UtcNow,
                     UserName = requester?.Name ?? $"User {currentUserId}",
                     Action = $"Invoice download for user {userId} – {invoiceData.MonthName}"
                 });
-                await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync(cancellationToken);
 
                 return File(pdfBytes, "application/pdf", fileName);
             }
@@ -836,6 +790,143 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "Error generating invoice PDF for user {UserId}, {Year}-{Month}", userId, year, month);
                 return BadRequest($"Failed to generate invoice: {ex.Message}");
             }
+        }
+
+        [HttpPost("{userId}/{year}/{month}/send-email")]
+        public async Task<IActionResult> SendInvoiceEmail(int userId, int year, int month, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                    return Forbid();
+
+                var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+                if (targetUser == null)
+                    return NotFound("User not found.");
+
+                if (string.IsNullOrWhiteSpace(targetUser.Email))
+                    return BadRequest("This user has no email address.");
+
+                _logger.LogInformation("Sending invoice email for app user {UserId}, {Year}-{Month}", userId, year, month);
+
+                var prepared = await BuildInvoicePdfAsync(userId, year, month, createPaymentIfMissing: true, cancellationToken);
+                if (prepared == null)
+                    return NotFound("No charging sessions found for this user and month");
+
+                var (invoiceData, pdfBytes) = prepared.Value;
+                var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
+                var encodedName = WebUtility.HtmlEncode(invoiceData.UserName);
+                var encodedMonth = WebUtility.HtmlEncode(invoiceData.MonthName);
+                var encodedNumber = WebUtility.HtmlEncode(invoiceData.InvoiceNumber);
+                var subject = $"Factuur {invoiceData.InvoiceNumber} – {invoiceData.MonthName}";
+                var body = $"""
+                    <p>Beste {encodedName},</p>
+                    <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor laadsessies in {encodedMonth}.</p>
+                    <p>Totaalbedrag: <strong>€{invoiceData.TotalAmount:F2}</strong></p>
+                    <p>Voor vragen kunt u contact opnemen met de administratie.</p>
+                    <p>Met vriendelijke groet,<br>Zonnewijzer Finance</p>
+                    """;
+
+                var invoiceBcc = _configuration["Smtp:InvoiceBcc"]?.Trim();
+
+                await _emailService.SendAsync(
+                    targetUser.Email.Trim(),
+                    subject,
+                    body,
+                    new EmailAttachment(fileName, pdfBytes),
+                    invoiceBcc);
+
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"Invoice emailed to {targetUser.Email} for user {userId} – {invoiceData.MonthName}"
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new { message = $"Invoice sent to {targetUser.Email}." });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("SMTP", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError(ex, "SMTP not configured for invoice email to user {UserId}, {Year}-{Month}", userId, year, month);
+                return BadRequest("Email is not configured. Set Smtp:Host, Smtp:Username, Smtp:Password, and Smtp:FromEmail.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error emailing invoice for user {UserId}, {Year}-{Month}", userId, year, month);
+                return BadRequest($"Failed to send invoice email: {ex.Message}");
+            }
+        }
+
+        private async Task<(InvoiceData InvoiceData, byte[] PdfBytes)?> BuildInvoicePdfAsync(
+            int userId,
+            int year,
+            int month,
+            bool createPaymentIfMissing,
+            CancellationToken cancellationToken)
+        {
+            var invoiceData = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(userId, year, month, cancellationToken);
+            if (invoiceData == null)
+                return null;
+
+            var molliePayment = await _context.MolliePayments
+                .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
+
+            if (molliePayment == null && createPaymentIfMissing)
+            {
+                try
+                {
+                    var invoiceNumber = invoiceData.InvoiceNumber;
+                    var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
+                    var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
+
+                    var redirectUrl = _configuration["Mollie:RedirectUrl"];
+                    if (string.IsNullOrWhiteSpace(redirectUrl))
+                        redirectUrl = $"{Request.Scheme}://{Request.Host}";
+
+                    var baseUrl = _configuration["Mollie:BaseUrl"];
+                    var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
+                        : "";
+
+                    var result = await _mollieService.CreatePaymentAsync(
+                        Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
+
+                    molliePayment = new MolliePayment
+                    {
+                        AppUserId = userId,
+                        Year = year,
+                        Month = month,
+                        MolliePaymentId = result.PaymentId,
+                        CheckoutUrl = result.CheckoutUrl,
+                        Amount = Math.Round(invoiceData.TotalAmount, 2),
+                        Status = result.Status,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.MolliePayments.Add(molliePayment);
+                    await _context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("Auto-created payment link for user {UserId}, {Year}-{Month}", userId, year, month);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not auto-create Mollie payment for user {UserId}, {Year}-{Month}", userId, year, month);
+                }
+            }
+
+            molliePayment = await _context.MolliePayments
+                .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
+            invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
+            invoiceData.IsPaid = molliePayment?.Status == "paid";
+
+            var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
+            return (invoiceData, pdfBytes);
         }
 
         [HttpPost("{userId}/{year}/{month}/payment-link")]

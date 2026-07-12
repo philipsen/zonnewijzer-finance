@@ -27,6 +27,7 @@ public class InvoicesControllerTests : IDisposable
     private readonly Mock<IConfiguration> _configMock;
     private readonly InvoiceComputationService _invoiceComputation;
     private readonly Mock<IGnuCashSyncClient> _gnuCashSyncMock;
+    private readonly Mock<IEmailService> _emailMock;
 
     public InvoicesControllerTests()
     {
@@ -40,6 +41,9 @@ public class InvoicesControllerTests : IDisposable
         _configMock = new Mock<IConfiguration>();
         _invoiceComputation = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
         _gnuCashSyncMock = new Mock<IGnuCashSyncClient>();
+        _emailMock = new Mock<IEmailService>();
+        _emailMock.Setup(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
     }
 
     public void Dispose() => _db.Dispose();
@@ -59,6 +63,7 @@ public class InvoicesControllerTests : IDisposable
             _mollieMock.Object,
             _invoiceComputation,
             _gnuCashSyncMock.Object,
+            _emailMock.Object,
             _configMock.Object,
             NullLogger<InvoicesController>.Instance)
         {
@@ -166,6 +171,62 @@ public class InvoicesControllerTests : IDisposable
         Assert.Equal("application/pdf", file.ContentType);
         Assert.NotEmpty(file.FileContents);
         _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendInvoiceEmail_NonAdmin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").SendInvoiceEmail(appUserId, 2024, 4, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+        _emailMock.Verify(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendInvoiceEmail_WithSessions_SendsPdfAttachment()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-email");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 8));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+        _configMock.Setup(c => c["Smtp:InvoiceBcc"]).Returns("zonnewijzer@warmoestuin.nl");
+
+        var result = await BuildController().SendInvoiceEmail(appUserId, 2024, 4, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        _emailMock.Verify(e => e.SendAsync(
+            "cardholder@test.com",
+            It.Is<string>(s => s.Contains("Factuur")),
+            It.IsAny<string>(),
+            It.Is<EmailAttachment>(a => a.Content.Length == 4 && a.FileName.EndsWith(".pdf")),
+            "zonnewijzer@warmoestuin.nl"), Times.Once);
+        var log = await _db.EventLogs.SingleAsync();
+        Assert.Contains("Invoice emailed", log.Action);
+        Assert.NotNull(ok.Value);
+    }
+
+    [Fact]
+    public async Task SendInvoiceEmail_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+        _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().SendInvoiceEmail(2, 2024, 1, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
     }
 
     [Fact]

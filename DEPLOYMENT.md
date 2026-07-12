@@ -59,14 +59,35 @@ BACKEND_PORT=5001
 # App
 APP_PORT=5000
 
-# SMTP (used for password reset emails, via Backend -> SmtpEmailService)
-SMTP_HOST=mail-eu.smtp2go.com
-SMTP_PORT=587
-SMTP_ENABLESSL=true
-SMTP_USERNAME=your-smtp-username
-SMTP_PASSWORD=your-smtp-password
-SMTP_FROM_EMAIL=your-from-email
-SMTP_FROM_NAME=Zonnewijzer Finance
+# SMTP (password reset, invoice email — Backend -> SmtpEmailService / MailKit)
+SMTP_PASSWORD=your-warmoestuin-mailbox-password
+```
+
+### Production secrets (server `.env`)
+
+Host, port, username, from address, invoice BCC, and certificate skip are in `Backend/appsettings.Production.json` (and `docker-compose.production.yml` for skip). **Update these on the deploy host** when changing providers:
+
+| Variable | Used for | Action for Warmoestuin SMTP |
+|----------|----------|-----------------------------|
+| `SMTP_PASSWORD` | `Smtp__Password` | **Replace** old SMTP2GO password with the `zonnewijzer@warmoestuin.nl` mailbox password |
+
+Other backend secrets (unchanged by this SMTP move):
+
+| Variable | Used for |
+|----------|----------|
+| `JWT_KEY` | JWT signing |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth |
+| `MOLLIE_API_KEY` | Payments |
+| `DAEMON_API_KEY` | Backend ↔ integration daemon |
+| `GNUCASH_SYNC_API_KEY` | GnuCash insert API |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Optional first admin seed |
+| `GNUCASH_POSTGRES_URL` | GnuCash sync database |
+| Smappee / Sigenergy vars on daemon | Integration daemon `.env` |
+
+After updating `SMTP_PASSWORD`, redeploy or restart the backend container:
+
+```bash
+docker compose -f docker-compose.production.yml up -d backend
 ```
 
 ### Google OAuth Setup
