@@ -864,8 +864,10 @@ namespace Backend.Controllers
                     <p>Beste {encodedName},</p>
                     <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor laadsessies in {encodedMonth}.</p>
                     <p>Totaalbedrag: <strong>€{invoiceData.TotalAmount:F2}</strong></p>
-                    <p>Voor vragen kunt u contact opnemen met de administratie.</p>
-                    <p>Met vriendelijke groet,<br>Zonnewijzer Finance</p>
+                    <p>Heb je vragen over de factuur, je laadverbruik of ZonneWijzer? Neem dan gerust contact op via <a href="mailto:zonnewijzer@warmoestuin.nl">zonnewijzer@warmoestuin.nl</a>.</p>
+                    <p>Dank dat je gebruik maakt van ZonneWijzer en daarmee bijdraagt aan het lokaal opwekken én delen van duurzame energie.</p>
+                    <p>Warme groet,</p>
+                    <p>Namens collectief ZonneWijzer<br>Administratie</p>
                     """;
 
                 var invoiceBcc = _configuration["Smtp:InvoiceBcc"]?.Trim();
