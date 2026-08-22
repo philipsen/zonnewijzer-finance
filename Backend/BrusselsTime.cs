@@ -53,6 +53,20 @@ public static class BrusselsTime
         return y == year && m == month;
     }
 
+    /// <summary>Monthly invoices bill completed sessions in the Brussels month they ended.</summary>
+    public static bool IsEndedInBrusselsMonth(long? toTimestampMs, int year, int month)
+    {
+        if (!toTimestampMs.HasValue)
+            return false;
+
+        var (y, m) = BrusselsYearMonthFromUnixMilliseconds(toTimestampMs.Value);
+        return y == year && m == month;
+    }
+
+    /// <summary>Completed session ended within [startMs, endMs) in Brussels wall time.</summary>
+    public static bool EndedInUnixMillisecondsRange(long? toTimestampMs, long startMs, long endMsExclusive) =>
+        toTimestampMs.HasValue && toTimestampMs.Value >= startMs && toTimestampMs.Value < endMsExclusive;
+
     public static (int Year, int Month) CurrentBrusselsYearMonth()
     {
         var brussels = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BrusselsTz);

@@ -346,8 +346,11 @@ namespace Backend.Controllers
                         g => g.Key,
                         g => g.Select(x => x.ChargeCardId).ToList());
 
-                var sessionTs = allSessions.Select(cs => cs.FromTimestamp).ToList();
-                var rawMonths = sessionTs
+                var sessionEndTimestamps = allSessions
+                    .Where(cs => cs.ToTimestamp.HasValue)
+                    .Select(cs => cs.ToTimestamp!.Value)
+                    .ToList();
+                var rawMonths = sessionEndTimestamps
                     .Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds)
                     .Distinct()
                     .OrderBy(d => d.Year)
@@ -386,7 +389,7 @@ namespace Backend.Controllers
                                 return false;
                             return allSessions.Any(cs =>
                                 cids.Contains(cs.ChargeCardId) &&
-                                BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                                BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month));
                         })
                         .Select(m => GnucashInvoiceId(user.Id, m.Year, m.Month)))
                     .Distinct()
@@ -436,10 +439,10 @@ namespace Backend.Controllers
                         }
                         var hasCharging = allSessions
                             .Any(cs => cids.Contains(cs.ChargeCardId) &&
-                                      BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month));
+                                      BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month));
                         var kwh = allSessions
                             .Where(cs => cids.Contains(cs.ChargeCardId) &&
-                                        BrusselsTime.IsInBrusselsMonth(cs.FromTimestamp, m.Year, m.Month))
+                                        BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month))
                             .Sum(ChargingSessionEnergy.ChargedKwh);
                         return new
                         {

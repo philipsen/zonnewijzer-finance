@@ -92,6 +92,59 @@ public class InvoiceComputationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildInvoiceDataForAppUser_SessionSpanningMonths_UsesEndMonth()
+    {
+        const int appUserId = 5;
+        _db.Users.Add(new User { Id = appUserId, Email = "span@test.com", Name = "Span", GoogleId = "g5", Role = UserRole.Base });
+        var cid = new ChargeCard { Value = "span-card" };
+        _db.ChargeCards.Add(cid);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid.Id });
+
+        var brusselsTz = TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows() ? "W. Europe Standard Time" : "Europe/Brussels");
+        var startLocal = new DateTime(2026, 6, 30, 22, 0, 0, DateTimeKind.Unspecified);
+        var endLocal = new DateTime(2026, 7, 1, 2, 0, 0, DateTimeKind.Unspecified);
+        var startUtc = TimeZoneInfo.ConvertTimeToUtc(startLocal, brusselsTz);
+        var endUtc = TimeZoneInfo.ConvertTimeToUtc(endLocal, brusselsTz);
+
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, startUtc, endUtc, 12));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 6, PricePerKwh = 0.20m });
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 7, PricePerKwh = 0.30m });
+        await _db.SaveChangesAsync();
+
+        var juneInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 6);
+        var julyInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 7);
+
+        Assert.Null(juneInvoice);
+        Assert.NotNull(julyInvoice);
+        Assert.Equal(12m, julyInvoice!.TotalKwh);
+        Assert.Equal(0.30m, julyInvoice.RatePerKwh);
+        Assert.Equal(3.60m, julyInvoice.TotalAmount);
+        Assert.Single(julyInvoice.Sessions);
+    }
+
+    [Fact]
+    public async Task BuildInvoiceDataForAppUser_OngoingSession_ExcludedUntilEnded()
+    {
+        const int appUserId = 6;
+        _db.Users.Add(new User { Id = appUserId, Email = "ongoing@test.com", Name = "Ongoing", GoogleId = "g6", Role = UserRole.Base });
+        var cid = new ChargeCard { Value = "ongoing-card" };
+        _db.ChargeCards.Add(cid);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid.Id });
+
+        var june = new DateTime(2026, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, june, endUtc: null, 5));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 6, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        var juneInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 6);
+
+        Assert.Null(juneInvoice);
+    }
+
+    [Fact]
     public async Task GetAppUserIdsForRange_ReturnsUsersWithSessionsInWindow()
     {
         var cid = new ChargeCard { Value = "range-card" };
