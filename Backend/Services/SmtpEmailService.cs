@@ -49,8 +49,8 @@ namespace Backend.Services
             var message = new MimeMessage();
             message.From.Add(new MailboxAddress(fromName, fromEmail));
             message.To.Add(MailboxAddress.Parse(toEmail));
-            if (!string.IsNullOrWhiteSpace(bccEmail))
-                message.Bcc.Add(MailboxAddress.Parse(bccEmail.Trim()));
+            foreach (var address in ParseEmailList(bccEmail))
+                message.Bcc.Add(MailboxAddress.Parse(address));
             message.Subject = subject;
 
             var bodyBuilder = new BodyBuilder { HtmlBody = htmlBody };
@@ -86,6 +86,18 @@ namespace Backend.Services
                 throw new InvalidOperationException(
                     $"SMTP connection to {host}:{port} timed out. " +
                     $"On production, use internal Mailcow Postfix (Smtp:Host=postfix) instead of outbound mail.warmoestuin.nl.");
+            }
+        }
+
+        private static IEnumerable<string> ParseEmailList(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                yield break;
+
+            foreach (var part in value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                    yield return part;
             }
         }
     }
