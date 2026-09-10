@@ -514,6 +514,46 @@ export default {
       }
     }
 
+    const downloadMonthOverviewCsv = async () => {
+      if (!selectedPeriod.value) {
+        alert('Select a period.')
+        return
+      }
+      const { year, month } = selectedPeriod.value
+      csvLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.get(`/api/invoices/${year}/${month}/overview.csv`, {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        })
+        const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' })
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `InvoiceOverview_${year}-${String(month).padStart(2, '0')}.csv`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+      } catch (err) {
+        console.error('CSV overview download failed:', err)
+        let msg = 'Failed to download CSV overview'
+        if (err.response?.data instanceof Blob) {
+          try {
+            msg = await err.response.data.text()
+          } catch {
+            /* keep default */
+          }
+        } else {
+          msg = err.response?.data?.message || err.response?.data || err.message || msg
+        }
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        csvLoading.value = false
+      }
+    }
+
     const insertGnucashMonth = async () => {
       if (!selectedPeriod.value) {
         alert('Select a period.')
@@ -613,14 +653,18 @@ export default {
       selectedPeriodKey,
       gnucashBulkLoading,
       emailBulkLoading,
+      csvLoading,
       gnucashCellLoading,
       gnucashCellKey,
       gnucashMonthHasInsertable,
       monthHasEmailable,
+      monthHasCsvExport,
       emailMonthTitle,
+      csvMonthTitle,
       gnucashCellDisabled,
       gnucashCellTitle,
       sendMonthEmails,
+      downloadMonthOverviewCsv,
       insertGnucashMonth,
       insertGnucashCell,
       isOwnerRole,
@@ -739,6 +783,27 @@ export default {
 }
 
 .btn-email-month:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-csv-month {
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #1d78be;
+  border-radius: 4px;
+  background: white;
+  color: #1d78be;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-csv-month:hover:not(:disabled) {
+  background: #1d78be;
+  color: white;
+}
+
+.btn-csv-month:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1078,7 +1143,8 @@ export default {
   }
 
   .btn-gnucash,
-  .btn-email-month {
+  .btn-email-month,
+  .btn-csv-month {
     width: 100%;
   }
 

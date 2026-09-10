@@ -130,6 +130,55 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadMonthOverviewCsv_NonAdmin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        _db.Users.Add(new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").DownloadMonthOverviewCsv(2024, 4, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task DownloadMonthOverviewCsv_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().DownloadMonthOverviewCsv(2024, 1, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task DownloadMonthOverviewCsv_WithSessions_ReturnsCsvWithVatColumns()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-csv");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.30m });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadMonthOverviewCsv(2024, 4, CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("text/csv; charset=utf-8", file.ContentType);
+        Assert.Equal("InvoiceOverview_2024-04.csv", file.FileDownloadName);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Factuurnummer;Gebruiker;kWh;Bedrag excl. BTW;BTW;Bedrag incl. BTW", csv);
+        Assert.Contains("INV-2024-04-U2", csv);
+        Assert.Contains("Card Holder", csv);
+        Assert.Contains("10,00", csv); // kWh
+        Assert.Contains("3,00", csv);  // incl. 10 * 0.30
+        Assert.Contains("TOTAAL", csv);
+    }
+
+    [Fact]
     public async Task GenerateInvoicePdf_NoSessions_ReturnsNotFound()
     {
         await SeedAdminAsync();
