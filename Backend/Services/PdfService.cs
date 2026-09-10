@@ -8,8 +8,6 @@ namespace Backend.Services
 {
     public class PdfService : IPdfService
     {
-        private const decimal VatRate = 0.21m;
-
         private const string SupplierKvK = "68871333";
         private const string SupplierBtwId = "NL857626693B01";
         private const string SupplierName = "DEELSTROOM DELFT";
@@ -129,13 +127,6 @@ namespace Backend.Services
 
         private static IContainer BodyText(IContainer container) =>
             container.DefaultTextStyle(x => x.FontFamily(InvoiceFontSetup.Family).FontSize(11).FontColor(Colors.Black));
-
-        private static (decimal ExclVat, decimal VatAmount) SplitVatInclusive(decimal totalInclVat)
-        {
-            var excl = Math.Round(totalInclVat / (1 + VatRate), 2, MidpointRounding.AwayFromZero);
-            var vat = Math.Round(totalInclVat - excl, 2, MidpointRounding.AwayFromZero);
-            return (excl, vat);
-        }
 
         private static byte[]? TryGeneratePaymentQrCode(string? paymentUrl)
         {
@@ -610,7 +601,7 @@ namespace Backend.Services
 
             var labels = LabelsFor(invoiceData.UsePaymentRequestNotice);
             var (logoPath, sunCornerPath) = ResolveBrandAssets();
-            var (totalExclVat, vatAmount) = SplitVatInclusive(invoiceData.TotalAmount);
+            var (totalExclVat, vatAmount) = InvoiceVat.SplitInclusive(invoiceData.TotalAmount);
             var paymentQrCode = TryGeneratePaymentQrCode(invoiceData.PaymentUrl);
             var sepaQrCode = TryGenerateSepaTransferQrCode(invoiceData);
             var dueDate = invoiceData.GeneratedAt.Date.AddDays(30);

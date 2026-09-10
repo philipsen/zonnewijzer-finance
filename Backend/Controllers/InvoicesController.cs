@@ -826,6 +826,130 @@ namespace Backend.Controllers
             }
         }
 
+        [HttpPost("send-email")]
+        public async Task<IActionResult> SendMonthInvoiceEmails([FromBody] SendMonthInvoicesBody body, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                    return Forbid();
+
+                if (body == null || body.Month is < 1 or > 12 || body.Year < 2000 || body.Year > 2100)
+                    return BadRequest("Invalid year or month.");
+
+                if (RejectIfOngoingInvoiceMonth(body.Year, body.Month) is { } ongoingReject)
+                    return ongoingReject;
+
+                var appUserIds = await _invoiceComputation.GetAppUserIdsForMonthAsync(
+                    body.Year, body.Month, null, cancellationToken);
+                if (appUserIds.Count == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                var targetUsers = await _context.Users
+                    .Where(u => appUserIds.Contains(u.Id))
+                    .OrderBy(u => u.Id)
+                    .ToListAsync(cancellationToken);
+
+                var results = new List<object>();
+                var sent = 0;
+                var skippedNoEmail = 0;
+                var skippedNoSessions = 0;
+                var failed = 0;
+                string? smtpError = null;
+
+                foreach (var targetUser in targetUsers)
+                {
+                    try
+                    {
+                        var attempt = await SendInvoiceEmailToUserAsync(
+                            targetUser, body.Year, body.Month, requestingUser.Name, cancellationToken);
+                        results.Add(new
+                        {
+                            attempt.AppUserId,
+                            attempt.Email,
+                            attempt.Status,
+                            attempt.Detail
+                        });
+                        switch (attempt.Status)
+                        {
+                            case "sent":
+                                sent++;
+                                break;
+                            case "skipped_no_email":
+                                skippedNoEmail++;
+                                break;
+                            case "skipped_no_sessions":
+                                skippedNoSessions++;
+                                break;
+                            default:
+                                failed++;
+                                break;
+                        }
+                    }
+                    catch (InvalidOperationException ex) when (ex.Message.Contains("SMTP", StringComparison.OrdinalIgnoreCase))
+                    {
+                        smtpError = ex.Message;
+                        _logger.LogError(ex, "SMTP not configured while sending month invoices {Year}-{Month}", body.Year, body.Month);
+                        failed++;
+                        results.Add(new
+                        {
+                            AppUserId = targetUser.Id,
+                            Email = targetUser.Email,
+                            Status = "failed",
+                            Detail = "Email is not configured."
+                        });
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        _logger.LogError(ex, "Error emailing invoice for user {UserId}, {Year}-{Month}", targetUser.Id, body.Year, body.Month);
+                        results.Add(new
+                        {
+                            AppUserId = targetUser.Id,
+                            Email = targetUser.Email,
+                            Status = "failed",
+                            Detail = ex.Message
+                        });
+                    }
+                }
+
+                if (sent == 0 && smtpError != null)
+                    return BadRequest("Email is not configured. Set Smtp:Host, Smtp:Username, Smtp:Password, and Smtp:FromEmail.");
+
+                var monthLabel = new DateTime(body.Year, body.Month, 1).ToString("MMMM yyyy");
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = requestingUser.Name,
+                    Action = $"Invoices emailed for {monthLabel}: {sent} sent, {skippedNoEmail} no email, {skippedNoSessions} no sessions, {failed} failed"
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    message = $"Sent {sent} invoice(s) for {monthLabel}.",
+                    sent,
+                    skippedNoEmail,
+                    skippedNoSessions,
+                    failed,
+                    results
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error emailing invoices for {Year}-{Month}", body.Year, body.Month);
+                return BadRequest($"Failed to send invoice emails: {ex.Message}");
+            }
+        }
+
         [HttpPost("{userId}/{year}/{month}/send-email")]
         public async Task<IActionResult> SendInvoiceEmail(int userId, int year, int month, CancellationToken cancellationToken)
         {
@@ -848,49 +972,15 @@ namespace Backend.Controllers
                 if (targetUser == null)
                     return NotFound("User not found.");
 
-                if (string.IsNullOrWhiteSpace(targetUser.Email))
-                    return BadRequest("This user has no email address.");
-
-                _logger.LogInformation("Sending invoice email for app user {UserId}, {Year}-{Month}", userId, year, month);
-
-                var prepared = await BuildInvoicePdfAsync(userId, year, month, createPaymentIfMissing: true, cancellationToken);
-                if (prepared == null)
-                    return NotFound("No charging sessions found for this user and month");
-
-                var (invoiceData, pdfBytes) = prepared.Value;
-                var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
-                var encodedName = WebUtility.HtmlEncode(invoiceData.UserName);
-                var encodedMonth = WebUtility.HtmlEncode(invoiceData.MonthName);
-                var encodedNumber = WebUtility.HtmlEncode(invoiceData.InvoiceNumber);
-                var subject = $"Factuur {invoiceData.InvoiceNumber} – {invoiceData.MonthName}";
-                var body = $"""
-                    <p>Beste {encodedName},</p>
-                    <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor laadsessies in {encodedMonth}.</p>
-                    <p>Totaalbedrag: <strong>€{invoiceData.TotalAmount:F2}</strong></p>
-                    <p>Heb je vragen over de factuur, je laadverbruik of ZonneWijzer? Neem dan gerust contact op via <a href="mailto:zonnewijzer@warmoestuin.nl">zonnewijzer@warmoestuin.nl</a>.</p>
-                    <p>Dank dat je gebruik maakt van ZonneWijzer en daarmee bijdraagt aan het lokaal opwekken én delen van duurzame energie.</p>
-                    <p>Warme groet,</p>
-                    <p>Namens collectief ZonneWijzer<br>Administratie</p>
-                    """;
-
-                var invoiceBcc = _configuration["Smtp:InvoiceBcc"]?.Trim();
-
-                await _emailService.SendAsync(
-                    targetUser.Email.Trim(),
-                    subject,
-                    body,
-                    new EmailAttachment(fileName, pdfBytes),
-                    invoiceBcc);
-
-                _context.EventLogs.Add(new EventLog
+                var attempt = await SendInvoiceEmailToUserAsync(
+                    targetUser, year, month, requestingUser.Name, cancellationToken);
+                return attempt.Status switch
                 {
-                    Timestamp = DateTime.UtcNow,
-                    UserName = requestingUser.Name,
-                    Action = $"Invoice emailed to {targetUser.Email} for user {userId} – {invoiceData.MonthName}"
-                });
-                await _context.SaveChangesAsync(cancellationToken);
-
-                return Ok(new { message = $"Invoice sent to {targetUser.Email}." });
+                    "sent" => Ok(new { message = $"Invoice sent to {targetUser.Email}." }),
+                    "skipped_no_email" => BadRequest("This user has no email address."),
+                    "skipped_no_sessions" => NotFound("No charging sessions found for this user and month"),
+                    _ => BadRequest(attempt.Detail ?? "Failed to send invoice email.")
+                };
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("SMTP", StringComparison.OrdinalIgnoreCase))
             {
@@ -902,6 +992,60 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "Error emailing invoice for user {UserId}, {Year}-{Month}", userId, year, month);
                 return BadRequest($"Failed to send invoice email: {ex.Message}");
             }
+        }
+
+        private sealed record InvoiceEmailSendAttempt(int AppUserId, string? Email, string Status, string? Detail);
+
+        private async Task<InvoiceEmailSendAttempt> SendInvoiceEmailToUserAsync(
+            User targetUser,
+            int year,
+            int month,
+            string requestingUserName,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(targetUser.Email))
+                return new InvoiceEmailSendAttempt(targetUser.Id, targetUser.Email, "skipped_no_email", "This user has no email address.");
+
+            _logger.LogInformation("Sending invoice email for app user {UserId}, {Year}-{Month}", targetUser.Id, year, month);
+
+            var prepared = await BuildInvoicePdfAsync(targetUser.Id, year, month, createPaymentIfMissing: true, cancellationToken);
+            if (prepared == null)
+                return new InvoiceEmailSendAttempt(targetUser.Id, targetUser.Email, "skipped_no_sessions", "No charging sessions found for this user and month");
+
+            var (invoiceData, pdfBytes) = prepared.Value;
+            var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
+            var encodedName = WebUtility.HtmlEncode(invoiceData.UserName);
+            var encodedMonth = WebUtility.HtmlEncode(invoiceData.MonthName);
+            var encodedNumber = WebUtility.HtmlEncode(invoiceData.InvoiceNumber);
+            var subject = $"Factuur {invoiceData.InvoiceNumber} – {invoiceData.MonthName}";
+            var body = $"""
+                <p>Beste {encodedName},</p>
+                <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor laadsessies in {encodedMonth}.</p>
+                <p>Totaalbedrag: <strong>€{invoiceData.TotalAmount:F2}</strong></p>
+                <p>Heb je vragen over de factuur, je laadverbruik of ZonneWijzer? Neem dan gerust contact op via <a href="mailto:zonnewijzer@warmoestuin.nl">zonnewijzer@warmoestuin.nl</a>.</p>
+                <p>Dank dat je gebruik maakt van ZonneWijzer en daarmee bijdraagt aan het lokaal opwekken én delen van duurzame energie.</p>
+                <p>Warme groet,</p>
+                <p>Namens collectief ZonneWijzer<br>Administratie</p>
+                """;
+
+            var invoiceBcc = _configuration["Smtp:InvoiceBcc"]?.Trim();
+
+            await _emailService.SendAsync(
+                targetUser.Email.Trim(),
+                subject,
+                body,
+                new EmailAttachment(fileName, pdfBytes),
+                invoiceBcc);
+
+            _context.EventLogs.Add(new EventLog
+            {
+                Timestamp = DateTime.UtcNow,
+                UserName = requestingUserName,
+                Action = $"Invoice emailed to {targetUser.Email} for user {targetUser.Id} – {invoiceData.MonthName}"
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return new InvoiceEmailSendAttempt(targetUser.Id, targetUser.Email, "sent", null);
         }
 
         private async Task<(InvoiceData InvoiceData, byte[] PdfBytes)?> BuildInvoicePdfAsync(

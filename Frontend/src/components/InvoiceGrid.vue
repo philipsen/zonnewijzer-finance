@@ -16,11 +16,10 @@
         <p class="description">
           Click on any link to generate and download an invoice PDF based on charging session data.
         </p>
-        <div v-if="isOwnerRole && months.length" class="gnucash-toolbar">
-          <span class="gnucash-toolbar-title">GnuCash</span>
+        <div v-if="months.length" class="gnucash-toolbar">
           <label class="gnucash-field">
             <span>Period</span>
-            <select v-model="gnucashPeriodKey" class="gnucash-select">
+            <select v-model="selectedPeriodKey" class="gnucash-select">
               <option
                 v-for="m in months"
                 :key="`${m.year}-${m.month}`"
@@ -32,13 +31,25 @@
           </label>
           <button
             type="button"
-            class="btn-gnucash"
-            :disabled="gnucashBulkLoading || !gnucashMonthHasInsertable"
-            :title="gnucashMonthHasInsertable ? '' : 'No sessions to insert, or every invoice for this period is already in GnuCash.'"
-            @click="insertGnucashMonth"
+            class="btn-email-month"
+            :disabled="emailBulkLoading || !monthHasEmailable"
+            :title="emailMonthTitle"
+            @click="sendMonthEmails"
           >
-            {{ gnucashBulkLoading ? '…' : 'Insert month (all users)' }}
+            {{ emailBulkLoading ? '…' : 'Email month (all users)' }}
           </button>
+          <template v-if="isOwnerRole">
+            <span class="gnucash-toolbar-title">GnuCash</span>
+            <button
+              type="button"
+              class="btn-gnucash"
+              :disabled="gnucashBulkLoading || !gnucashMonthHasInsertable"
+              :title="gnucashMonthHasInsertable ? '' : 'No sessions to insert, or every invoice for this period is already in GnuCash.'"
+              @click="insertGnucashMonth"
+            >
+              {{ gnucashBulkLoading ? '…' : 'Insert month (all users)' }}
+            </button>
+          </template>
         </div>
       </div>
 
@@ -239,8 +250,9 @@ export default {
     const error = ref('')
     const selectedUserId = ref(null)
 
-    const gnucashPeriodKey = ref('')
+    const selectedPeriodKey = ref('')
     const gnucashBulkLoading = ref(false)
+    const emailBulkLoading = ref(false)
     const gnucashCellLoading = ref({})
     const isOwnerRole = ref(false)
     const enableOnlinePaymentLinks = ref(false)
@@ -250,17 +262,38 @@ export default {
       return gridData.value.find(row => row.user.id === selectedUserId.value) || null
     })
 
-    const gnucashMonthHasInsertable = computed(() => {
-      const parts = gnucashPeriodKey.value.split('-')
-      if (parts.length !== 2 || !gridData.value?.length) return false
-      const y = parseInt(parts[0], 10)
-      const mo = parseInt(parts[1], 10)
-      if (Number.isNaN(y) || Number.isNaN(mo)) return false
-      for (const row of gridData.value) {
-        const inv = row.invoices.find(i => i.year === y && i.month === mo)
-        if (inv?.hasChargingSessions && !inv.gnucashInvoiceInserted) return true
-      }
-      return false
+    const selectedPeriod = computed(() => {
+      const parts = selectedPeriodKey.value.split('-')
+      if (parts.length !== 2) return null
+      const year = parseInt(parts[0], 10)
+      const month = parseInt(parts[1], 10)
+      if (Number.isNaN(year) || Number.isNaN(month)) return null
+      return months.value.find(m => m.year === year && m.month === month) || { year, month, name: `${year}-${String(month).padStart(2, '0')}`, isOngoingMonth: false }
+    })
+
+    const selectedMonthInvoices = computed(() => {
+      if (!selectedPeriod.value || !gridData.value?.length) return []
+      const { year, month } = selectedPeriod.value
+      return gridData.value
+        .map(row => row.invoices.find(i => i.year === year && i.month === month))
+        .filter(inv => inv?.hasChargingSessions)
+    })
+
+    const gnucashMonthHasInsertable = computed(() =>
+      selectedMonthInvoices.value.some(inv => !inv.gnucashInvoiceInserted)
+    )
+
+    const monthHasEmailable = computed(() =>
+      !!selectedPeriod.value && !selectedPeriod.value.isOngoingMonth && selectedMonthInvoices.value.length > 0
+    )
+
+    const emailMonthTitle = computed(() => {
+      if (!selectedPeriod.value) return 'Select a period.'
+      if (selectedPeriod.value.isOngoingMonth)
+        return 'Email is not available for the current month until the billing period ends.'
+      if (selectedMonthInvoices.value.length === 0)
+        return 'No invoices to send for this period.'
+      return `Email ${selectedMonthInvoices.value.length} invoice(s) for ${selectedPeriod.value.name}.`
     })
 
     const fetchInvoicesGrid = async (options = {}) => {
@@ -284,8 +317,13 @@ export default {
         enableOnlinePaymentLinks.value = response.data.enableOnlinePaymentLinks === true
 
         if (response.data.months?.length) {
-          const last = response.data.months[response.data.months.length - 1]
-          gnucashPeriodKey.value = `${last.year}-${last.month}`
+          const keys = response.data.months.map(m => `${m.year}-${m.month}`)
+          if (!keys.includes(selectedPeriodKey.value)) {
+            const completed = response.data.months.filter(m => !m.isOngoingMonth)
+            const pool = completed.length ? completed : response.data.months
+            const pick = pool[pool.length - 1]
+            selectedPeriodKey.value = `${pick.year}-${pick.month}`
+          }
         }
 
         // Pre-select user for the mobile view (keep selection when refetching if still present)
@@ -420,14 +458,47 @@ export default {
     const gnucashCellTitle = (monthData) =>
       monthData.gnucashInvoiceInserted ? 'This invoice is already in GnuCash.' : ''
 
-    const insertGnucashMonth = async () => {
-      const parts = gnucashPeriodKey.value.split('-')
-      if (parts.length !== 2) {
+    const sendMonthEmails = async () => {
+      if (!selectedPeriod.value) {
         alert('Select a period.')
         return
       }
-      const year = parseInt(parts[0], 10)
-      const month = parseInt(parts[1], 10)
+      const { year, month, name } = selectedPeriod.value
+      const count = selectedMonthInvoices.value.length
+      if (!window.confirm(`Send ${count} invoice(s) for ${name} by email?`))
+        return
+
+      emailBulkLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.post('/api/invoices/send-email', { year, month }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        const data = response.data || {}
+        const lines = [data.message || `Sent ${data.sent ?? 0} invoice(s) for ${name}.`]
+        if (data.skippedNoEmail)
+          lines.push(`Skipped (no email): ${data.skippedNoEmail}`)
+        if (data.failed)
+          lines.push(`Failed: ${data.failed}`)
+        const failedRows = (data.results || []).filter(r => r.status === 'failed')
+        for (const row of failedRows.slice(0, 8))
+          lines.push(`- ${row.email || `user ${row.appUserId}`}: ${row.detail || 'failed'}`)
+        alert(lines.join('\n'))
+      } catch (err) {
+        console.error('Failed to send month invoices:', err)
+        const msg = err.response?.data?.message || err.response?.data || 'Failed to send invoice emails'
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        emailBulkLoading.value = false
+      }
+    }
+
+    const insertGnucashMonth = async () => {
+      if (!selectedPeriod.value) {
+        alert('Select a period.')
+        return
+      }
+      const { year, month } = selectedPeriod.value
       gnucashBulkLoading.value = true
       try {
         const token = localStorage.getItem('token')
@@ -518,13 +589,17 @@ export default {
       isEmailLoading,
       sendInvoiceEmail,
       handlePaymentLink,
-      gnucashPeriodKey,
+      selectedPeriodKey,
       gnucashBulkLoading,
+      emailBulkLoading,
       gnucashCellLoading,
       gnucashCellKey,
       gnucashMonthHasInsertable,
+      monthHasEmailable,
+      emailMonthTitle,
       gnucashCellDisabled,
       gnucashCellTitle,
+      sendMonthEmails,
       insertGnucashMonth,
       insertGnucashCell,
       isOwnerRole,
@@ -622,6 +697,27 @@ export default {
 }
 
 .btn-gnucash:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-email-month {
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #495057;
+  border-radius: 4px;
+  background: white;
+  color: #495057;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-email-month:hover:not(:disabled) {
+  background: #495057;
+  color: white;
+}
+
+.btn-email-month:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -960,7 +1056,8 @@ export default {
     align-items: stretch;
   }
 
-  .btn-gnucash {
+  .btn-gnucash,
+  .btn-email-month {
     width: 100%;
   }
 

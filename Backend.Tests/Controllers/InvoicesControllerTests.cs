@@ -272,6 +272,130 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task SendMonthInvoiceEmails_NonAdmin_ReturnsForbid()
+    {
+        await SeedAdminAsync();
+        var regular = new User { Id = 2, Email = "u@test.com", Name = "U", GoogleId = "g2", Role = UserRole.Base };
+        _db.Users.Add(regular);
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController(userId: "2").SendMonthInvoiceEmails(
+            new SendMonthInvoicesBody { Year = 2024, Month = 4 }, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+        _emailMock.Verify(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMonthInvoiceEmails_OngoingMonth_ReturnsBadRequest()
+    {
+        await SeedAdminAsync();
+        var (year, month) = BrusselsTime.CurrentBrusselsYearMonth();
+
+        var result = await BuildController().SendMonthInvoiceEmails(
+            new SendMonthInvoicesBody { Year = year, Month = month }, CancellationToken.None);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("current month", bad.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
+        _emailMock.Verify(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMonthInvoiceEmails_NoSessions_ReturnsNotFound()
+    {
+        await SeedAdminAsync();
+
+        var result = await BuildController().SendMonthInvoiceEmails(
+            new SendMonthInvoicesBody { Year = 2024, Month = 1 }, CancellationToken.None);
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Contains("No charging sessions", notFound.Value!.ToString());
+    }
+
+    [Fact]
+    public async Task SendMonthInvoiceEmails_SendsAllUsersWithSessions()
+    {
+        await SeedAdminAsync();
+        _db.Users.Add(new User { Id = 2, Email = "one@test.com", Name = "One", GoogleId = "g2", Role = UserRole.Base });
+        _db.Users.Add(new User { Id = 3, Email = "two@test.com", Name = "Two", GoogleId = "g3", Role = UserRole.Base });
+        var cid1 = await AddChargeCardAsync("bulk-email-1");
+        var cid2 = await AddChargeCardAsync("bulk-email-2");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cid1 });
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 3, ChargeCardId = cid2 });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid1, 1, t, t.AddHours(1), 8));
+        _db.ChargingSessions.Add(TestData.Session(cid2, 1, t, t.AddHours(1), 5));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().SendMonthInvoiceEmails(
+            new SendMonthInvoicesBody { Year = 2024, Month = 4 }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        _emailMock.Verify(e => e.SendAsync(
+            "one@test.com",
+            It.Is<string>(s => s.Contains("Factuur")),
+            It.IsAny<string>(),
+            It.Is<EmailAttachment>(a => a.FileName.EndsWith(".pdf")),
+            It.IsAny<string?>()), Times.Once);
+        _emailMock.Verify(e => e.SendAsync(
+            "two@test.com",
+            It.Is<string>(s => s.Contains("Factuur")),
+            It.IsAny<string>(),
+            It.Is<EmailAttachment>(a => a.FileName.EndsWith(".pdf")),
+            It.IsAny<string?>()), Times.Once);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(2, doc.RootElement.GetProperty("sent").GetInt32());
+        Assert.Equal(0, doc.RootElement.GetProperty("failed").GetInt32());
+        Assert.Contains(_db.EventLogs, l => l.Action.Contains("Invoices emailed for"));
+    }
+
+    [Fact]
+    public async Task SendMonthInvoiceEmails_SkipsUsersWithoutEmail()
+    {
+        await SeedAdminAsync();
+        _db.Users.Add(new User { Id = 2, Email = "has@test.com", Name = "Has", GoogleId = "g2", Role = UserRole.Base });
+        _db.Users.Add(new User { Id = 3, Email = " ", Name = "NoMail", GoogleId = "g3", Role = UserRole.Base });
+        var cid1 = await AddChargeCardAsync("bulk-skip-1");
+        var cid2 = await AddChargeCardAsync("bulk-skip-2");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cid1 });
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 3, ChargeCardId = cid2 });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid1, 1, t, t.AddHours(1), 8));
+        _db.ChargingSessions.Add(TestData.Session(cid2, 1, t, t.AddHours(1), 5));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().SendMonthInvoiceEmails(
+            new SendMonthInvoicesBody { Year = 2024, Month = 4 }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        _emailMock.Verify(e => e.SendAsync(
+            "has@test.com",
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<EmailAttachment?>(),
+            It.IsAny<string?>()), Times.Once);
+        _emailMock.Verify(e => e.SendAsync(
+            It.Is<string>(addr => addr != "has@test.com"),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<EmailAttachment?>(),
+            It.IsAny<string?>()), Times.Never);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(1, doc.RootElement.GetProperty("sent").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("skippedNoEmail").GetInt32());
+    }
+
+    [Fact]
     public async Task CreatePaymentLink_OngoingMonth_ReturnsBadRequest()
     {
         await SeedAdminAsync();
