@@ -6,7 +6,9 @@ using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Backend.Services.GnuCash;
+using System.Globalization;
 using System.Net;
+using System.Text;
 
 namespace Backend.Controllers
 {
@@ -824,6 +826,92 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "Error generating invoice PDF for user {UserId}, {Year}-{Month}", userId, year, month);
                 return BadRequest($"Failed to generate invoice: {ex.Message}");
             }
+        }
+
+        [HttpGet("{year:int}/{month:int}/overview.csv")]
+        public async Task<IActionResult> DownloadMonthOverviewCsv(int year, int month, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                    return Forbid();
+
+                if (month is < 1 or > 12 || year < 2000 || year > 2100)
+                    return BadRequest("Invalid year or month.");
+
+                var appUserIds = await _invoiceComputation.GetAppUserIdsForMonthAsync(
+                    year, month, null, cancellationToken);
+                if (appUserIds.Count == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                var culture = CultureInfo.GetCultureInfo("nl-NL");
+                var sb = new StringBuilder();
+                sb.AppendLine("Factuurnummer;Gebruiker;kWh;Bedrag excl. BTW;BTW;Bedrag incl. BTW");
+
+                decimal totalKwh = 0m;
+                decimal totalExcl = 0m;
+                decimal totalVat = 0m;
+                decimal totalIncl = 0m;
+                var rowCount = 0;
+
+                foreach (var appUserId in appUserIds)
+                {
+                    var data = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(
+                        appUserId, year, month, cancellationToken);
+                    if (data == null)
+                        continue;
+
+                    var (exclVat, vatAmount) = InvoiceVat.SplitInclusive(data.TotalAmount);
+                    sb.Append(CsvEscape(data.InvoiceNumber)).Append(';')
+                        .Append(CsvEscape(data.UserName)).Append(';')
+                        .Append(data.TotalKwh.ToString("0.00", culture)).Append(';')
+                        .Append(exclVat.ToString("0.00", culture)).Append(';')
+                        .Append(vatAmount.ToString("0.00", culture)).Append(';')
+                        .Append(data.TotalAmount.ToString("0.00", culture))
+                        .AppendLine();
+
+                    totalKwh += data.TotalKwh;
+                    totalExcl += exclVat;
+                    totalVat += vatAmount;
+                    totalIncl += data.TotalAmount;
+                    rowCount++;
+                }
+
+                if (rowCount == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                sb.Append(CsvEscape("TOTAAL")).Append(';')
+                    .Append(';')
+                    .Append(totalKwh.ToString("0.00", culture)).Append(';')
+                    .Append(totalExcl.ToString("0.00", culture)).Append(';')
+                    .Append(totalVat.ToString("0.00", culture)).Append(';')
+                    .Append(totalIncl.ToString("0.00", culture))
+                    .AppendLine();
+
+                var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+                var fileName = $"InvoiceOverview_{year}-{month:D2}.csv";
+                return File(bytes, "text/csv; charset=utf-8", fileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating invoice overview CSV for {Year}-{Month}", year, month);
+                return BadRequest($"Failed to generate overview CSV: {ex.Message}");
+            }
+        }
+
+        private static string CsvEscape(string? value)
+        {
+            var text = value ?? string.Empty;
+            if (text.Contains('"') || text.Contains(';') || text.Contains('\n') || text.Contains('\r'))
+                return $"\"{text.Replace("\"", "\"\"")}\"";
+            return text;
         }
 
         [HttpPost("send-email")]

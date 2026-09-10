@@ -38,6 +38,15 @@
           >
             {{ emailBulkLoading ? '…' : 'Email month (all users)' }}
           </button>
+          <button
+            type="button"
+            class="btn-csv-month"
+            :disabled="csvLoading || !monthHasCsvExport"
+            :title="csvMonthTitle"
+            @click="downloadMonthOverviewCsv"
+          >
+            {{ csvLoading ? '…' : 'Download CSV' }}
+          </button>
           <template v-if="isOwnerRole">
             <span class="gnucash-toolbar-title">GnuCash</span>
             <button
@@ -253,6 +262,7 @@ export default {
     const selectedPeriodKey = ref('')
     const gnucashBulkLoading = ref(false)
     const emailBulkLoading = ref(false)
+    const csvLoading = ref(false)
     const gnucashCellLoading = ref({})
     const isOwnerRole = ref(false)
     const enableOnlinePaymentLinks = ref(false)
@@ -287,6 +297,10 @@ export default {
       !!selectedPeriod.value && !selectedPeriod.value.isOngoingMonth && selectedMonthInvoices.value.length > 0
     )
 
+    const monthHasCsvExport = computed(() =>
+      !!selectedPeriod.value && selectedMonthInvoices.value.length > 0
+    )
+
     const emailMonthTitle = computed(() => {
       if (!selectedPeriod.value) return 'Select a period.'
       if (selectedPeriod.value.isOngoingMonth)
@@ -294,6 +308,13 @@ export default {
       if (selectedMonthInvoices.value.length === 0)
         return 'No invoices to send for this period.'
       return `Email ${selectedMonthInvoices.value.length} invoice(s) for ${selectedPeriod.value.name}.`
+    })
+
+    const csvMonthTitle = computed(() => {
+      if (!selectedPeriod.value) return 'Select a period.'
+      if (selectedMonthInvoices.value.length === 0)
+        return 'No invoices to export for this period.'
+      return `Download CSV overview for ${selectedPeriod.value.name} (${selectedMonthInvoices.value.length} invoice(s)).`
     })
 
     const fetchInvoicesGrid = async (options = {}) => {
