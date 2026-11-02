@@ -209,8 +209,35 @@ public class InvoicesControllerTests : IDisposable
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
         Assert.NotEmpty(file.FileContents);
-        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => d.UsePaymentRequestNotice)), Times.Once);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d =>
+            d.UsePaymentRequestNotice && d.IsPaid && d.PaymentUrl == "https://checkout")), Times.Once);
         _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateInvoicePdf_WithoutExistingPayment_AddsMollieCheckoutUrl()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "pay@test.com", Name = "Pay", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-pdf-mollie");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 8));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.25m });
+        await _db.SaveChangesAsync();
+
+        _mollieMock.Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new MolliePaymentResult("tr_pdf", "https://checkout.mollie", "open"));
+        _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        var result = await BuildController().GenerateInvoicePdf(appUserId, 2024, 4, CancellationToken.None);
+
+        Assert.IsType<FileContentResult>(result);
+        _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d =>
+            d.UsePaymentRequestNotice && !d.IsPaid && d.PaymentUrl == "https://checkout.mollie" && d.TotalAmount == 2m)), Times.Once);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(2.25m, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        Assert.Equal(2.25m, (await _db.MolliePayments.SingleAsync()).Amount);
     }
 
     [Fact]
@@ -235,7 +262,7 @@ public class InvoicesControllerTests : IDisposable
 
         Assert.IsType<FileContentResult>(result);
         _pdfMock.Verify(p => p.GenerateInvoicePdf(It.Is<InvoiceData>(d => !d.UsePaymentRequestNotice && d.PaymentUrl == "https://checkout")), Times.Once);
-        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(2.25m, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
     }
 
     [Fact]

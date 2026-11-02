@@ -27,7 +27,7 @@ namespace Backend.Services
         public string? PaymentUrl { get; set; }
         public bool IsPaid { get; set; }
 
-        /// <summary>When true, omit online payment link/QR and show Dutch payment-request notice instead.</summary>
+        /// <summary>When true, show the Dutch bank-transfer notice. A Mollie checkout link is included when <see cref="PaymentUrl"/> is set.</summary>
         public bool UsePaymentRequestNotice { get; set; }
     }
 

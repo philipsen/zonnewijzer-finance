@@ -17,10 +17,6 @@ namespace Backend.Services
         private const string BillingEmail = "ZonneWijzer@Warmoestuin.nl";
         private const string CustomerPortalUrl = "https://zonnewijzer.zonneklaar-consulting.com/";
 
-        private const string SupplierIban = "NL40TRIO0321247604";
-        private const string SupplierBic = "TRIONL2U";
-        private const string SupplierBankAccountName = "Coöperatie Deelstroom Delft U.A.";
-
         private const string BrandBlue = "#1D78BE";
         private const string MutedGrey = "#9F9F9F";
         private const string PaymentBoxBackground = "#E3F0F8";
@@ -46,6 +42,7 @@ namespace Backend.Services
             string PaymentPaid,
             string PaymentDue,
             string PayOnline,
+            string IdealSurcharge,
             string QrHint,
             string ScanToPay,
             string PaymentRequestNotice,
@@ -79,7 +76,8 @@ namespace Backend.Services
                     PaymentTitle: "Betaling",
                     PaymentPaid: "✓ Deze factuur is betaald. Er is geen actie vereist.",
                     PaymentDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
-                    PayOnline: "Betaal online:",
+                    PayOnline: "Pay with Wero",
+                    IdealSurcharge: "Betalen met iDEAL kost € 0,25 extra.",
                     QrHint: "Scannen kan ook via de QR-code.",
                     ScanToPay: "Scan om te betalen",
                     PaymentRequestNotice: "Gelieve het bedrag over te maken op rekening NL40 TRIO 0321 2476 04, t.n.v. Coöperatie Deelstroom Delft U.A., onder vermelding van het factuurnummer.",
@@ -110,7 +108,8 @@ namespace Backend.Services
                     PaymentTitle: "Payment",
                     PaymentPaid: "✓ This invoice has been paid. No further action required.",
                     PaymentDue: "Please remit payment within 30 days of invoice date.",
-                    PayOnline: "Pay online:",
+                    PayOnline: "Pay with Wero",
+                    IdealSurcharge: "Using iDEAL adds a €0.25 surcharge.",
                     QrHint: "If scanning is easier, use the QR code.",
                     ScanToPay: "Scan to pay",
                     PaymentRequestNotice: "You will receive a separate payment request for this amount.",
@@ -145,73 +144,38 @@ namespace Backend.Services
             return pngQrCode.GetGraphic(8);
         }
 
-        private static string BuildSepaEpcPayload(
-            string iban,
-            string beneficiaryName,
-            decimal amountEur,
-            string remittanceText,
-            string? bic = null)
+        private static void ComposeMolliePaymentLink(ColumnDescriptor column, InvoicePdfLabels labels, string paymentUrl)
         {
-            static string TrimMax(string value, int max) =>
-                value.Length <= max ? value : value[..max];
-
-            var cleanIban = new string(iban.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
-            var name = TrimMax(beneficiaryName.Trim(), 70);
-            var remittance = TrimMax(remittanceText.Trim(), 140);
-            var amount = Math.Round(amountEur, 2, MidpointRounding.AwayFromZero);
-
-            // EPC QR (Belgian/Dutch banking apps): "SCT" credit transfer.
-            // Line endings must be LF, not CRLF.
-            // Fields:
-            //  1 Service tag
-            //  2 Version
-            //  3 Character set
-            //  4 Identification (SCT)
-            //  5 BIC (optional but recommended)
-            //  6 Beneficiary name
-            //  7 IBAN
-            //  8 Amount (EUR)
-            //  9 Purpose (optional)
-            // 10 Remittance information (unstructured)
-            // 11 Information (optional)
-            var lines = new List<string>
+            var qrCode = TryGeneratePaymentQrCode(paymentUrl);
+            column.Item().PaddingTop(10).Row(row =>
             {
-                "BCD",
-                "002",
-                "1",
-                "SCT",
-                bic?.Trim() ?? string.Empty,
-                name,
-                cleanIban,
-                $"EUR{amount:0.00}",
-                string.Empty,
-                remittance,
-                string.Empty
-            };
+                row.RelativeItem().Column(linkCol =>
+                {
+                    linkCol.Item().Text(labels.PayOnline).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(12);
+                    linkCol.Item().PaddingTop(2).Text(labels.IdealSurcharge)
+                        .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
+                    linkCol.Item().PaddingTop(6).Text(text =>
+                    {
+                        text.Hyperlink(paymentUrl, paymentUrl)
+                            .FontFamily(InvoiceFontSetup.Family).FontColor(BrandBlue).FontSize(10);
+                    });
+                    if (qrCode != null)
+                    {
+                        linkCol.Item().PaddingTop(3).Text(labels.QrHint)
+                            .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
+                    }
+                });
 
-            return string.Join("\n", lines);
-        }
-
-        private static byte[]? TryGenerateSepaTransferQrCode(InvoiceData invoiceData)
-        {
-            // Only generate for bank-transfer style invoices.
-            if (!invoiceData.UsePaymentRequestNotice)
-                return null;
-
-            if (invoiceData.TotalAmount <= 0)
-                return null;
-
-            var payload = BuildSepaEpcPayload(
-                iban: SupplierIban,
-                beneficiaryName: SupplierBankAccountName,
-                amountEur: invoiceData.TotalAmount,
-                remittanceText: invoiceData.InvoiceNumber,
-                bic: SupplierBic);
-
-            using var qrGenerator = new QRCodeGenerator();
-            using var qrData = qrGenerator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.Q);
-            var pngQrCode = new PngByteQRCode(qrData);
-            return pngQrCode.GetGraphic(8);
+                if (qrCode != null)
+                {
+                    row.ConstantItem(120).AlignRight().Column(qrCol =>
+                    {
+                        qrCol.Item().AlignCenter().Text(labels.ScanToPay)
+                            .FontFamily(InvoiceFontSetup.Family).FontSize(9).Bold();
+                        qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(qrCode);
+                    });
+                }
+            });
         }
 
         private static (string? Logo, string? SunCorner) ResolveBrandAssets()
@@ -425,9 +389,7 @@ namespace Backend.Services
         private static void ComposePaymentSection(
             IContainer container,
             InvoicePdfLabels labels,
-            InvoiceData invoiceData,
-            byte[]? paymentQrCode,
-            byte[]? sepaQrCode)
+            InvoiceData invoiceData)
         {
             container.Background(PaymentBoxBackground).Padding(12).Column(col =>
             {
@@ -436,25 +398,20 @@ namespace Backend.Services
 
                 if (invoiceData.UsePaymentRequestNotice)
                 {
-                    col.Item().PaddingTop(8).Text(labels.PaymentDue).FontFamily(InvoiceFontSetup.Family).FontSize(12);
-                    col.Item().PaddingTop(10).Row(row =>
+                    if (invoiceData.IsPaid)
                     {
-                        row.RelativeItem().Column(left =>
-                        {
-                            left.Item().Text(labels.PaymentRequestNotice).FontFamily(InvoiceFontSetup.Family).FontSize(12);
-                            left.Item().PaddingTop(10).Text(labels.QrHint)
-                                .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
-                        });
+                        col.Item().PaddingTop(12).Background(Colors.Green.Lighten4).Padding(10)
+                            .Text(labels.PaymentPaid)
+                            .FontFamily(InvoiceFontSetup.Family).Bold().FontColor(Colors.Green.Darken2);
+                    }
+                    else
+                    {
+                        col.Item().PaddingTop(8).Text(labels.PaymentDue).FontFamily(InvoiceFontSetup.Family).FontSize(12);
+                        col.Item().PaddingTop(10).Text(labels.PaymentRequestNotice).FontFamily(InvoiceFontSetup.Family).FontSize(12);
+                        if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
+                            ComposeMolliePaymentLink(col, labels, invoiceData.PaymentUrl);
+                    }
 
-                        if (sepaQrCode != null)
-                        {
-                            row.ConstantItem(120).AlignRight().Column(qrCol =>
-                            {
-                                qrCol.Item().AlignCenter().Text(labels.ScanToPay).FontFamily(InvoiceFontSetup.Family).FontSize(9).Bold();
-                                qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(sepaQrCode);
-                            });
-                        }
-                    });
                     col.Item().PaddingTop(12).Text(labels.PaymentContact)
                         .FontFamily(InvoiceFontSetup.Family).FontSize(12).FontColor(MutedGrey);
                     return;
@@ -470,50 +427,7 @@ namespace Backend.Services
                 {
                     col.Item().PaddingTop(8).Text(labels.PaymentDue).FontFamily(InvoiceFontSetup.Family).FontSize(12);
                     if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
-                    {
-                        col.Item().PaddingTop(10).Text(labels.PayOnline).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(12);
-                        col.Item().PaddingTop(6).Row(row =>
-                        {
-                            row.RelativeItem().Column(linkCol =>
-                            {
-                                linkCol.Item().Text(invoiceData.PaymentUrl)
-                                    .FontFamily(InvoiceFontSetup.Family).FontColor(BrandBlue).FontSize(10);
-                                linkCol.Item().PaddingTop(3).Text(labels.QrHint)
-                                    .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
-                            });
-
-                            if (paymentQrCode != null)
-                            {
-                                row.ConstantItem(120).AlignRight().Column(qrCol =>
-                                {
-                                    qrCol.Item().AlignCenter().Text(labels.ScanToPay).FontFamily(InvoiceFontSetup.Family).FontSize(9).Bold();
-                                    qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(paymentQrCode);
-                                });
-                            }
-                        });
-                    }
-
-                    // Also show SEPA bank-transfer QR as a fallback for regular invoices.
-                    if (sepaQrCode != null)
-                    {
-                        col.Item().PaddingTop(12).Text("Of maak het bedrag over via bankoverschrijving:")
-                            .FontFamily(InvoiceFontSetup.Family).Bold().FontSize(12);
-                        col.Item().PaddingTop(6).Row(row =>
-                        {
-                            row.RelativeItem().Column(left =>
-                            {
-                                left.Item().Text(labels.PaymentRequestNotice).FontFamily(InvoiceFontSetup.Family).FontSize(12);
-                                left.Item().PaddingTop(10).Text(labels.QrHint)
-                                    .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
-                            });
-
-                            row.ConstantItem(120).AlignRight().Column(qrCol =>
-                            {
-                                qrCol.Item().AlignCenter().Text(labels.ScanToPay).FontFamily(InvoiceFontSetup.Family).FontSize(9).Bold();
-                                qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(sepaQrCode);
-                            });
-                        });
-                    }
+                        ComposeMolliePaymentLink(col, labels, invoiceData.PaymentUrl);
                 }
 
                 col.Item().PaddingTop(12).Text(labels.PaymentContact)
@@ -530,13 +444,11 @@ namespace Backend.Services
         private static void ComposePageOneFooter(
             IContainer container,
             InvoicePdfLabels labels,
-            InvoiceData invoiceData,
-            byte[]? paymentQrCode,
-            byte[]? sepaQrCode)
+            InvoiceData invoiceData)
         {
             container.Column(footer =>
             {
-                footer.Item().Element(c => ComposePaymentSection(c, labels, invoiceData, paymentQrCode, sepaQrCode));
+                footer.Item().Element(c => ComposePaymentSection(c, labels, invoiceData));
                 footer.Item().PaddingTop(10).Element(ComposeSupplierFooter);
             });
         }
@@ -602,8 +514,6 @@ namespace Backend.Services
             var labels = LabelsFor(invoiceData.UsePaymentRequestNotice);
             var (logoPath, sunCornerPath) = ResolveBrandAssets();
             var (totalExclVat, vatAmount) = InvoiceVat.SplitInclusive(invoiceData.TotalAmount);
-            var paymentQrCode = TryGeneratePaymentQrCode(invoiceData.PaymentUrl);
-            var sepaQrCode = TryGenerateSepaTransferQrCode(invoiceData);
             var dueDate = invoiceData.GeneratedAt.Date.AddDays(30);
             var sessionsSubtitle = $"{labels.SessionsTitle}  {invoiceData.InvoiceNumber}";
 
@@ -634,7 +544,7 @@ namespace Backend.Services
                     });
 
                     page.Footer().Element(c =>
-                        ComposePageOneFooter(c, labels, invoiceData, paymentQrCode, sepaQrCode));
+                        ComposePageOneFooter(c, labels, invoiceData));
                 });
 
                 if (invoiceData.Sessions.Any())

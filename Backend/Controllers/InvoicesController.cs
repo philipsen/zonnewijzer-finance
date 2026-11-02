@@ -76,12 +76,20 @@ namespace Backend.Controllers
         private bool InvoicesEnableOnlinePaymentLinks() =>
             string.Equals(_configuration["Invoices:EnableOnlinePaymentLinks"], "true", StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Same payment block as combined April/May invoices: Dutch bank-transfer notice, no Mollie URL/QR.</summary>
+        /// <summary>Added to the Mollie checkout amount. The invoice total itself stays unchanged.</summary>
+        private const decimal WeroSurchargeEur = 0.25m;
+
+        private static decimal WeroChargeAmount(decimal invoiceTotal) =>
+            Math.Round(invoiceTotal + WeroSurchargeEur, 2, MidpointRounding.AwayFromZero);
+
+        private static bool CanReuseMolliePayment(MolliePayment payment, decimal chargeAmount) =>
+            payment.Status is "paid" or "pending"
+            || (payment.Status == "open" && payment.Amount == chargeAmount);
+
+        /// <summary>Dutch bank-transfer notice. A Mollie checkout link is kept when one is available.</summary>
         private static void ApplyBankTransferInvoicePresentation(InvoiceData invoiceData)
         {
             invoiceData.UsePaymentRequestNotice = true;
-            invoiceData.PaymentUrl = null;
-            invoiceData.IsPaid = false;
         }
 
         private static bool IsOngoingInvoiceMonth(int year, int month) =>
@@ -806,59 +814,59 @@ namespace Backend.Controllers
 
             var molliePayment = await _context.MolliePayments
                 .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
+            var chargeAmount = WeroChargeAmount(invoiceData.TotalAmount);
 
-            if (InvoicesEnableOnlinePaymentLinks())
+            if (createPaymentIfMissing && (molliePayment == null || !CanReuseMolliePayment(molliePayment, chargeAmount)))
             {
-                if (molliePayment == null && createPaymentIfMissing)
+                try
                 {
-                    try
+                    var invoiceNumber = invoiceData.InvoiceNumber;
+                    var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
+                    var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
+
+                    var redirectUrl = _configuration["Mollie:RedirectUrl"];
+                    if (string.IsNullOrWhiteSpace(redirectUrl))
+                        redirectUrl = $"{Request.Scheme}://{Request.Host}";
+
+                    var baseUrl = _configuration["Mollie:BaseUrl"];
+                    var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
+                        : "";
+
+                    var result = await _mollieService.CreatePaymentAsync(
+                        chargeAmount, description, invoiceNumber, redirectUrl, webhookUrl);
+
+                    if (molliePayment != null)
+                        _context.MolliePayments.Remove(molliePayment);
+
+                    molliePayment = new MolliePayment
                     {
-                        var invoiceNumber = invoiceData.InvoiceNumber;
-                        var monthName = new DateTime(year, month, 1).ToString("MMMM yyyy");
-                        var description = $"Charging invoice {invoiceNumber} – {invoiceData.UserName} – {monthName}";
-
-                        var redirectUrl = _configuration["Mollie:RedirectUrl"];
-                        if (string.IsNullOrWhiteSpace(redirectUrl))
-                            redirectUrl = $"{Request.Scheme}://{Request.Host}";
-
-                        var baseUrl = _configuration["Mollie:BaseUrl"];
-                        var webhookUrl = (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                            ? $"{baseUrl.TrimEnd('/')}/api/invoices/payments/webhook"
-                            : "";
-
-                        var result = await _mollieService.CreatePaymentAsync(
-                            Math.Round(invoiceData.TotalAmount, 2), description, invoiceNumber, redirectUrl, webhookUrl);
-
-                        molliePayment = new MolliePayment
-                        {
-                            AppUserId = userId,
-                            Year = year,
-                            Month = month,
-                            MolliePaymentId = result.PaymentId,
-                            CheckoutUrl = result.CheckoutUrl,
-                            Amount = Math.Round(invoiceData.TotalAmount, 2),
-                            Status = result.Status,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        _context.MolliePayments.Add(molliePayment);
-                        await _context.SaveChangesAsync(cancellationToken);
-                        _logger.LogInformation("Auto-created payment link for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Could not auto-create Mollie payment for user {UserId}, {Year}-{Month}", userId, year, month);
-                    }
+                        AppUserId = userId,
+                        Year = year,
+                        Month = month,
+                        MolliePaymentId = result.PaymentId,
+                        CheckoutUrl = result.CheckoutUrl,
+                        Amount = chargeAmount,
+                        Status = result.Status,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.MolliePayments.Add(molliePayment);
+                    await _context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("Auto-created payment link for user {UserId}, {Year}-{Month}", userId, year, month);
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not auto-create Mollie payment for user {UserId}, {Year}-{Month}", userId, year, month);
+                }
+            }
 
-                molliePayment = await _context.MolliePayments
-                    .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
-                invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
-                invoiceData.IsPaid = molliePayment?.Status == "paid";
-            }
-            else
-            {
+            molliePayment = await _context.MolliePayments
+                .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
+            invoiceData.PaymentUrl = molliePayment?.CheckoutUrl;
+            invoiceData.IsPaid = molliePayment?.Status == "paid";
+
+            if (!InvoicesEnableOnlinePaymentLinks())
                 ApplyBankTransferInvoicePresentation(invoiceData);
-            }
 
             var pdfBytes = _pdfService.GenerateInvoicePdf(invoiceData);
             return (invoiceData, pdfBytes);
@@ -902,16 +910,21 @@ namespace Backend.Controllers
                         _logger.LogWarning(ex, "Could not refresh Mollie status for {PaymentId}", existing.MolliePaymentId);
                     }
 
-                    // Reuse active or paid links; replace terminal unpaid links with a fresh payment below.
-                    if (existing.Status == "open" || existing.Status == "pending" || existing.Status == "paid")
+                    if (existing.Status is "paid" or "pending")
                         return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                 }
 
                 var invoicePreview = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(userId, year, month, cancellationToken);
                 if (invoicePreview == null)
+                {
+                    if (existing is { Status: "open" })
+                        return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                     return NotFound("No charging sessions found for this user and month");
+                }
 
-                var totalAmount = invoicePreview.TotalAmount;
+                var totalAmount = WeroChargeAmount(invoicePreview.TotalAmount);
+                if (existing is { Status: "open" } && existing.Amount == totalAmount)
+                    return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                 var invoiceNumber = invoicePreview.InvoiceNumber;
                 var monthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
                     .ToString("MMMM yyyy");
