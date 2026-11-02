@@ -4,7 +4,6 @@ using Backend.Controllers;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
-using Backend.Services.GnuCash;
 using Backend.Tests.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -26,7 +25,6 @@ public class InvoicesControllerTests : IDisposable
     private readonly Mock<IMollieService> _mollieMock;
     private readonly Mock<IConfiguration> _configMock;
     private readonly InvoiceComputationService _invoiceComputation;
-    private readonly Mock<IGnuCashSyncClient> _gnuCashSyncMock;
     private readonly Mock<IEmailService> _emailMock;
 
     public InvoicesControllerTests()
@@ -40,7 +38,6 @@ public class InvoicesControllerTests : IDisposable
         _mollieMock = new Mock<IMollieService>();
         _configMock = new Mock<IConfiguration>();
         _invoiceComputation = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
-        _gnuCashSyncMock = new Mock<IGnuCashSyncClient>();
         _emailMock = new Mock<IEmailService>();
         _emailMock.Setup(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<EmailAttachment?>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
@@ -62,7 +59,6 @@ public class InvoicesControllerTests : IDisposable
             _pdfMock.Object,
             _mollieMock.Object,
             _invoiceComputation,
-            _gnuCashSyncMock.Object,
             _emailMock.Object,
             _configMock.Object,
             NullLogger<InvoicesController>.Instance)
@@ -83,12 +79,6 @@ public class InvoicesControllerTests : IDisposable
     private async Task SeedAdminAsync()
     {
         _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
-        await _db.SaveChangesAsync();
-    }
-
-    private async Task SeedOwnerAsync()
-    {
-        _db.Users.Add(new User { Id = 1, Email = "owner@test.com", Name = "Owner", GoogleId = "g1", Role = UserRole.Owner });
         await _db.SaveChangesAsync();
     }
 
@@ -761,61 +751,6 @@ public class InvoicesControllerTests : IDisposable
         Assert.Equal("paid", p.Status);
     }
 
-    [Fact]
-    public async Task EnsureGnucashCustomer_NoChargingLink_ReturnsBadRequest()
-    {
-        await SeedOwnerAsync();
-        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base });
-        await _db.SaveChangesAsync();
-
-        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("charge card", bad.Value!.ToString(), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task EnsureGnucashCustomer_WithLink_CallsPython()
-    {
-        await SeedOwnerAsync();
-        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-        var cardId = await AddChargeCardAsync("inv-gc-py", street: "Main", houseNumber: "1");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X User", GoogleId = "g2", Role = UserRole.Base });
-        await _db.SaveChangesAsync();
-        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cardId });
-        await _db.SaveChangesAsync();
-
-        var expectedCu = "CU-USER-2";
-        _gnuCashSyncMock
-            .Setup(g => g.EnsureCustomerAsync(It.IsAny<GnuCashEnsureCustomerRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GnuCashEnsureCustomerResponse { CustomerId = expectedCu, Status = "created" });
-
-        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
-        Assert.IsType<OkObjectResult>(result);
-        _gnuCashSyncMock.Verify(
-            g => g.EnsureCustomerAsync(
-                It.Is<GnuCashEnsureCustomerRequest>(r => r.CustomerId == expectedCu && r.CustomerName == "X User" && r.Street == "Main"),
-                It.IsAny<string?>(),
-                false,
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task EnsureGnucashCustomer_Admin_ReturnsForbid()
-    {
-        await SeedAdminAsync();
-        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-        var cardId = await AddChargeCardAsync("inv-gc-adm");
-        _db.Users.Add(new User { Id = 2, Email = "x@test.com", Name = "X", GoogleId = "g2", Role = UserRole.Base });
-        await _db.SaveChangesAsync();
-        _db.UserChargeCards.Add(new UserChargeCard { UserId = 2, ChargeCardId = cardId });
-        await _db.SaveChangesAsync();
-
-        var result = await BuildController().EnsureGnucashCustomer(2, false, CancellationToken.None);
-        Assert.IsType<ForbidResult>(result);
-    }
-
     private async Task SeedCombinedInvoiceUserAsync(int appUserId = 2)
     {
         _db.Users.Add(new User { Id = appUserId, Email = "combined@test.com", Name = "Combined User", GoogleId = "gc", Role = UserRole.Base });
@@ -874,56 +809,5 @@ public class InvoicesControllerTests : IDisposable
 
         var result = await BuildController().GenerateCombinedInvoicePdf(99, 2026, 4, 2026, 5, CancellationToken.None);
         Assert.IsType<NotFoundObjectResult>(result);
-    }
-
-    [Fact]
-    public async Task InsertCombinedGnucashInvoices_Admin_ReturnsForbid()
-    {
-        await SeedAdminAsync();
-        await SeedCombinedInvoiceUserAsync();
-        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-
-        var result = await BuildController().InsertCombinedGnucashInvoices(new GnuCashCombinedInsertBody
-        {
-            StartYear = 2026,
-            StartMonth = 4,
-            EndYear = 2026,
-            EndMonth = 5,
-            AppUserId = 2
-        }, CancellationToken.None);
-
-        Assert.IsType<ForbidResult>(result);
-    }
-
-    [Fact]
-    public async Task InsertCombinedGnucashInvoices_Owner_CallsPython()
-    {
-        await SeedOwnerAsync();
-        await SeedCombinedInvoiceUserAsync();
-        _configMock.Setup(c => c["GnuCashSync:BaseUrl"]).Returns("http://127.0.0.1:8787");
-        _gnuCashSyncMock
-            .Setup(g => g.InsertInvoicesAsync(It.IsAny<GnuCashInsertRequest>(), It.IsAny<string?>(), false, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GnuCashInsertResponse
-            {
-                Results = [new GnuCashInsertResultItem { InvoiceId = "INV-2026-04-05-U2", Status = "created" }]
-            });
-
-        var result = await BuildController().InsertCombinedGnucashInvoices(new GnuCashCombinedInsertBody
-        {
-            StartYear = 2026,
-            StartMonth = 4,
-            EndYear = 2026,
-            EndMonth = 5,
-            AppUserId = 2
-        }, CancellationToken.None);
-
-        Assert.IsType<OkObjectResult>(result);
-        _gnuCashSyncMock.Verify(
-            g => g.InsertInvoicesAsync(
-                It.Is<GnuCashInsertRequest>(r => r.Invoices.Count == 1 && r.Invoices[0].InvoiceId == "INV-2026-04-05-U2"),
-                It.IsAny<string?>(),
-                false,
-                It.IsAny<CancellationToken>()),
-            Times.Once);
     }
 }

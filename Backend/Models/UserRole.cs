@@ -4,7 +4,7 @@ namespace Backend.Models
     {
         Base = 0,
         Admin = 1,
-        /// <summary>Same privileges as <see cref="Admin"/>, plus GnuCash integration API and UI.</summary>
+        /// <summary>Same privileges as <see cref="Admin"/>, plus owner-only administration.</summary>
         Owner = 2
     }
 }

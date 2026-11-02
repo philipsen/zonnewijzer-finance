@@ -30,14 +30,6 @@ jobs:
           push: true
           tags: philipsen/finance-backend:latest
 
-      - name: Build and push gnucash-sync image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./services/gnucash-sync
-          file: ./services/gnucash-sync/Dockerfile
-          push: true
-          tags: philipsen/finance-gnucash-sync:latest
-
       - name: Build and push integration-daemon image
         uses: docker/build-push-action@v5
         with:

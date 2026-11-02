@@ -2,7 +2,7 @@
   <div class="combined-invoices-page">
     <div class="page-header">
       <h1>Combined invoices – April &amp; May 2026</h1>
-      <p>Download combined PDF invoices or send them to GnuCash. Sessions are loaded live from Smappee (1 Apr – 1 Jun 2026, Brussels time).</p>
+      <p>Download combined PDF invoices. Sessions are loaded live from Smappee (1 Apr – 1 Jun 2026, Brussels time).</p>
     </div>
 
     <div v-if="loading" class="loading">
@@ -14,19 +14,6 @@
     </div>
 
     <div v-else class="content">
-      <div v-if="isOwnerRole" class="gnucash-toolbar">
-        <span class="gnucash-toolbar-title">GnuCash</span>
-        <button
-          type="button"
-          class="btn-gnucash"
-          :disabled="gnucashBulkLoading || !hasInsertableUsers"
-          :title="hasInsertableUsers ? '' : 'Every invoice is already in GnuCash, or there are no sessions.'"
-          @click="insertGnucashAll"
-        >
-          {{ gnucashBulkLoading ? '…' : 'Insert all (GnuCash)' }}
-        </button>
-      </div>
-
       <div v-if="users.length === 0" class="empty">
         No charging sessions found for April–May 2026.
       </div>
@@ -57,16 +44,6 @@
                 >
                   Download PDF
                 </button>
-                <button
-                  v-if="isOwnerRole"
-                  type="button"
-                  class="btn-gnucash-cell"
-                  :disabled="gnucashCellDisabled(user)"
-                  :title="user.gnucashInvoiceInserted ? 'Already in GnuCash.' : ''"
-                  @click="insertGnucashUser(user.id)"
-                >
-                  {{ gnucashCellLoading[user.id] ? '…' : 'GnuCash' }}
-                </button>
               </td>
             </tr>
           </tbody>
@@ -77,9 +54,8 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
-import { isOwner, roleFromToken } from '../utils/roles'
 
 const PERIOD = {
   startYear: 2026,
@@ -94,16 +70,9 @@ export default {
     const users = ref([])
     const loading = ref(true)
     const error = ref(null)
-    const isOwnerRole = ref(false)
-    const gnucashBulkLoading = ref(false)
-    const gnucashCellLoading = ref({})
 
     const periodQuery = () =>
       `startYear=${PERIOD.startYear}&startMonth=${PERIOD.startMonth}&endYear=${PERIOD.endYear}&endMonth=${PERIOD.endMonth}`
-
-    const hasInsertableUsers = computed(() =>
-      users.value.some(u => u.hasChargingSessions && !u.gnucashInvoiceInserted)
-    )
 
     const fetchUsers = async () => {
       loading.value = true
@@ -146,50 +115,7 @@ export default {
       }
     }
 
-    const gnucashCellDisabled = (user) =>
-      !!gnucashCellLoading.value[user.id] || !!user.gnucashInvoiceInserted
-
-    const insertGnucash = async (appUserId) => {
-      const token = localStorage.getItem('token')
-      await axios.post('/api/invoices/combined/gnucash/insert', {
-        ...PERIOD,
-        appUserId,
-        dryRun: false
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-    }
-
-    const insertGnucashUser = async (userId) => {
-      gnucashCellLoading.value = { ...gnucashCellLoading.value, [userId]: true }
-      try {
-        await insertGnucash(userId)
-        await fetchUsers()
-      } catch (err) {
-        console.error('GnuCash insert failed:', err)
-        const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
-        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
-      } finally {
-        gnucashCellLoading.value = { ...gnucashCellLoading.value, [userId]: false }
-      }
-    }
-
-    const insertGnucashAll = async () => {
-      gnucashBulkLoading.value = true
-      try {
-        await insertGnucash(null)
-        await fetchUsers()
-      } catch (err) {
-        console.error('GnuCash bulk insert failed:', err)
-        const msg = err.response?.data?.message || err.response?.data || err.message || 'GnuCash insert failed'
-        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
-      } finally {
-        gnucashBulkLoading.value = false
-      }
-    }
-
     onMounted(() => {
-      isOwnerRole.value = isOwner(roleFromToken(localStorage.getItem('token')))
       fetchUsers()
     })
 
@@ -197,14 +123,7 @@ export default {
       users,
       loading,
       error,
-      isOwnerRole,
-      gnucashBulkLoading,
-      gnucashCellLoading,
-      hasInsertableUsers,
-      downloadPdf,
-      gnucashCellDisabled,
-      insertGnucashUser,
-      insertGnucashAll
+      downloadPdf
     }
   }
 }
@@ -252,43 +171,6 @@ export default {
   color: #666;
 }
 
-.gnucash-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem 1rem;
-  margin-bottom: 1.25rem;
-  padding: 0.85rem 1rem;
-  background: #f0f7ff;
-  border: 1px solid #b8daff;
-  border-radius: 8px;
-}
-
-.gnucash-toolbar-title {
-  font-weight: 700;
-  color: #004085;
-}
-
-.btn-gnucash {
-  padding: 0.45rem 0.85rem;
-  border: none;
-  border-radius: 4px;
-  background: #004085;
-  color: white;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn-gnucash:hover:not(:disabled) {
-  background: #002752;
-}
-
-.btn-gnucash:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .table-wrapper {
   overflow-x: auto;
 }
@@ -333,8 +215,7 @@ export default {
   margin-top: 0.15rem;
 }
 
-.btn-pdf,
-.btn-gnucash-cell {
+.btn-pdf {
   padding: 0.4rem 0.75rem;
   border: none;
   border-radius: 4px;
@@ -351,19 +232,5 @@ export default {
 
 .btn-pdf:hover {
   background: #0056b3;
-}
-
-.btn-gnucash-cell {
-  background: #004085;
-  color: white;
-}
-
-.btn-gnucash-cell:hover:not(:disabled) {
-  background: #002752;
-}
-
-.btn-gnucash-cell:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 </style>

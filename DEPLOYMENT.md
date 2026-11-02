@@ -97,9 +97,7 @@ Other backend secrets (unchanged by this SMTP move):
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth |
 | `MOLLIE_API_KEY` | Payments |
 | `DAEMON_API_KEY` | Backend ↔ integration daemon |
-| `GNUCASH_SYNC_API_KEY` | GnuCash insert API |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Optional first admin seed |
-| `GNUCASH_POSTGRES_URL` | GnuCash sync database |
 | Smappee / Sigenergy vars on daemon | Integration daemon `.env` |
 
 After updating `SMTP_PASSWORD`, redeploy or restart the backend container:
