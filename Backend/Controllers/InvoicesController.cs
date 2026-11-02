@@ -5,7 +5,6 @@ using Backend.Contracts;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
-using Backend.Services.GnuCash;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -21,7 +20,6 @@ namespace Backend.Controllers
         private readonly IPdfService _pdfService;
         private readonly IMollieService _mollieService;
         private readonly IInvoiceComputationService _invoiceComputation;
-        private readonly IGnuCashSyncClient _gnuCashSyncClient;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<InvoicesController> _logger;
@@ -61,7 +59,6 @@ namespace Backend.Controllers
             IPdfService pdfService,
             IMollieService mollieService,
             IInvoiceComputationService invoiceComputation,
-            IGnuCashSyncClient gnuCashSyncClient,
             IEmailService emailService,
             IConfiguration configuration,
             ILogger<InvoicesController> logger)
@@ -71,7 +68,6 @@ namespace Backend.Controllers
             _pdfService = pdfService;
             _mollieService = mollieService;
             _invoiceComputation = invoiceComputation;
-            _gnuCashSyncClient = gnuCashSyncClient;
             _emailService = emailService;
             _configuration = configuration;
             _logger = logger;
@@ -97,198 +93,6 @@ namespace Backend.Controllers
                 return null;
             return new BadRequestObjectResult(
                 "Email and payment links are not available for the current month until the billing period ends.");
-        }
-
-        /// <summary>Admin: insert computed invoices into GnuCash via the Python service (insert-only).</summary>
-        [HttpPost("gnucash/insert")]
-        public async Task<IActionResult> InsertGnucashInvoices([FromBody] GnuCashInsertBody body, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-                var userIdString = _jwtService.ValidateToken(token);
-                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-                    return Unauthorized();
-
-                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
-                    return Forbid();
-
-                if (body.Month is < 1 or > 12 || body.Year < 2000 || body.Year > 2100)
-                    return BadRequest("Invalid year or month.");
-
-                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
-
-                var appUserIds = await _invoiceComputation.GetAppUserIdsForMonthAsync(
-                    body.Year, body.Month, body.AppUserId, cancellationToken);
-
-                var invoices = new List<GnuCashInvoiceDto>();
-                foreach (var appUserId in appUserIds)
-                {
-                    var data = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(
-                        appUserId, body.Year, body.Month, cancellationToken);
-                    if (data == null)
-                        continue;
-                    var email = await _context.Users.AsNoTracking()
-                        .Where(u => u.Id == appUserId)
-                        .Select(u => u.Email)
-                        .FirstOrDefaultAsync(cancellationToken);
-                    invoices.Add(GnuCashInvoiceMapper.ToDto(data, email));
-                }
-
-                if (invoices.Count == 0)
-                    return NotFound("No charging sessions for that period.");
-
-                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
-                    ?? $"{Guid.NewGuid():N}";
-                Response.Headers["X-Correlation-Id"] = correlationId;
-
-                var request = new GnuCashInsertRequest { SchemaVersion = 1, Invoices = invoices };
-                var pyResponse = await _gnuCashSyncClient.InsertInvoicesAsync(request, correlationId, body.DryRun, cancellationToken);
-                if (pyResponse == null)
-                    return BadRequest("GnuCash service did not return a response.");
-
-                _context.EventLogs.Add(new EventLog
-                {
-                    Timestamp = DateTime.UtcNow,
-                    UserName = requestingUser.Name,
-                    Action = $"GnuCash insert {body.Year}-{body.Month:D2} (dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "post_verify_failed")} post-verify-failed, {pyResponse.Results.Count(r => r.Status == "amount_verify_failed")} amount-verify-failed, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
-                });
-                await _context.SaveChangesAsync(cancellationToken);
-
-                return Ok(pyResponse);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "GnuCash insert failed for {Year}-{Month}", body.Year, body.Month);
-                return BadRequest($"GnuCash insert failed: {ex.Message}");
-            }
-        }
-
-        /// <summary>Admin: create the GnuCash customer for an app user (customer id CU-USER-…, same as invoices).</summary>
-        [HttpPost("gnucash/customer/{appUserId:int}")]
-        public async Task<IActionResult> EnsureGnucashCustomer(int appUserId, [FromQuery] bool dryRun = false, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-                var userIdString = _jwtService.ValidateToken(token);
-                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-                    return Unauthorized();
-
-                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
-                    return Forbid();
-
-                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
-
-                var target = await _context.Users.FirstOrDefaultAsync(u => u.Id == appUserId, cancellationToken);
-                if (target == null)
-                    return NotFound("User not found.");
-
-                var cardIds = await _context.UserChargeCards
-                    .AsNoTracking()
-                    .Where(x => x.UserId == appUserId)
-                    .OrderBy(x => x.ChargeCardId)
-                    .Select(x => x.ChargeCardId)
-                    .ToListAsync(cancellationToken);
-                if (cardIds.Count == 0)
-                    return BadRequest("This user has no linked charge cards. Link at least one charge card before creating the GnuCash customer.");
-
-                var profiles = await _context.ChargeCards
-                    .Where(p => cardIds.Contains(p.Id))
-                    .OrderBy(p => p.Id)
-                    .ToListAsync(cancellationToken);
-                var profile = profiles.FirstOrDefault(p =>
-                                  !string.IsNullOrWhiteSpace(p.Street) || !string.IsNullOrWhiteSpace(p.PostalCode))
-                              ?? profiles.FirstOrDefault();
-                if (profile == null)
-                    return BadRequest("Charge card profiles are missing.");
-
-                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
-                    ?? $"{Guid.NewGuid():N}";
-                Response.Headers["X-Correlation-Id"] = correlationId;
-
-                var customerId = $"CU-USER-{appUserId}";
-                var pyRequest = new GnuCashEnsureCustomerRequest
-                {
-                    CustomerId = customerId,
-                    CustomerName = target.Name,
-                    Email = target.Email,
-                    Street = profile.Street,
-                    HouseNumber = profile.HouseNumber,
-                    PostalCode = profile.PostalCode,
-                    PlaceName = profile.PlaceName,
-                    Currency = "EUR"
-                };
-
-                var pyResponse = await _gnuCashSyncClient.EnsureCustomerAsync(pyRequest, correlationId, dryRun, cancellationToken);
-                if (pyResponse == null)
-                    return BadRequest("GnuCash service did not return a response.");
-
-                _context.EventLogs.Add(new EventLog
-                {
-                    Timestamp = DateTime.UtcNow,
-                    UserName = requestingUser.Name,
-                    Action = $"GnuCash ensure customer {customerId} for app user {appUserId} (dryRun={dryRun}): {pyResponse.Status}"
-                });
-                await _context.SaveChangesAsync(cancellationToken);
-
-                return Ok(new { results = new[] { pyResponse }, customerIds = new[] { customerId } });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "GnuCash ensure customer failed for app user {AppUserId}", appUserId);
-                return BadRequest($"GnuCash ensure customer failed: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Admin: remove app-created GnuCash data — invoices with id prefix INV- and customers with id prefix CU-
-        /// (via gnucash-sync). Does not touch other GnuCash business objects.
-        /// </summary>
-        [HttpPost("gnucash/wipe-app")]
-        public async Task<IActionResult> WipeGnucashAppBusiness([FromQuery] bool dryRun = false, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-                var userIdString = _jwtService.ValidateToken(token);
-                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-                    return Unauthorized();
-
-                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
-                    return Forbid();
-
-                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
-
-                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
-                    ?? $"{Guid.NewGuid():N}";
-                Response.Headers["X-Correlation-Id"] = correlationId;
-
-                var pyResponse = await _gnuCashSyncClient.WipeAppBusinessAsync(correlationId, dryRun, cancellationToken);
-                if (pyResponse == null)
-                    return BadRequest("GnuCash service did not return a response.");
-
-                _context.EventLogs.Add(new EventLog
-                {
-                    Timestamp = DateTime.UtcNow,
-                    UserName = requestingUser.Name,
-                    Action = $"GnuCash wipe-app (dryRun={dryRun}): {pyResponse.InvoicesRemoved} INV-* invoices, {pyResponse.CustomersRemoved} CU-* customers removed"
-                });
-                await _context.SaveChangesAsync(cancellationToken);
-
-                return Ok(pyResponse);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "GnuCash wipe-app failed");
-                return BadRequest($"GnuCash wipe-app failed: {ex.Message}");
-            }
         }
 
         [HttpGet]
@@ -380,45 +184,6 @@ namespace Backend.Controllers
                     IsOngoingMonth = IsOngoingInvoiceMonth(d.Year, d.Month)
                 }).ToList();
 
-                static string GnucashInvoiceId(int appUserId, int year, int month) =>
-                    $"INV-{year:D4}-{month:D2}-U{appUserId}";
-
-                var invoiceIdsToCheck = users
-                    .SelectMany(user => months
-                        .Where(m =>
-                        {
-                            if (!cardsByAppUser.TryGetValue(user.Id, out var cids) || cids.Count == 0)
-                                return false;
-                            return allSessions.Any(cs =>
-                                cids.Contains(cs.ChargeCardId) &&
-                                BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month));
-                        })
-                        .Select(m => GnucashInvoiceId(user.Id, m.Year, m.Month)))
-                    .Distinct()
-                    .ToList();
-
-                var existingInvoiceIds = new HashSet<string>(StringComparer.Ordinal);
-                if (invoiceIdsToCheck.Count > 0
-                    && !string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-                {
-                    try
-                    {
-                        var existResponse = await _gnuCashSyncClient.GetExistingInvoiceIdsAsync(
-                            new GnuCashInvoicesExistRequest { InvoiceIds = invoiceIdsToCheck },
-                            cancellationToken);
-                        if (existResponse?.ExistingInvoiceIds != null)
-                        {
-                            foreach (var id in existResponse.ExistingInvoiceIds)
-                                existingInvoiceIds.Add(id);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex,
-                            "Could not query GnuCash for existing invoices; GnuCash buttons are left enabled");
-                    }
-                }
-
                 var gridData = users.Select(user => new
                 {
                     User = user,
@@ -435,7 +200,6 @@ namespace Backend.Controllers
                                 TotalKwh = 0m,
                                 RatePerKwh = GetRate(m.Year, m.Month),
                                 TotalAmount = 0m,
-                                GnucashInvoiceInserted = false,
                                 IsOngoingMonth = m.IsOngoingMonth
                             };
                         }
@@ -455,8 +219,6 @@ namespace Backend.Controllers
                             TotalKwh = Math.Round(kwh, 2),
                             RatePerKwh = GetRate(m.Year, m.Month),
                             TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2),
-                            GnucashInvoiceInserted = hasCharging
-                                && existingInvoiceIds.Contains(GnucashInvoiceId(user.Id, m.Year, m.Month)),
                             IsOngoingMonth = m.IsOngoingMonth
                         };
                     }).ToList()
@@ -601,31 +363,6 @@ namespace Backend.Controllers
                 .OrderBy(u => u.Id)
                 .ToListAsync(cancellationToken);
 
-            var invoiceIds = appUserIds
-                .Select(id => InvoiceComputationService.CombinedInvoiceNumber(id, startYear, startMonth, endYear, endMonth))
-                .ToList();
-
-            var existingInvoiceIds = new HashSet<string>(StringComparer.Ordinal);
-            if (!string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-            {
-                try
-                {
-                    var existResponse = await _gnuCashSyncClient.GetExistingInvoiceIdsAsync(
-                        new GnuCashInvoicesExistRequest { InvoiceIds = invoiceIds },
-                        cancellationToken);
-                    if (existResponse?.ExistingInvoiceIds != null)
-                    {
-                        foreach (var id in existResponse.ExistingInvoiceIds)
-                            existingInvoiceIds.Add(id);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "Could not query GnuCash for combined invoices; GnuCash buttons are left enabled");
-                }
-            }
-
             var users = new List<object>();
             foreach (var appUser in appUsers)
             {
@@ -646,7 +383,6 @@ namespace Backend.Controllers
                     TotalAmount = data.TotalAmount,
                     SessionCount = userSessions.Count,
                     HasChargingSessions = true,
-                    GnucashInvoiceInserted = existingInvoiceIds.Contains(data.InvoiceNumber),
                     InvoiceNumber = data.InvoiceNumber
                 });
             }
@@ -703,85 +439,6 @@ namespace Backend.Controllers
             {
                 _logger.LogError(ex, "Error generating combined invoice PDF for user {UserId}", userId);
                 return BadRequest($"Failed to generate combined invoice: {ex.Message}");
-            }
-        }
-
-        [HttpPost("combined/gnucash/insert")]
-        public async Task<IActionResult> InsertCombinedGnucashInvoices(
-            [FromBody] GnuCashCombinedInsertBody body,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
-                var userIdString = _jwtService.ValidateToken(token);
-                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
-                    return Unauthorized();
-
-                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-                if (requestingUser == null || !requestingUser.Role.CanUseGnucash())
-                    return Forbid();
-
-                if (!TryValidateCombinedRange(body.StartYear, body.StartMonth, body.EndYear, body.EndMonth, out var rangeError))
-                    return BadRequest(rangeError);
-
-                if (string.IsNullOrWhiteSpace(_configuration["GnuCashSync:BaseUrl"]))
-                    return BadRequest("GnuCash sync is not configured (GnuCashSync:BaseUrl).");
-
-                var fetch = await _invoiceComputation.FetchCombinedSessionsFromSmappeeAsync(
-                    body.StartYear, body.StartMonth, body.EndYear, body.EndMonth, cancellationToken);
-
-                var targetUserIds = body.AppUserId.HasValue
-                    ? new[] { body.AppUserId.Value }
-                    : fetch.ByAppUserId.Keys.OrderBy(id => id).ToArray();
-
-                var invoices = new List<GnuCashInvoiceDto>();
-                foreach (var appUserId in targetUserIds)
-                {
-                    if (!fetch.ByAppUserId.TryGetValue(appUserId, out var userSessions))
-                        continue;
-
-                    var data = await _invoiceComputation.BuildCombinedInvoiceDataFromSessionsAsync(
-                        appUserId, userSessions, body.StartYear, body.StartMonth, body.EndYear, body.EndMonth, cancellationToken);
-                    if (data == null)
-                        continue;
-                    var email = await _context.Users.AsNoTracking()
-                        .Where(u => u.Id == appUserId)
-                        .Select(u => u.Email)
-                        .FirstOrDefaultAsync(cancellationToken);
-                    invoices.Add(GnuCashInvoiceMapper.ToDto(data, email));
-                }
-
-                if (invoices.Count == 0)
-                    return NotFound("No charging sessions for that period.");
-
-                var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault()
-                    ?? $"{Guid.NewGuid():N}";
-                Response.Headers["X-Correlation-Id"] = correlationId;
-
-                var request = new GnuCashInsertRequest { SchemaVersion = 1, Invoices = invoices };
-                var pyResponse = await _gnuCashSyncClient.InsertInvoicesAsync(request, correlationId, body.DryRun, cancellationToken);
-                if (pyResponse == null)
-                    return BadRequest("GnuCash service did not return a response.");
-
-                var periodLabel = InvoiceComputationService.CombinedPeriodLabel(
-                    body.StartYear, body.StartMonth, body.EndYear, body.EndMonth);
-                var scope = body.AppUserId.HasValue ? $"user {body.AppUserId.Value}" : "all users";
-                _context.EventLogs.Add(new EventLog
-                {
-                    Timestamp = DateTime.UtcNow,
-                    UserName = requestingUser.Name,
-                    Action = $"GnuCash combined insert {periodLabel} ({scope}, dryRun={body.DryRun}): {pyResponse.Results.Count(r => r.Status == "created")} created, {pyResponse.Results.Count(r => r.Status == "post_verify_failed")} post-verify-failed, {pyResponse.Results.Count(r => r.Status == "amount_verify_failed")} amount-verify-failed, {pyResponse.Results.Count(r => r.Status == "skipped_already_exists")} skipped, {pyResponse.Results.Count(r => r.Status == "dry_run_would_create")} dry-run"
-                });
-                await _context.SaveChangesAsync(cancellationToken);
-
-                return Ok(pyResponse);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "GnuCash combined insert failed for {StartYear}-{StartMonth} to {EndYear}-{EndMonth}",
-                    body.StartYear, body.StartMonth, body.EndYear, body.EndMonth);
-                return BadRequest($"GnuCash combined insert failed: {ex.Message}");
             }
         }
 

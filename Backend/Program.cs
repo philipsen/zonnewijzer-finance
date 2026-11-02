@@ -9,7 +9,6 @@ using System.Security.Claims;
 using Backend.Data;
 using Backend.Services;
 using Backend.Services.IntegrationDaemon;
-using Backend.Services.GnuCash;
 using Backend.Services.Smappee;
 using Serilog;
 using Serilog.Events;
@@ -121,11 +120,6 @@ builder.Services.AddReverseProxy().LoadFromMemory(
     });
 
 // Add custom services
-builder.Services.Configure<GnuCashSyncOptions>(builder.Configuration.GetSection(GnuCashSyncOptions.SectionName));
-builder.Services.AddHttpClient<IGnuCashSyncClient, GnuCashSyncClient>(client =>
-{
-    client.Timeout = TimeSpan.FromMinutes(5);
-});
 builder.Services.Configure<IntegrationDaemonOptions>(builder.Configuration.GetSection(IntegrationDaemonOptions.SectionName));
 builder.Services.AddHttpClient<IIntegrationDaemonClient, IntegrationDaemonClient>(client =>
 {
