@@ -103,6 +103,7 @@ namespace Backend.Data
                 entity.Property(e => e.Year).IsRequired();
                 entity.Property(e => e.Month).IsRequired();
                 entity.Property(e => e.PricePerKwh).HasPrecision(8, 4).IsRequired();
+                entity.Property(e => e.MollieSurchargeEur).HasPrecision(8, 2).IsRequired();
                 entity.HasIndex(e => new { e.Year, e.Month }).IsUnique();
             });
 

@@ -149,6 +149,15 @@ public class EnergyPricesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Upsert_WithNegativeSurcharge_ReturnsBadRequest()
+    {
+        SetupValidUser(1, UserRole.Admin);
+        var result = await BuildController().Upsert(new EnergyPriceRequest { Year = 2026, Month = 5, PricePerKwh = 0.25m, MollieSurchargeEur = -0.01m });
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("surcharge", bad.Value!.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Upsert_NewEntry_CreatesRecordAndReturnsOk()
     {
         SetupValidUser(1, UserRole.Admin);
@@ -157,6 +166,7 @@ public class EnergyPricesControllerTests : IDisposable
         var saved = await _db.EnergyPrices.FirstOrDefaultAsync(p => p.Year == 2026 && p.Month == 5);
         Assert.NotNull(saved);
         Assert.Equal(0.25m, saved.PricePerKwh);
+        Assert.Equal(0.32m, saved.MollieSurchargeEur);
     }
 
     [Fact]

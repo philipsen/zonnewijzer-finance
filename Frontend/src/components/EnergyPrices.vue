@@ -2,7 +2,7 @@
   <div class="energy-prices-page">
     <div class="page-header">
       <h1>Energy Prices</h1>
-      <p class="subtitle">Configure the price per kWh per month. Used when generating invoices.</p>
+      <p class="subtitle">Configure the price per kWh and the Mollie surcharge per month. The surcharge is added to the Wero checkout; the invoice total stays the same.</p>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
@@ -25,6 +25,9 @@
             <label>Price per kWh (€)
               <input v-model.number="form.pricePerKwh" type="number" step="0.0001" min="0.0001" required />
             </label>
+            <label>Mollie surcharge (€)
+              <input v-model.number="form.mollieSurchargeEur" type="number" step="0.01" min="0" required />
+            </label>
             <div class="form-actions">
               <button type="submit" class="btn-primary">{{ editingEntry ? 'Update' : 'Save' }}</button>
               <button v-if="editingEntry" type="button" class="btn-secondary" @click="cancelEdit">Cancel</button>
@@ -41,6 +44,7 @@
               <th>Year</th>
               <th>Month</th>
               <th>Price per kWh</th>
+              <th>Mollie surcharge</th>
               <th>Last updated</th>
               <th>Actions</th>
             </tr>
@@ -50,6 +54,7 @@
               <td>{{ p.year }}</td>
               <td>{{ monthName(p.month) }}</td>
               <td>€{{ p.pricePerKwh.toFixed(4) }}</td>
+              <td>€{{ surchargeOf(p).toFixed(2) }}</td>
               <td>{{ formatDate(p.updatedAt || p.createdAt) }}</td>
               <td>
                 <button class="btn-edit" @click="startEdit(p)">Edit</button>
@@ -80,7 +85,8 @@ export default {
       form: {
         year: new Date().getFullYear(),
         month: new Date().getMonth() + 1,
-        pricePerKwh: 0.22
+        pricePerKwh: 0.22,
+        mollieSurchargeEur: 0.32
       },
       months: MONTH_NAMES.map((label, i) => ({ value: i + 1, label }))
     }
@@ -108,11 +114,11 @@ export default {
     },
     startEdit(p) {
       this.editingEntry = p
-      this.form = { year: p.year, month: p.month, pricePerKwh: p.pricePerKwh }
+      this.form = { year: p.year, month: p.month, pricePerKwh: p.pricePerKwh, mollieSurchargeEur: this.surchargeOf(p) }
     },
     cancelEdit() {
       this.editingEntry = null
-      this.form = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, pricePerKwh: 0.22 }
+      this.form = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, pricePerKwh: 0.22, mollieSurchargeEur: 0.32 }
     },
     async save() {
       try {
@@ -136,6 +142,10 @@ export default {
         this.error = 'Failed to delete price.'
       }
     },
+    surchargeOf(p) {
+      const value = Number(p.mollieSurchargeEur)
+      return Number.isFinite(value) ? value : 0.32
+    },
     monthName(m) {
       return MONTH_NAMES[m - 1]
     },
@@ -150,7 +160,7 @@ export default {
 <style scoped>
 .energy-prices-page {
   padding: 24px;
-  max-width: 900px;
+  max-width: 980px;
   margin: 0 auto;
 }
 

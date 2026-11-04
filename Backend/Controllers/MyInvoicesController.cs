@@ -108,6 +108,11 @@ public class MyInvoicesController : ControllerBase
                     .Select(p => (decimal?)p.PricePerKwh)
                     .FirstOrDefault() ?? 0.22m;
 
+            var billedMonths = allSessions
+                .Where(cs => myCardIds.Contains(cs.ChargeCardId) && cs.ToTimestamp.HasValue)
+                .Select(cs => BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.ToTimestamp!.Value))
+                .ToList();
+
             var result = monthKeys.Select(m =>
             {
                 var sessions = allSessions
@@ -127,7 +132,8 @@ public class MyInvoicesController : ControllerBase
                     Month = m.Month,
                     MonthName = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Unspecified)
                         .ToString("MMMM yyyy"),
-                    InvoiceNumber = $"INV-{m.Year:D4}-{m.Month:D2}-U{currentUserId}",
+                    InvoiceNumber = InvoiceNumbers.Format(
+                        m.Year, m.Month, currentUserId, InvoiceNumbers.IndexForMonth(billedMonths, m.Year, m.Month)),
                     TotalKwh = totalKwh,
                     RatePerKwh = rate,
                     TotalAmount = totalAmount,

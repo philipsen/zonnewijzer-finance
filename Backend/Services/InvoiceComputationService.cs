@@ -7,6 +7,7 @@ namespace Backend.Services;
 public class InvoiceComputationService : IInvoiceComputationService
 {
     private const decimal DefaultRatePerKwh = 0.22m;
+    private const decimal DefaultMollieSurchargeEur = 0.32m;
 
     private readonly ApplicationDbContext _context;
     private readonly ISmappeeCombinedInvoiceSessionSource _smappeeSessions;
@@ -26,8 +27,8 @@ public class InvoiceComputationService : IInvoiceComputationService
         return (startMs, endMs);
     }
 
-    public static string CombinedInvoiceNumber(int appUserId, int startYear, int startMonth, int endYear, int endMonth) =>
-        $"INV-{startYear:D4}-{startMonth:D2}-{endMonth:D2}-U{appUserId}";
+    public static string CombinedInvoiceNumber(int appUserId, int endYear, int endMonth, int index) =>
+        InvoiceNumbers.Format(endYear, endMonth, appUserId, index);
 
     private static readonly CultureInfo DutchCulture = CultureInfo.GetCultureInfo("nl-NL");
 
@@ -148,6 +149,7 @@ public class InvoiceComputationService : IInvoiceComputationService
             .FirstOrDefaultAsync(
                 p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
                 cancellationToken);
+        var invoiceIndex = await InvoiceIndexAsync(myCards, year, month, cancellationToken);
 
         return new InvoiceData
         {
@@ -161,10 +163,11 @@ public class InvoiceComputationService : IInvoiceComputationService
             Month = month,
             MonthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
                 .ToString("MMMM yyyy"),
-            InvoiceNumber = $"INV-{year:D4}-{month:D2}-U{appUserId}",
+            InvoiceNumber = InvoiceNumbers.Format(year, month, appUserId, invoiceIndex),
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = ratePerKwh,
             TotalAmount = Math.Round(totalAmount, 2),
+            MollieSurchargeEur = GetMollieSurchargeForMonth(energyPrices, year, month),
             PaymentUrl = molliePayment?.CheckoutUrl,
             IsPaid = molliePayment?.Status == "paid",
             Sessions = chargingSessions.Select(cs => MapDbSession(cs, ratePerKwh)).ToList(),
@@ -223,6 +226,7 @@ public class InvoiceComputationService : IInvoiceComputationService
         var totalKwh = sessions.Sum(s => s.ChargedKwh);
         var totalAmount = sessions.Sum(s => s.Amount);
         var weightedRate = totalKwh > 0 ? totalAmount / totalKwh : DefaultRatePerKwh;
+        var invoiceIndex = await InvoiceIndexAsync(myCards, endYear, endMonth, cancellationToken);
 
         return new InvoiceData
         {
@@ -235,7 +239,7 @@ public class InvoiceComputationService : IInvoiceComputationService
             Year = endYear,
             Month = endMonth,
             MonthName = CombinedPeriodLabel(startYear, startMonth, endYear, endMonth),
-            InvoiceNumber = CombinedInvoiceNumber(appUserId, startYear, startMonth, endYear, endMonth),
+            InvoiceNumber = CombinedInvoiceNumber(appUserId, endYear, endMonth, invoiceIndex),
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = Math.Round(weightedRate, 4),
             TotalAmount = Math.Round(totalAmount, 2),
@@ -245,6 +249,22 @@ public class InvoiceComputationService : IInvoiceComputationService
             Sessions = sessions,
             GeneratedAt = DateTime.UtcNow
         };
+    }
+
+    private async Task<int> InvoiceIndexAsync(
+        IReadOnlyList<int> cardIds,
+        int year,
+        int month,
+        CancellationToken cancellationToken)
+    {
+        var endTimestamps = await _context.ChargingSessions
+            .AsNoTracking()
+            .Where(cs => cardIds.Contains(cs.ChargeCardId) && cs.ToTimestamp.HasValue)
+            .Select(cs => cs.ToTimestamp!.Value)
+            .ToListAsync(cancellationToken);
+
+        var billedMonths = endTimestamps.Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds);
+        return InvoiceNumbers.IndexForMonth(billedMonths, year, month);
     }
 
     private async Task<List<Models.EnergyPrice>> LoadEnergyPricesAsync(CancellationToken cancellationToken) =>
@@ -257,6 +277,12 @@ public class InvoiceComputationService : IInvoiceComputationService
             .Where(p => p.Year < year || (p.Year == year && p.Month <= month))
             .Select(p => (decimal?)p.PricePerKwh)
             .FirstOrDefault() ?? DefaultRatePerKwh;
+
+    private static decimal GetMollieSurchargeForMonth(IReadOnlyList<Models.EnergyPrice> energyPrices, int year, int month) =>
+        energyPrices
+            .Where(p => p.Year < year || (p.Year == year && p.Month <= month))
+            .Select(p => (decimal?)p.MollieSurchargeEur)
+            .FirstOrDefault() ?? DefaultMollieSurchargeEur;
 
     private async Task<Models.ChargeCard?> ResolveChargeCardProfileAsync(
         IReadOnlyList<int> myCards,

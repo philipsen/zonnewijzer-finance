@@ -2,6 +2,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using QRCoder;
+using System.Globalization;
 using System.IO;
 
 namespace Backend.Services
@@ -42,7 +43,6 @@ namespace Backend.Services
             string PaymentPaid,
             string PaymentDue,
             string PayOnline,
-            string IdealSurcharge,
             string QrHint,
             string ScanToPay,
             string PaymentRequestNotice,
@@ -77,7 +77,6 @@ namespace Backend.Services
                     PaymentPaid: "✓ Deze factuur is betaald. Er is geen actie vereist.",
                     PaymentDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
                     PayOnline: "Pay with Wero",
-                    IdealSurcharge: "Betalen met iDEAL kost € 0,25 extra.",
                     QrHint: "Scannen kan ook via de QR-code.",
                     ScanToPay: "Scan om te betalen",
                     PaymentRequestNotice: "Gelieve het bedrag over te maken op rekening NL40 TRIO 0321 2476 04, t.n.v. Coöperatie Deelstroom Delft U.A., onder vermelding van het factuurnummer.",
@@ -109,7 +108,6 @@ namespace Backend.Services
                     PaymentPaid: "✓ This invoice has been paid. No further action required.",
                     PaymentDue: "Please remit payment within 30 days of invoice date.",
                     PayOnline: "Pay with Wero",
-                    IdealSurcharge: "Using iDEAL adds a €0.25 surcharge.",
                     QrHint: "If scanning is easier, use the QR code.",
                     ScanToPay: "Scan to pay",
                     PaymentRequestNotice: "You will receive a separate payment request for this amount.",
@@ -144,15 +142,24 @@ namespace Backend.Services
             return pngQrCode.GetGraphic(8);
         }
 
-        private static void ComposeMolliePaymentLink(ColumnDescriptor column, InvoicePdfLabels labels, string paymentUrl)
+        private static string FormatIdealSurcharge(bool dutch, decimal surcharge)
         {
+            var amount = surcharge.ToString("0.00", dutch ? CultureInfo.GetCultureInfo("nl-NL") : CultureInfo.InvariantCulture);
+            return dutch
+                ? $"Betalen met iDEAL kost € {amount} extra."
+                : $"Using iDEAL adds a €{amount} surcharge.";
+        }
+
+        private static void ComposeMolliePaymentLink(ColumnDescriptor column, InvoicePdfLabels labels, InvoiceData invoiceData)
+        {
+            var paymentUrl = invoiceData.PaymentUrl!;
             var qrCode = TryGeneratePaymentQrCode(paymentUrl);
             column.Item().PaddingTop(10).Row(row =>
             {
                 row.RelativeItem().Column(linkCol =>
                 {
                     linkCol.Item().Text(labels.PayOnline).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(12);
-                    linkCol.Item().PaddingTop(2).Text(labels.IdealSurcharge)
+                    linkCol.Item().PaddingTop(2).Text(FormatIdealSurcharge(invoiceData.UsePaymentRequestNotice, invoiceData.MollieSurchargeEur))
                         .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
                     linkCol.Item().PaddingTop(6).Text(text =>
                     {
@@ -409,7 +416,7 @@ namespace Backend.Services
                         col.Item().PaddingTop(8).Text(labels.PaymentDue).FontFamily(InvoiceFontSetup.Family).FontSize(12);
                         col.Item().PaddingTop(10).Text(labels.PaymentRequestNotice).FontFamily(InvoiceFontSetup.Family).FontSize(12);
                         if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
-                            ComposeMolliePaymentLink(col, labels, invoiceData.PaymentUrl);
+                            ComposeMolliePaymentLink(col, labels, invoiceData);
                     }
 
                     col.Item().PaddingTop(12).Text(labels.PaymentContact)
@@ -427,7 +434,7 @@ namespace Backend.Services
                 {
                     col.Item().PaddingTop(8).Text(labels.PaymentDue).FontFamily(InvoiceFontSetup.Family).FontSize(12);
                     if (!string.IsNullOrWhiteSpace(invoiceData.PaymentUrl))
-                        ComposeMolliePaymentLink(col, labels, invoiceData.PaymentUrl);
+                        ComposeMolliePaymentLink(col, labels, invoiceData);
                 }
 
                 col.Item().PaddingTop(12).Text(labels.PaymentContact)
