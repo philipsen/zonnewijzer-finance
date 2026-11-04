@@ -43,7 +43,7 @@ public class InvoiceComputationServiceTests : IDisposable
         var data = await _service.BuildCombinedInvoiceDataForAppUserAsync(appUserId, 2026, 4, 2026, 5);
 
         Assert.NotNull(data);
-        Assert.Equal("INV-2026-04-05-U2", data!.InvoiceNumber);
+        Assert.Equal("260531 zonnewijzer 2-2", data!.InvoiceNumber);
         Assert.Equal("April – Mei 2026", data.MonthName);
         Assert.True(data.UsePaymentRequestNotice);
         Assert.Null(data.PaymentUrl);
@@ -121,6 +121,7 @@ public class InvoiceComputationServiceTests : IDisposable
         Assert.Equal(12m, julyInvoice!.TotalKwh);
         Assert.Equal(0.30m, julyInvoice.RatePerKwh);
         Assert.Equal(3.60m, julyInvoice.TotalAmount);
+        Assert.Equal("260731 zonnewijzer 5-1", julyInvoice.InvoiceNumber);
         Assert.Single(julyInvoice.Sessions);
     }
 

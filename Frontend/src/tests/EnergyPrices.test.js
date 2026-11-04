@@ -6,8 +6,8 @@ import EnergyPrices from '../components/EnergyPrices.vue'
 vi.mock('axios')
 
 const mockPrices = [
-  { year: 2026, month: 1, pricePerKwh: 0.22, updatedAt: '2026-01-01T00:00:00Z' },
-  { year: 2026, month: 2, pricePerKwh: 0.24, updatedAt: '2026-02-01T00:00:00Z' }
+  { year: 2026, month: 1, pricePerKwh: 0.22, mollieSurchargeEur: 0.32, updatedAt: '2026-01-01T00:00:00Z' },
+  { year: 2026, month: 2, pricePerKwh: 0.24, mollieSurchargeEur: 0.4, updatedAt: '2026-02-01T00:00:00Z' }
 ]
 
 describe('EnergyPrices.vue', () => {
@@ -29,7 +29,9 @@ describe('EnergyPrices.vue', () => {
     const rows = wrapper.findAll('tbody tr')
     expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('January')
+    expect(rows[0].text()).toContain('€0.32')
     expect(rows[1].text()).toContain('February')
+    expect(rows[1].text()).toContain('€0.40')
   })
 
   it('shows no-data message when prices are empty', async () => {
@@ -55,6 +57,7 @@ describe('EnergyPrices.vue', () => {
     expect(wrapper.vm.form.year).toBe(2026)
     expect(wrapper.vm.form.month).toBe(1)
     expect(wrapper.vm.form.pricePerKwh).toBe(0.22)
+    expect(wrapper.vm.form.mollieSurchargeEur).toBe(0.32)
   })
 
   it('resets form when clicking Cancel', async () => {

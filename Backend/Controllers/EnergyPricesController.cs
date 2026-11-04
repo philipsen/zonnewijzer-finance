@@ -63,12 +63,18 @@ namespace Backend.Controllers
             if (request.PricePerKwh <= 0)
                 return BadRequest("Price must be greater than zero.");
 
+            if (request.MollieSurchargeEur < 0)
+                return BadRequest("Mollie surcharge cannot be negative.");
+
+            var surcharge = Math.Round(request.MollieSurchargeEur, 2, MidpointRounding.AwayFromZero);
+
             var existing = await _context.EnergyPrices
                 .FirstOrDefaultAsync(p => p.Year == request.Year && p.Month == request.Month);
 
             if (existing != null)
             {
                 existing.PricePerKwh = request.PricePerKwh;
+                existing.MollieSurchargeEur = surcharge;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
             else
@@ -77,12 +83,15 @@ namespace Backend.Controllers
                 {
                     Year = request.Year,
                     Month = request.Month,
-                    PricePerKwh = request.PricePerKwh
+                    PricePerKwh = request.PricePerKwh,
+                    MollieSurchargeEur = surcharge
                 });
             }
 
             await _context.SaveChangesAsync();
-            _logger.LogInformation("Energy price set for {Year}-{Month}: €{Price}/kWh", request.Year, request.Month, request.PricePerKwh);
+            _logger.LogInformation(
+                "Energy price set for {Year}-{Month}: €{Price}/kWh, Mollie surcharge €{Surcharge}",
+                request.Year, request.Month, request.PricePerKwh, surcharge);
             return Ok();
         }
 
@@ -109,5 +118,6 @@ namespace Backend.Controllers
         public int Year { get; set; }
         public int Month { get; set; }
         public decimal PricePerKwh { get; set; }
+        public decimal MollieSurchargeEur { get; set; } = 0.32m;
     }
 }

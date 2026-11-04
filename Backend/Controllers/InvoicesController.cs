@@ -76,11 +76,9 @@ namespace Backend.Controllers
         private bool InvoicesEnableOnlinePaymentLinks() =>
             string.Equals(_configuration["Invoices:EnableOnlinePaymentLinks"], "true", StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Added to the Mollie checkout amount. The invoice total itself stays unchanged.</summary>
-        private const decimal WeroSurchargeEur = 0.25m;
-
-        private static decimal WeroChargeAmount(decimal invoiceTotal) =>
-            Math.Round(invoiceTotal + WeroSurchargeEur, 2, MidpointRounding.AwayFromZero);
+        /// <summary>Mollie checkout amount. The invoice total itself stays unchanged.</summary>
+        private static decimal WeroChargeAmount(decimal invoiceTotal, decimal surcharge) =>
+            Math.Round(invoiceTotal + surcharge, 2, MidpointRounding.AwayFromZero);
 
         private static bool CanReuseMolliePayment(MolliePayment payment, decimal chargeAmount) =>
             payment.Status is "paid" or "pending"
@@ -814,7 +812,7 @@ namespace Backend.Controllers
 
             var molliePayment = await _context.MolliePayments
                 .FirstOrDefaultAsync(p => p.AppUserId == userId && p.Year == year && p.Month == month, cancellationToken);
-            var chargeAmount = WeroChargeAmount(invoiceData.TotalAmount);
+            var chargeAmount = WeroChargeAmount(invoiceData.TotalAmount, invoiceData.MollieSurchargeEur);
 
             if (createPaymentIfMissing && (molliePayment == null || !CanReuseMolliePayment(molliePayment, chargeAmount)))
             {
@@ -922,7 +920,7 @@ namespace Backend.Controllers
                     return NotFound("No charging sessions found for this user and month");
                 }
 
-                var totalAmount = WeroChargeAmount(invoicePreview.TotalAmount);
+                var totalAmount = WeroChargeAmount(invoicePreview.TotalAmount, invoicePreview.MollieSurchargeEur);
                 if (existing is { Status: "open" } && existing.Amount == totalAmount)
                     return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                 var invoiceNumber = invoicePreview.InvoiceNumber;

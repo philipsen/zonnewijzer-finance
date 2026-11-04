@@ -22,6 +22,9 @@ namespace Backend.Services
         public decimal TotalKwh { get; set; }
         public decimal RatePerKwh { get; set; }
         public decimal TotalAmount { get; set; }
+
+        /// <summary>Added to the Mollie checkout for this invoice. Not included in <see cref="TotalAmount"/>.</summary>
+        public decimal MollieSurchargeEur { get; set; }
         public List<SessionData> Sessions { get; set; } = new();
         public DateTime GeneratedAt { get; set; }
         public string? PaymentUrl { get; set; }
