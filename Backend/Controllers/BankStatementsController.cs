@@ -104,12 +104,12 @@ public class BankStatementsController : ControllerBase
     }
 
     [HttpPost("bank-transactions/{id:int}/reopen")]
-    public async Task<IActionResult> Reopen(int id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Reopen(int id, [FromQuery] int? matchId, CancellationToken cancellationToken)
     {
         if (await RequireAdminAsync(cancellationToken) is { } denied)
             return denied;
 
-        var (error, review) = await _statements.ReopenAsync(id, cancellationToken);
+        var (error, review) = await _statements.ReopenAsync(id, matchId, cancellationToken);
         if (error == "Payment not found.")
             return NotFound(new { message = error });
         if (error != null)

@@ -67,6 +67,23 @@ public class BankInvoiceMatcherTests
     }
 
     [Fact]
+    public void TwoInvoiceNumbers_WhoseTotalsSumToThePayment_AreSplit()
+    {
+        var invoices = new[]
+        {
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 8, "260831 zonnewijzer 14-2", 20m, false),
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260731 zonnewijzer 14-1", 24.47m, false)
+        };
+
+        var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14 INV-2026-07-U14", 44.47m, invoices);
+
+        Assert.Equal(BankMatchKind.Split, proposal.Kind);
+        Assert.Equal(2, proposal.Shares?.Count);
+        Assert.Equal(20m, proposal.Shares?[0].Amount);
+        Assert.Equal(24.47m, proposal.Shares?[1].Amount);
+    }
+
+    [Fact]
     public void TwoDifferentInvoiceNumbers_AreUnmatched()
     {
         var invoices = new[]

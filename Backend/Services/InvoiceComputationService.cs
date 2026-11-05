@@ -154,7 +154,7 @@ public class InvoiceComputationService : IInvoiceComputationService
         var bankPaidAmount = await _context.InvoiceBankMatches
             .AsNoTracking()
             .Where(match => match.AppUserId == appUserId && match.Year == year && match.Month == month)
-            .Select(match => (decimal?)match.BankTransaction.Amount)
+            .Select(match => (decimal?)match.Amount)
             .SumAsync(cancellationToken) ?? 0m;
 
         return new InvoiceData

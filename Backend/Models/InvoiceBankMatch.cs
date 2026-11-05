@@ -21,6 +21,9 @@ public class InvoiceBankMatch
 
     public int Month { get; set; }
 
+    /// <summary>Part of the bank payment applied to this invoice.</summary>
+    public decimal Amount { get; set; }
+
     [Required]
     [StringLength(255)]
     public string InvoiceNumber { get; set; } = string.Empty;

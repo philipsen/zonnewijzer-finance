@@ -61,7 +61,7 @@ public sealed class InvoicePaymentCatalog
 
         var bankPaid = await _context.InvoiceBankMatches
             .AsNoTracking()
-            .Select(match => new { match.AppUserId, match.Year, match.Month, match.BankTransaction.Amount })
+            .Select(match => new { match.AppUserId, match.Year, match.Month, match.Amount })
             .ToListAsync(cancellationToken);
         var bankPaidByInvoice = bankPaid
             .GroupBy(match => (match.AppUserId, match.Year, match.Month))

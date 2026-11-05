@@ -131,6 +131,71 @@ public class BankStatementsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Confirm_SplitsOnePaymentAcrossTwoInvoices()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var july = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc);
+        var august = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, july, july.AddHours(1), 24.47m));
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, august, august.AddHours(1), 20m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 7, PricePerKwh = 1m });
+        await _db.SaveChangesAsync();
+
+        const string csv =
+            "\"06-10-2026\",\"NL40TRIO0321247604\",\"44,47\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-07-U14 INV-2026-08-U14\",\"1.592,97\"";
+
+        var upload = await Controller().Upload(CsvFile(csv), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var open = doc.RootElement.GetProperty("Review").GetProperty("Open");
+        Assert.Equal("Split", open[0].GetProperty("SuggestionKind").GetString());
+        Assert.Equal(2, open[0].GetProperty("Shares").GetArrayLength());
+        var id = open[0].GetProperty("Id").GetInt32();
+
+        var first = await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 7,
+            Amount = 24.47m
+        }, CancellationToken.None);
+        var firstOk = Assert.IsType<OkObjectResult>(first);
+        using var firstDoc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(firstOk.Value));
+        Assert.Equal(1, firstDoc.RootElement.GetProperty("Open").GetArrayLength());
+        Assert.Equal(20m, firstDoc.RootElement.GetProperty("Open")[0].GetProperty("UnallocatedAmount").GetDecimal());
+        Assert.Equal(0, firstDoc.RootElement.GetProperty("Confirmed").GetArrayLength());
+
+        var invoice = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
+        Assert.True((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 7))!.IsPaid);
+        Assert.False((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+
+        var second = await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 8,
+            Amount = 20m
+        }, CancellationToken.None);
+        var secondOk = Assert.IsType<OkObjectResult>(second);
+        using var secondDoc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(secondOk.Value));
+        Assert.Equal(0, secondDoc.RootElement.GetProperty("Open").GetArrayLength());
+        Assert.Equal(2, secondDoc.RootElement.GetProperty("Confirmed").GetArrayLength());
+        Assert.True((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+
+        var matchId = secondDoc.RootElement.GetProperty("Confirmed")[0].GetProperty("MatchId").GetInt32();
+        var reopened = await Controller().Reopen(id, matchId, CancellationToken.None);
+        var reopenedOk = Assert.IsType<OkObjectResult>(reopened);
+        using var reopenedDoc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(reopenedOk.Value));
+        Assert.Equal(1, reopenedDoc.RootElement.GetProperty("Open").GetArrayLength());
+        Assert.Equal(1, reopenedDoc.RootElement.GetProperty("Open")[0].GetProperty("Allocations").GetArrayLength());
+    }
+
+    [Fact]
     public async Task Upload_WithoutFile_ReturnsBadRequest()
     {
         _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });

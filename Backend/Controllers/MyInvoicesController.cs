@@ -80,7 +80,7 @@ public class MyInvoicesController : ControllerBase
             var bankPaidAmounts = await _context.InvoiceBankMatches
                 .AsNoTracking()
                 .Where(match => match.AppUserId == currentUserId)
-                .Select(match => new { match.Year, match.Month, match.BankTransaction.Amount })
+                .Select(match => new { match.Year, match.Month, match.Amount })
                 .ToListAsync();
 
             var stale = allPayments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
