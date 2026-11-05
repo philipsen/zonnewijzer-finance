@@ -571,7 +571,7 @@ namespace Backend.Controllers
 
         /// <summary>
         /// Mutatie-import for e-Boekhouden.nl. Column names match the import manual so they can be mapped directly.
-        /// Ledger accounts are left blank: they differ per administration.
+        /// The date is the first day of the month after the billed month. Tegenrekening is 4301.
         /// </summary>
         [HttpGet("{year:int}/{month:int}/eboekhouden.csv")]
         public async Task<IActionResult> DownloadEboekhoudenCsv(int year, int month, CancellationToken cancellationToken)
@@ -597,7 +597,7 @@ namespace Backend.Controllers
                     return NotFound("No charging sessions for that period.");
 
                 var culture = CultureInfo.GetCultureInfo("nl-NL");
-                var invoiceDate = InvoiceNumbers.PeriodEnd(year, month).ToString("d-M-yyyy", CultureInfo.InvariantCulture);
+                var invoiceDate = new DateTime(year, month, 1).AddMonths(1).ToString("d-M-yyyy", CultureInfo.InvariantCulture);
                 var monthLabel = new DateTime(year, month, 1).ToString("MMMM yyyy", culture);
                 var sb = new StringBuilder();
                 sb.AppendLine("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn");
@@ -631,7 +631,7 @@ namespace Backend.Controllers
                         .Append(exclVat.ToString("0.00", culture)).Append(';')
                         .Append(CsvEscape("HOOG_VERK_21")).Append(';')
                         .Append(data.TotalAmount.ToString("0.00", culture)).Append(';')
-                        .Append(';')
+                        .Append("4301;")
                         .Append(CsvEscape(relationCodes.GetValueOrDefault(appUserId))).Append(';')
                         .Append(CsvEscape(data.InvoiceNumber)).Append(';')
                         .Append("30")
