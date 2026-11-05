@@ -75,8 +75,16 @@
         </div>
         <p v-if="bankUploadMessage" class="bank-upload-message">{{ bankUploadMessage }}</p>
         <section v-if="bankOpen.length || bankConfirmed.length || bankIgnored.length" class="bank-review">
-          <h3>Bank payments</h3>
-          <p v-if="bankOpen.length === 0" class="bank-empty">No unmatched incoming payments.</p>
+          <div class="bank-review-header">
+            <h3>Bank payments</h3>
+            <label class="bank-hide-small">
+              <input v-model="hideSmallBalances" type="checkbox">
+              Hide balances under €1
+            </label>
+          </div>
+          <p v-if="visibleBankOpen.length === 0" class="bank-empty">
+            {{ bankOpen.length ? 'Balances under €1 are hidden.' : 'No unmatched incoming payments.' }}
+          </p>
           <div v-else class="table-wrapper">
             <table class="bank-table">
               <thead>
@@ -90,7 +98,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in bankOpen" :key="row.id">
+                <tr v-for="row in visibleBankOpen" :key="row.id">
                   <td>{{ formatBankDate(row.bookedOn) }}</td>
                   <td class="bank-amount">
                     €{{ row.amount.toFixed(2) }}
@@ -430,6 +438,7 @@ export default {
     const bankUploading = ref(false)
     const bankUploadMessage = ref('')
     const bankOpen = ref([])
+    const hideSmallBalances = ref(true)
     const bankConfirmed = ref([])
     const bankIgnored = ref([])
     const bankBusyId = ref(null)
@@ -684,6 +693,17 @@ export default {
       const total = Number(row.amount)
       return left > 0 && left < total - 0.001
     }
+
+    const paymentBalanceCents = (row) => {
+      const left = Number(row.unallocatedAmount)
+      const amount = Number.isFinite(left) ? left : Number(row.amount)
+      return Math.round(amount * 100)
+    }
+
+    const visibleBankOpen = computed(() => {
+      if (!hideSmallBalances.value) return bankOpen.value
+      return bankOpen.value.filter(row => paymentBalanceCents(row) >= 100)
+    })
 
     const invoiceCellClass = (userId, monthData) => ({
       'invoice-cell-paid': isPaymentPaid(userId, monthData.year, monthData.month),
@@ -1195,6 +1215,8 @@ export default {
       bankUploading,
       bankUploadMessage,
       bankOpen,
+      hideSmallBalances,
+      visibleBankOpen,
       bankConfirmed,
       bankIgnored,
       bankBusyId,
@@ -1348,9 +1370,26 @@ export default {
   border-radius: 8px;
 }
 
-.bank-review h3 {
-  margin: 0 0 0.5rem;
+.bank-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.bank-review-header h3 {
+  margin: 0;
   font-size: 1rem;
+}
+
+.bank-hide-small {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #444;
+  cursor: pointer;
 }
 
 .bank-empty {
