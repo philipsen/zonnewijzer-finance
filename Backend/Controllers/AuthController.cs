@@ -563,6 +563,7 @@ namespace Backend.Controllers
                     chargeCardIds = cardsByUser.GetValueOrDefault(u.Id) ?? Array.Empty<int>(),
                     createdAt = u.CreatedAt,
                     lastLoginAt = u.LastLoginAt,
+                    isActive = u.IsActive,
                     hasPendingInvite = _context.PasswordResetTokens.Any(t =>
                         t.UserId == u.Id &&
                         t.UsedAt == null &&
@@ -581,7 +582,7 @@ namespace Backend.Controllers
         }
 
         /// <summary>
-        /// Relation import for e-Boekhouden.nl. Code matches the invoice Relatie column (the member name).
+        /// Relation import for e-Boekhouden.nl. Code is at most 13 characters and matches the invoice Relatie column.
         /// </summary>
         [HttpGet("users/eboekhouden.csv")]
         public async Task<IActionResult> DownloadEboekhoudenRelationsCsv()
@@ -597,34 +598,40 @@ namespace Backend.Controllers
                 if (requestingUser == null || !requestingUser.Role.CanManageUserProfiles())
                     return Forbid();
 
-                var userRows = await _context.Users.AsNoTracking().OrderBy(u => u.Name).ThenBy(u => u.Id).ToListAsync();
+                var allUsers = await _context.Users.AsNoTracking().ToListAsync();
+                var userRows = allUsers
+                    .Where(u => u.IsActive)
+                    .OrderBy(u => u.Name)
+                    .ThenBy(u => u.Id);
                 var links = await _context.UserChargeCards.AsNoTracking().ToListAsync();
                 var cardIds = links.Select(l => l.ChargeCardId).Distinct().ToList();
                 var cards = await _context.ChargeCards.AsNoTracking()
                     .Where(c => cardIds.Contains(c.Id))
                     .ToListAsync();
                 var cardsById = cards.ToDictionary(c => c.Id);
+                ChargeCard? ProfileFor(int id)
+                {
+                    var linked = links.Where(l => l.UserId == id).Select(l => cardsById.GetValueOrDefault(l.ChargeCardId));
+                    return EboekhoudenRelationCodes.PreferredCard(linked);
+                }
+
+                var labels = EboekhoudenRelationCodes.Assign(allUsers.Select(u =>
+                    (u.Id, (string?)u.Name, (string?)u.Email, ProfileFor(u.Id)?.Comment)));
 
                 var sb = new StringBuilder();
                 sb.AppendLine("Code;Bedrijf/Naam;BP;Email;Adres;Postcode;Plaats;Land");
                 foreach (var user in userRows)
                 {
-                    var code = string.IsNullOrWhiteSpace(user.Name) ? user.Email : user.Name.Trim();
-                    var linked = links.Where(l => l.UserId == user.Id).Select(l => l.ChargeCardId).ToList();
-                    var profile = linked
-                        .Select(id => cardsById.GetValueOrDefault(id))
-                        .Where(c => c != null)
-                        .OrderBy(c => c!.Id)
-                        .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c!.Street) || !string.IsNullOrWhiteSpace(c!.PostalCode))
-                        ?? linked.Select(id => cardsById.GetValueOrDefault(id)).FirstOrDefault(c => c != null);
+                    var label = labels[user.Id];
+                    var profile = ProfileFor(user.Id);
 
                     var address = JoinAddress(profile?.Street, profile?.HouseNumber);
                     var hasAddress = !string.IsNullOrWhiteSpace(address)
                         || !string.IsNullOrWhiteSpace(profile?.PostalCode)
                         || !string.IsNullOrWhiteSpace(profile?.PlaceName);
 
-                    sb.Append(CsvEscape(code)).Append(';')
-                        .Append(CsvEscape(code)).Append(';')
+                    sb.Append(CsvEscape(label.Code)).Append(';')
+                        .Append(CsvEscape(label.Name)).Append(';')
                         .Append("P;").Append(CsvEscape(user.Email)).Append(';')
                         .Append(CsvEscape(address)).Append(';')
                         .Append(CsvEscape(profile?.PostalCode)).Append(';')
@@ -1006,6 +1013,53 @@ namespace Backend.Controllers
             {
                 _logger.LogError(ex, "Error deleting user {UserId}", id);
                 return BadRequest(new { message = $"Delete failed: {ex.Message}" });
+            }
+        }
+
+        [HttpPut("users/{id}/active")]
+        public async Task<IActionResult> SetUserActive(int id, [FromBody] SetUserActiveRequest? request)
+        {
+            try
+            {
+                if (request == null)
+                    return BadRequest(new { message = "Send JSON body { \"active\": true } or { \"active\": false }." });
+
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var editor = await _context.Users.FindAsync(currentUserId);
+                if (editor == null || !editor.Role.CanManageUserProfiles())
+                    return Forbid();
+
+                var user = await _context.Users.FindAsync(id);
+                if (user == null)
+                    return NotFound("User not found");
+
+                user.IsActive = request.Active;
+                _context.EventLogs.Add(new EventLog
+                {
+                    Timestamp = DateTime.UtcNow,
+                    UserName = editor.Name,
+                    Action = request.Active
+                        ? $"Marked '{user.Name}' active for e-Boekhouden"
+                        : $"Marked '{user.Name}' inactive for e-Boekhouden"
+                });
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    name = user.Name,
+                    isActive = user.IsActive
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating active flag for user {UserId}", id);
+                return BadRequest(new { message = $"Update failed: {ex.Message}" });
             }
         }
 

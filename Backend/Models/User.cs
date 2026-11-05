@@ -21,6 +21,8 @@ namespace Backend.Models
         public string Name { get; set; } = string.Empty;
         public string? PictureUrl { get; set; }
         public UserRole Role { get; set; } = UserRole.Base;
+        /// <summary>Inactive users stay in the app and are left out of the e-Boekhouden exports.</summary>
+        public bool IsActive { get; set; } = true;
         public ICollection<UserChargeCard> UserChargeCards { get; set; } = new List<UserChargeCard>();
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime LastLoginAt { get; set; } = DateTime.UtcNow;

@@ -602,9 +602,29 @@ namespace Backend.Controllers
                 var sb = new StringBuilder();
                 sb.AppendLine("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn");
 
+                var people = await _context.Users.AsNoTracking()
+                    .Select(u => new { u.Id, u.Name, u.Email, u.IsActive })
+                    .ToListAsync(cancellationToken);
+                var links = await _context.UserChargeCards.AsNoTracking().ToListAsync(cancellationToken);
+                var linkedCardIds = links.Select(l => l.ChargeCardId).Distinct().ToList();
+                var linkedCards = await _context.ChargeCards.AsNoTracking()
+                    .Where(c => linkedCardIds.Contains(c.Id))
+                    .ToListAsync(cancellationToken);
+                var cardsById = linkedCards.ToDictionary(c => c.Id);
+                var relationLabels = EboekhoudenRelationCodes.Assign(people.Select(u =>
+                {
+                    var profile = EboekhoudenRelationCodes.PreferredCard(
+                        links.Where(l => l.UserId == u.Id).Select(l => cardsById.GetValueOrDefault(l.ChargeCardId)));
+                    return (u.Id, (string?)u.Name, (string?)u.Email, profile?.Comment);
+                }));
+                var inactiveUserIds = people.Where(u => !u.IsActive).Select(u => u.Id).ToHashSet();
+
                 var rowCount = 0;
                 foreach (var appUserId in appUserIds)
                 {
+                    if (inactiveUserIds.Contains(appUserId))
+                        continue;
+
                     var data = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(
                         appUserId, year, month, cancellationToken);
                     if (data == null)
@@ -621,7 +641,7 @@ namespace Backend.Controllers
                         .Append(CsvEscape("HOOG_VERK_21")).Append(';')
                         .Append(data.TotalAmount.ToString("0.00", culture)).Append(';')
                         .Append(';')
-                        .Append(CsvEscape(data.UserName)).Append(';')
+                        .Append(CsvEscape(relationLabels.GetValueOrDefault(appUserId).Code ?? data.UserName)).Append(';')
                         .Append(CsvEscape(data.InvoiceNumber)).Append(';')
                         .Append("30")
                         .AppendLine();

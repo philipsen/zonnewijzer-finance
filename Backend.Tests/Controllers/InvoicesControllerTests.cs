@@ -192,6 +192,32 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadEboekhoudenCsv_OmitsInactiveUsers()
+    {
+        await SeedAdminAsync();
+        var activeId = 2;
+        var inactiveId = 3;
+        _db.Users.Add(new User { Id = activeId, Email = "active@test.com", Name = "Active Member", GoogleId = "g2", Role = UserRole.Base });
+        _db.Users.Add(new User { Id = inactiveId, Email = "inactive@test.com", Name = "Inactive Member", GoogleId = "g3", Role = UserRole.Base, IsActive = false });
+        var activeCard = await AddChargeCardAsync("ebh-active");
+        var inactiveCard = await AddChargeCardAsync("ebh-inactive");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = activeId, ChargeCardId = activeCard });
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = inactiveId, ChargeCardId = inactiveCard });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(activeCard, 1, t, t.AddHours(1), 10));
+        _db.ChargingSessions.Add(TestData.Session(inactiveCard, 1, t, t.AddHours(1), 4));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.30m });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadEboekhoudenCsv(2024, 4, CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Active Member", csv);
+        Assert.DoesNotContain("Inactive Member", csv);
+    }
+
+    [Fact]
     public async Task GenerateInvoicePdf_NoSessions_ReturnsNotFound()
     {
         await SeedAdminAsync();

@@ -491,6 +491,9 @@ namespace Backend.Migrations
                     b.Property<string>("GoogleId")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("LastLoginAt")
                         .HasColumnType("TEXT");
 
