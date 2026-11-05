@@ -23,6 +23,8 @@ namespace Backend.Models
         public UserRole Role { get; set; } = UserRole.Base;
         /// <summary>Inactive users stay in the app and are left out of the e-Boekhouden exports.</summary>
         public bool IsActive { get; set; } = true;
+        /// <summary>e-Boekhouden relation code, at most 13 characters. Filled in by an administrator.</summary>
+        public string? EboekhoudenCode { get; set; }
         public ICollection<UserChargeCard> UserChargeCards { get; set; } = new List<UserChargeCard>();
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime LastLoginAt { get; set; } = DateTime.UtcNow;

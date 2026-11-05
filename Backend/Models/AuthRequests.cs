@@ -35,6 +35,12 @@ namespace Backend.Models
         public string? Name { get; set; }
         public string? Email { get; set; }
         public string? Role { get; set; }
+        public string? EboekhoudenCode { get; set; }
+    }
+
+    public class SetEboekhoudenCodeRequest
+    {
+        public string? Code { get; set; }
     }
 
     public class UpdateRoleRequest

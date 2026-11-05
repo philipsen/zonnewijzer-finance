@@ -32,6 +32,7 @@ namespace Backend.Data
                 entity.HasIndex(e => e.Email).IsUnique();
                 entity.Property(e => e.Email).IsRequired();
                 entity.Property(e => e.Name).IsRequired();
+                entity.Property(e => e.EboekhoudenCode).HasMaxLength(13);
             });
 
             modelBuilder.Entity<UserChargeCard>(entity =>
