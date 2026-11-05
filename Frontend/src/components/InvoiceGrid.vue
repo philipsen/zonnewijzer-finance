@@ -56,8 +56,127 @@
           >
             {{ eboekhoudenLoading ? '…' : 'e-Boekhouden' }}
           </button>
+          <button
+            type="button"
+            class="btn-csv-month"
+            :disabled="bankUploading"
+            title="Upload a headerless Triodos CSV and match incoming payments to invoices."
+            @click="openBankFile"
+          >
+            {{ bankUploading ? '…' : 'Upload bank CSV' }}
+          </button>
+          <input
+            ref="bankFileInput"
+            type="file"
+            accept=".csv,text/csv"
+            class="bank-file-input"
+            @change="uploadBankCsv"
+          >
         </div>
-        <details v-if="months.length" class="import-help" open>
+        <p v-if="bankUploadMessage" class="bank-upload-message">{{ bankUploadMessage }}</p>
+        <section v-if="bankOpen.length || bankConfirmed.length || bankIgnored.length" class="bank-review">
+          <h3>Bank payments</h3>
+          <p v-if="bankOpen.length === 0" class="bank-empty">No unmatched incoming payments.</p>
+          <div v-else class="table-wrapper">
+            <table class="bank-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Amount</th>
+                  <th>Payer</th>
+                  <th>Description</th>
+                  <th>Match</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in bankOpen" :key="row.id">
+                  <td>{{ formatBankDate(row.bookedOn) }}</td>
+                  <td class="bank-amount">€{{ row.amount.toFixed(2) }}</td>
+                  <td>{{ row.counterpartyName }}</td>
+                  <td class="bank-description" :title="row.description">{{ row.description }}</td>
+                  <td>
+                    <template v-if="row.suggestionKind">
+                      <span :class="['payment-status-badge', row.suggestionKind === 'AlreadyPaid' ? 'paid' : 'pending']">{{ matchLabel(row) }}</span>
+                      <div class="bank-match-detail">{{ matchDetail(row) }}</div>
+                    </template>
+                    <span v-else class="bank-unmatched">No match</span>
+                  </td>
+                  <td class="bank-actions">
+                    <button
+                      v-if="canConfirmSuggestion(row)"
+                      type="button"
+                      class="btn-bank"
+                      :disabled="bankBusyId === row.id"
+                      @click="confirmBankMatch(row, row.appUserId, row.year, row.month)"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-bank btn-bank-muted"
+                      :disabled="bankBusyId === row.id"
+                      @click="toggleBankLink(row)"
+                    >
+                      {{ bankLinkDraft[row.id] ? 'Close' : 'Choose invoice' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-bank btn-bank-muted"
+                      :disabled="bankBusyId === row.id"
+                      @click="ignoreBankPayment(row)"
+                    >
+                      Ignore
+                    </button>
+                    <div v-if="bankLinkDraft[row.id]" class="bank-link-form">
+                      <select v-model="bankLinkDraft[row.id].userId" @change="onBankLinkUser(row.id)">
+                        <option v-for="userRow in gridData" :key="userRow.user.id" :value="userRow.user.id">
+                          {{ userRow.user.name }}
+                        </option>
+                      </select>
+                      <select v-model="bankLinkDraft[row.id].periodKey">
+                        <option
+                          v-for="invoice in invoicesForUser(bankLinkDraft[row.id].userId)"
+                          :key="`${invoice.year}-${invoice.month}`"
+                          :value="`${invoice.year}-${invoice.month}`"
+                        >
+                          {{ invoice.monthName }} · €{{ invoice.totalAmount.toFixed(2) }}
+                        </option>
+                      </select>
+                      <button
+                        type="button"
+                        class="btn-bank"
+                        :disabled="bankBusyId === row.id || !bankLinkDraft[row.id].periodKey"
+                        @click="confirmDraft(row)"
+                      >
+                        Link
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <details v-if="bankConfirmed.length" class="bank-fold">
+            <summary>Confirmed ({{ bankConfirmed.length }})</summary>
+            <ul>
+              <li v-for="row in bankConfirmed" :key="row.id">
+                {{ formatBankDate(row.bookedOn) }} · €{{ row.amount.toFixed(2) }} · {{ row.userName }} · {{ row.invoiceNumber }}
+                <button type="button" class="btn-bank btn-bank-muted" :disabled="bankBusyId === row.id" @click="reopenBankPayment(row)">Undo</button>
+              </li>
+            </ul>
+          </details>
+          <details v-if="bankIgnored.length" class="bank-fold">
+            <summary>Ignored ({{ bankIgnored.length }})</summary>
+            <ul>
+              <li v-for="row in bankIgnored" :key="row.id">
+                {{ formatBankDate(row.bookedOn) }} · €{{ row.amount.toFixed(2) }} · {{ row.counterpartyName }}
+                <button type="button" class="btn-bank btn-bank-muted" :disabled="bankBusyId === row.id" @click="reopenBankPayment(row)">Restore</button>
+              </li>
+            </ul>
+          </details>
+        </section>
+        <details v-if="months.length" class="import-help">
           <summary>Import into e-Boekhouden</summary>
           <ol>
             <li>Select the month and download <strong>e-Boekhouden</strong>. Each row is one sent invoice. There is no total row. Users marked inactive on the users page are left out of this file and the relation file.</li>
@@ -112,6 +231,10 @@
                       <div class="invoice-amount">€{{ monthData.totalAmount.toFixed(2) }}</div>
                     </a>
                     <div class="invoice-actions-area">
+                      <span
+                        v-if="isBankPaid(userRow.user.id, monthData.year, monthData.month) && !isMolliePaid(userRow.user.id, monthData.year, monthData.month)"
+                        class="payment-status-badge bank"
+                      >bank</span>
                       <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
                         <template v-if="getPaymentLinkState(userRow.user.id, monthData.year, monthData.month)">
                           <span :class="['payment-status-badge', getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(userRow.user.id, monthData.year, monthData.month).status }}</span>
@@ -191,6 +314,10 @@
                 <span class="mobile-amount">€{{ monthData.totalAmount.toFixed(2) }}</span>
               </a>
               <div class="invoice-actions-area mobile-invoice-actions">
+                <span
+                  v-if="isBankPaid(selectedUserRow.user.id, monthData.year, monthData.month) && !isMolliePaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  class="payment-status-badge bank"
+                >bank</span>
                 <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
                   <template v-if="getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month)">
                     <span :class="['payment-status-badge', getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status]">{{ getPaymentLinkState(selectedUserRow.user.id, monthData.year, monthData.month).status }}</span>
@@ -254,6 +381,15 @@ export default {
     const csvLoading = ref(false)
     const eboekhoudenLoading = ref(false)
     const enableOnlinePaymentLinks = ref(false)
+    const bankFileInput = ref(null)
+    const bankUploading = ref(false)
+    const bankUploadMessage = ref('')
+    const bankOpen = ref([])
+    const bankConfirmed = ref([])
+    const bankIgnored = ref([])
+    const bankBusyId = ref(null)
+    const bankLinkDraft = ref({})
+    const bankPaidKeys = ref({})
 
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
@@ -405,10 +541,16 @@ export default {
       return state.status === 'open' || state.status === 'pending'
     }
 
-    const isPaymentPaid = (userId, year, month) => {
+    const isMolliePaid = (userId, year, month) => {
       const state = getPaymentLinkState(userId, year, month)
       return state?.status === 'paid'
     }
+
+    const isBankPaid = (userId, year, month) =>
+      !!bankPaidKeys.value[paymentLinkKey(userId, year, month)]
+
+    const isPaymentPaid = (userId, year, month) =>
+      isMolliePaid(userId, year, month) || isBankPaid(userId, year, month)
 
     const isPaymentLinkLoading = (userId, year, month) =>
       !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
@@ -594,8 +736,192 @@ export default {
       }
     }
 
+    const applyBankReview = (review) => {
+      bankOpen.value = review?.open || []
+      bankConfirmed.value = review?.confirmed || []
+      bankIgnored.value = review?.ignored || []
+      const paid = {}
+      for (const row of bankConfirmed.value) {
+        if (row.appUserId != null && row.year != null && row.month != null)
+          paid[paymentLinkKey(row.appUserId, row.year, row.month)] = true
+      }
+      bankPaidKeys.value = paid
+    }
+
+    const fetchBankReview = async () => {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+        const response = await axios.get('/api/invoices/bank-transactions', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        applyBankReview(response.data)
+      } catch (err) {
+        console.error('Failed to load bank payments:', err)
+      }
+    }
+
+    const apiMessage = (err, fallback) => {
+      const data = err.response?.data
+      if (!data) return fallback
+      if (typeof data === 'string') return data
+      return data.message || fallback
+    }
+
+    const openBankFile = () => {
+      if (bankFileInput.value) {
+        bankFileInput.value.value = ''
+        bankFileInput.value.click()
+      }
+    }
+
+    const uploadBankCsv = async (event) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      bankUploading.value = true
+      bankUploadMessage.value = ''
+      try {
+        const token = localStorage.getItem('token')
+        const body = new FormData()
+        body.append('file', file)
+        const response = await axios.post('/api/invoices/bank-csv', body, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        applyBankReview(response.data.review)
+        const imported = response.data.imported ?? 0
+        const duplicates = response.data.duplicates ?? 0
+        const skipped = response.data.skipped ?? 0
+        const parts = [`Imported ${imported} row${imported === 1 ? '' : 's'}.`]
+        if (duplicates) parts.push(`${duplicates} already imported.`)
+        if (skipped) parts.push(`${skipped} row${skipped === 1 ? '' : 's'} skipped.`)
+        bankUploadMessage.value = parts.join(' ')
+      } catch (err) {
+        console.error('Failed to upload bank CSV:', err)
+        bankUploadMessage.value = apiMessage(err, 'Failed to upload the bank CSV.')
+      } finally {
+        bankUploading.value = false
+      }
+    }
+
+    const formatBankDate = (value) => {
+      if (!value) return ''
+      const [year, month, day] = String(value).slice(0, 10).split('-')
+      if (!year || !month || !day) return value
+      return `${day}-${month}-${year}`
+    }
+
+    const matchLabel = (row) => {
+      if (row.suggestionKind === 'Certain') return 'Certain'
+      if (row.suggestionKind === 'Suggested') return 'Suggested'
+      if (row.suggestionKind === 'AlreadyPaid') return 'Already paid'
+      return row.suggestionKind
+    }
+
+    const matchDetail = (row) => {
+      if (!row.userName) return ''
+      const when = row.year && row.month ? formatMonthName(row.year, row.month) : ''
+      const amount = row.invoiceAmount != null ? `€${Number(row.invoiceAmount).toFixed(2)}` : ''
+      return [row.userName, when, row.invoiceNumber, amount].filter(Boolean).join(' · ')
+    }
+
+    const canConfirmSuggestion = (row) =>
+      (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested')
+      && row.appUserId != null && row.year != null && row.month != null
+
+    const invoicesForUser = (userId) => {
+      const row = gridData.value?.find(entry => entry.user.id === Number(userId))
+      if (!row) return []
+      return row.invoices.filter(invoice => invoice.hasChargingSessions)
+    }
+
+    const toggleBankLink = (row) => {
+      if (bankLinkDraft.value[row.id]) {
+        const next = { ...bankLinkDraft.value }
+        delete next[row.id]
+        bankLinkDraft.value = next
+        return
+      }
+      const userId = row.appUserId || gridData.value?.[0]?.user.id || ''
+      const invoices = invoicesForUser(userId)
+      const preferred = invoices.find(invoice => invoice.year === row.year && invoice.month === row.month) || invoices[0]
+      bankLinkDraft.value = {
+        ...bankLinkDraft.value,
+        [row.id]: {
+          userId,
+          periodKey: preferred ? `${preferred.year}-${preferred.month}` : ''
+        }
+      }
+    }
+
+    const onBankLinkUser = (rowId) => {
+      const draft = bankLinkDraft.value[rowId]
+      if (!draft) return
+      const invoices = invoicesForUser(draft.userId)
+      const still = invoices.some(invoice => `${invoice.year}-${invoice.month}` === draft.periodKey)
+      if (!still) {
+        bankLinkDraft.value = {
+          ...bankLinkDraft.value,
+          [rowId]: {
+            ...draft,
+            periodKey: invoices[0] ? `${invoices[0].year}-${invoices[0].month}` : ''
+          }
+        }
+      }
+    }
+
+    const confirmBankMatch = async (row, appUserId, year, month) => {
+      bankBusyId.value = row.id
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/confirm`, {
+          appUserId: Number(appUserId),
+          year: Number(year),
+          month: Number(month)
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        applyBankReview(response.data)
+        const next = { ...bankLinkDraft.value }
+        delete next[row.id]
+        bankLinkDraft.value = next
+        bankUploadMessage.value = ''
+      } catch (err) {
+        console.error('Failed to confirm bank match:', err)
+        bankUploadMessage.value = apiMessage(err, 'Failed to match the payment.')
+      } finally {
+        bankBusyId.value = null
+      }
+    }
+
+    const confirmDraft = (row) => {
+      const draft = bankLinkDraft.value[row.id]
+      if (!draft?.periodKey) return
+      const [year, month] = draft.periodKey.split('-')
+      return confirmBankMatch(row, draft.userId, year, month)
+    }
+
+    const postBankAction = async (row, action) => {
+      bankBusyId.value = row.id
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/${action}`, null, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        applyBankReview(response.data)
+      } catch (err) {
+        console.error(`Failed to ${action} bank payment:`, err)
+        bankUploadMessage.value = apiMessage(err, 'Failed to update the payment.')
+      } finally {
+        bankBusyId.value = null
+      }
+    }
+
+    const ignoreBankPayment = (row) => postBankAction(row, 'ignore')
+    const reopenBankPayment = (row) => postBankAction(row, 'reopen')
+
     onMounted(() => {
       fetchInvoicesGrid()
+      fetchBankReview()
     })
 
     return {
@@ -628,7 +954,30 @@ export default {
       sendMonthEmails,
       downloadMonthOverviewCsv,
       downloadEboekhoudenCsv,
-      enableOnlinePaymentLinks
+      enableOnlinePaymentLinks,
+      bankFileInput,
+      bankUploading,
+      bankUploadMessage,
+      bankOpen,
+      bankConfirmed,
+      bankIgnored,
+      bankBusyId,
+      bankLinkDraft,
+      openBankFile,
+      uploadBankCsv,
+      formatBankDate,
+      matchLabel,
+      matchDetail,
+      canConfirmSuggestion,
+      invoicesForUser,
+      toggleBankLink,
+      onBankLinkUser,
+      confirmBankMatch,
+      confirmDraft,
+      ignoreBankPayment,
+      reopenBankPayment,
+      isBankPaid,
+      isMolliePaid
     }
   }
 }
@@ -740,6 +1089,114 @@ export default {
 .btn-csv-month:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.bank-file-input {
+  display: none;
+}
+
+.bank-upload-message {
+  margin: 0.75rem 0 0;
+  color: #333;
+}
+
+.bank-review {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+}
+
+.bank-review h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.bank-empty {
+  margin: 0;
+  color: #666;
+}
+
+.bank-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.bank-table th,
+.bank-table td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid #e9ecef;
+  text-align: left;
+  vertical-align: top;
+}
+
+.bank-amount {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.bank-description {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bank-match-detail {
+  margin-top: 0.25rem;
+  color: #444;
+}
+
+.bank-unmatched {
+  color: #856404;
+}
+
+.bank-actions {
+  min-width: 11rem;
+}
+
+.bank-link-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.bank-link-form select {
+  max-width: 12rem;
+  padding: 0.25rem;
+}
+
+.btn-bank {
+  margin-right: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #1d78be;
+  border-radius: 4px;
+  background: #1d78be;
+  color: white;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.btn-bank-muted {
+  background: white;
+  color: #495057;
+  border-color: #ced4da;
+}
+
+.btn-bank:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bank-fold {
+  margin-top: 0.75rem;
+}
+
+.bank-fold li {
+  margin: 0.35rem 0;
 }
 
 .import-help {
@@ -1252,7 +1709,8 @@ export default {
   border-radius: 3px;
 }
 
-.payment-status-badge.paid {
+.payment-status-badge.paid,
+.payment-status-badge.bank {
   background-color: #d4edda;
   color: #155724;
 }

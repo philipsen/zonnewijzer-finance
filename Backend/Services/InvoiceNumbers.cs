@@ -6,6 +6,16 @@ namespace Backend.Services;
 /// </summary>
 public static class InvoiceNumbers
 {
+    /// <summary>
+    /// Invoices through September 2026 were printed as <c>INV-yyyy-MM-U{userId}</c>.
+    /// October 2026 and later use <see cref="Format"/>.
+    /// </summary>
+    public static bool UsesLegacyFormat(int year, int month) =>
+        year < 2026 || (year == 2026 && month <= 9);
+
+    public static string Legacy(int year, int month, int userId) =>
+        $"INV-{year}-{month:00}-U{userId}";
+
     public static DateTime PeriodEnd(int year, int month) =>
         new(year, month, DateTime.DaysInMonth(year, month));
 

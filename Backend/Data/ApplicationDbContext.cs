@@ -17,6 +17,8 @@ namespace Backend.Data
         public DbSet<EnergyPrice> EnergyPrices { get; set; }
         public DbSet<ChargeCard> ChargeCards { get; set; }
         public DbSet<MolliePayment> MolliePayments { get; set; }
+        public DbSet<BankTransaction> BankTransactions { get; set; }
+        public DbSet<InvoiceBankMatch> InvoiceBankMatches { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
         public DbSet<UserChargeCard> UserChargeCards { get; set; }
         public DbSet<SmappeeServiceLocation> SmappeeServiceLocations { get; set; }
@@ -119,6 +121,42 @@ namespace Backend.Data
                 entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
                 entity.Property(e => e.Status).HasMaxLength(50).IsRequired();
                 entity.HasIndex(e => new { e.AppUserId, e.Year, e.Month }).IsUnique();
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(e => e.AppUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<BankTransaction>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.AccountIban).HasMaxLength(34).IsRequired();
+                entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
+                entity.Property(e => e.Direction).HasMaxLength(10).IsRequired();
+                entity.Property(e => e.CounterpartyName).HasMaxLength(200).IsRequired();
+                entity.Property(e => e.CounterpartyBic).HasMaxLength(11);
+                entity.Property(e => e.CounterpartyIban).HasMaxLength(34);
+                entity.Property(e => e.TransactionCode).HasMaxLength(8);
+                entity.Property(e => e.Description).HasMaxLength(2000).IsRequired();
+                entity.Property(e => e.BalanceAfter).HasPrecision(12, 2);
+                entity.Property(e => e.Fingerprint).HasMaxLength(64).IsRequired();
+                entity.Property(e => e.ReviewStatus).HasMaxLength(20).IsRequired();
+                entity.HasIndex(e => e.Fingerprint).IsUnique();
+            });
+
+            modelBuilder.Entity<InvoiceBankMatch>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.InvoiceNumber).HasMaxLength(255).IsRequired();
+                entity.Property(e => e.MatchKind).HasMaxLength(20).IsRequired();
+                entity.HasIndex(e => e.BankTransactionId).IsUnique();
+                entity.HasIndex(e => new { e.AppUserId, e.Year, e.Month }).IsUnique();
+
+                entity.HasOne(e => e.BankTransaction)
+                    .WithMany()
+                    .HasForeignKey(e => e.BankTransactionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
                 entity.HasOne<User>()
                     .WithMany()
                     .HasForeignKey(e => e.AppUserId)

@@ -136,6 +136,8 @@ builder.Services.AddScoped<ISmappeeChargingSyncService, SmappeeChargingSyncServi
 builder.Services.AddScoped<IChargingSessionReconcileService, ChargingSessionReconcileService>();
 builder.Services.AddScoped<ISmappeeCombinedInvoiceSessionSource, SmappeeCombinedInvoiceSessionSource>();
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
+builder.Services.AddScoped<Backend.Services.Bank.InvoicePaymentCatalog>();
+builder.Services.AddScoped<Backend.Services.Bank.BankStatementService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 builder.Services.AddHttpClient("Mollie");
 builder.Services.AddScoped<IMollieService, MollieService>();

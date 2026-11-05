@@ -711,6 +711,8 @@ namespace Backend.Controllers
                 var deletedProfiles = await _context.ChargeCards.CountAsync();
                 var usersPreserved = await _context.Users.CountAsync();
 
+                _context.InvoiceBankMatches.RemoveRange(await _context.InvoiceBankMatches.ToListAsync());
+                _context.BankTransactions.RemoveRange(await _context.BankTransactions.ToListAsync());
                 _context.Invoices.RemoveRange(await _context.Invoices.ToListAsync());
                 _context.MolliePayments.RemoveRange(await _context.MolliePayments.ToListAsync());
                 _context.EventLogs.RemoveRange(await _context.EventLogs.ToListAsync());

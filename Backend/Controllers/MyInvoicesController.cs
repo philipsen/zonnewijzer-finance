@@ -77,6 +77,12 @@ public class MyInvoicesController : ControllerBase
                 .Where(p => p.AppUserId == currentUserId)
                 .ToListAsync();
 
+            var bankPaidMonths = await _context.InvoiceBankMatches
+                .AsNoTracking()
+                .Where(match => match.AppUserId == currentUserId)
+                .Select(match => new { match.Year, match.Month })
+                .ToListAsync();
+
             var stale = allPayments.Where(p => !FinalPaymentStatuses.Contains(p.Status)).ToList();
             foreach (var p in stale)
             {
@@ -139,7 +145,8 @@ public class MyInvoicesController : ControllerBase
                     TotalAmount = totalAmount,
                     PaymentStatus = payment?.Status,
                     CheckoutUrl = payment?.CheckoutUrl,
-                    IsPaid = payment?.Status == "paid",
+                    IsPaid = payment?.Status == "paid"
+                        || bankPaidMonths.Any(match => match.Year == m.Year && match.Month == m.Month),
                     IsOngoingMonth = BrusselsTime.IsCurrentBrusselsMonth(m.Year, m.Month)
                 };
             }).ToList();
