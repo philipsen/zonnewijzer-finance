@@ -79,6 +79,58 @@ public class BankStatementsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Confirm_AllowsSeveralPaymentsUntilTheInvoiceIsCovered()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var when = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, when, when.AddHours(1), 44.47m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 8, PricePerKwh = 1m });
+        await _db.SaveChangesAsync();
+
+        const string first =
+            "\"06-10-2026\",\"NL40TRIO0321247604\",\"20,00\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-08-U14 deel 1\",\"1.500,00\"";
+        const string second =
+            "\"07-10-2026\",\"NL40TRIO0321247604\",\"24,47\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-08-U14 deel 2\",\"1.524,47\"";
+        const string extra =
+            "\"08-10-2026\",\"NL40TRIO0321247604\",\"1,00\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-08-U14 extra\",\"1.525,47\"";
+
+        var upload = await Controller().Upload(CsvFile(first + "\n" + second), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var open = doc.RootElement.GetProperty("Review").GetProperty("Open");
+        Assert.Equal(2, open.GetArrayLength());
+        Assert.Equal("Partial", open[0].GetProperty("SuggestionKind").GetString());
+        Assert.Equal("Partial", open[1].GetProperty("SuggestionKind").GetString());
+
+        var firstId = open.EnumerateArray().First(row => row.GetProperty("Amount").GetDecimal() == 20m).GetProperty("Id").GetInt32();
+        var secondId = open.EnumerateArray().First(row => row.GetProperty("Amount").GetDecimal() == 24.47m).GetProperty("Id").GetInt32();
+        var request = new ConfirmBankMatchRequest { AppUserId = 14, Year = 2026, Month = 8 };
+
+        Assert.IsType<OkObjectResult>(await Controller().Confirm(firstId, request, CancellationToken.None));
+        var invoice = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
+        Assert.False((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+
+        Assert.IsType<OkObjectResult>(await Controller().Confirm(secondId, request, CancellationToken.None));
+        Assert.True((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+        Assert.Equal(2, await _db.InvoiceBankMatches.CountAsync());
+
+        var extraUpload = await Controller().Upload(CsvFile(extra), CancellationToken.None);
+        var extraOk = Assert.IsType<OkObjectResult>(extraUpload);
+        using var extraDoc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(extraOk.Value));
+        var extraOpen = extraDoc.RootElement.GetProperty("Review").GetProperty("Open");
+        Assert.Equal("AlreadyPaid", extraOpen[0].GetProperty("SuggestionKind").GetString());
+        var extraId = extraOpen[0].GetProperty("Id").GetInt32();
+
+        var rejected = await Controller().Confirm(extraId, request, CancellationToken.None);
+        Assert.IsType<ConflictObjectResult>(rejected);
+    }
+
+    [Fact]
     public async Task Upload_WithoutFile_ReturnsBadRequest()
     {
         _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });

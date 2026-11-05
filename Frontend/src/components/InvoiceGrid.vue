@@ -184,7 +184,7 @@
             <li>Open the file and fill <strong>Rekening</strong> with your debtors ledger code. <strong>Tegenrekening</strong> is already <strong>4301</strong> and <strong>Kostenplaats</strong> is already <strong>PV Warmoestuin</strong>.</li>
             <li>Go to <strong>Beheer &gt; Inrichting &gt; Mutaties importeren</strong>, choose the CSV, and continue.</li>
             <li>Map each column to the property with the same name: Datum, Mutatiesoort, Rekening, Omschrijving, Boekstuk, Bedrag excl, BTW-code, Bedrag incl, Tegenrekening, Relatie, Factuurnummer, Betalingstermijn, Kostenplaats.</li>
-            <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the first day of the next month, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
+            <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the first day of the next month, <strong>Boekstuk</strong> is empty, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
             <li>Start the import. Rows with the same factuurnummer and the same relatie are combined into one mutation. Review the result under <strong>Boekhouden &gt; Overzichten &gt; Mutaties</strong>.</li>
           </ol>
         </details>
@@ -218,7 +218,7 @@
                 v-for="monthData in userRow.invoices"
                 :key="`${userRow.user.id}-${monthData.year}-${monthData.month}`"
                 class="invoice-cell"
-                :class="{ 'invoice-cell-paid': isPaymentPaid(userRow.user.id, monthData.year, monthData.month) }"
+                :class="invoiceCellClass(userRow.user.id, monthData)"
               >
                 <div class="invoice-content">
                   <template v-if="monthData.hasChargingSessions">
@@ -232,7 +232,12 @@
                     </a>
                     <div class="invoice-actions-area">
                       <span
-                        v-if="isBankPaid(userRow.user.id, monthData.year, monthData.month) && !isMolliePaid(userRow.user.id, monthData.year, monthData.month)"
+                        v-if="isPartiallyPaid(userRow.user.id, monthData.year, monthData.month)"
+                        class="payment-status-badge partial"
+                        :title="partialTitle(userRow.user.id, monthData.year, monthData.month)"
+                      >€{{ bankPaidAmount(userRow.user.id, monthData.year, monthData.month).toFixed(2) }}</span>
+                      <span
+                        v-else-if="isBankPaid(userRow.user.id, monthData.year, monthData.month) && !isMolliePaid(userRow.user.id, monthData.year, monthData.month)"
                         class="payment-status-badge bank"
                       >bank</span>
                       <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
@@ -301,7 +306,7 @@
             v-for="monthData in selectedUserRow.invoices"
             :key="`${monthData.year}-${monthData.month}`"
             class="mobile-month-row"
-            :class="{ 'mobile-month-row-paid': isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month) }"
+            :class="mobileMonthClass(selectedUserRow.user.id, monthData)"
           >
             <span class="mobile-month-name">{{ formatMonthName(monthData.year, monthData.month) }}</span>
             <template v-if="monthData.hasChargingSessions">
@@ -315,7 +320,12 @@
               </a>
               <div class="invoice-actions-area mobile-invoice-actions">
                 <span
-                  v-if="isBankPaid(selectedUserRow.user.id, monthData.year, monthData.month) && !isMolliePaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  v-if="isPartiallyPaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  class="payment-status-badge partial"
+                  :title="partialTitle(selectedUserRow.user.id, monthData.year, monthData.month)"
+                >€{{ bankPaidAmount(selectedUserRow.user.id, monthData.year, monthData.month).toFixed(2) }}</span>
+                <span
+                  v-else-if="isBankPaid(selectedUserRow.user.id, monthData.year, monthData.month) && !isMolliePaid(selectedUserRow.user.id, monthData.year, monthData.month)"
                   class="payment-status-badge bank"
                 >bank</span>
                 <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
@@ -389,7 +399,7 @@ export default {
     const bankIgnored = ref([])
     const bankBusyId = ref(null)
     const bankLinkDraft = ref({})
-    const bankPaidKeys = ref({})
+    const bankPaidAmounts = ref({})
 
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
@@ -546,11 +556,49 @@ export default {
       return state?.status === 'paid'
     }
 
-    const isBankPaid = (userId, year, month) =>
-      !!bankPaidKeys.value[paymentLinkKey(userId, year, month)]
+    const cents = (value) => Math.round(Number(value) * 100)
+
+    const invoiceTotal = (userId, year, month) => {
+      const row = gridData.value?.find(entry => entry.user.id === userId)
+      const invoice = row?.invoices?.find(item => item.year === year && item.month === month)
+      return invoice?.hasChargingSessions ? invoice.totalAmount : null
+    }
+
+    const bankPaidAmount = (userId, year, month) =>
+      bankPaidAmounts.value[paymentLinkKey(userId, year, month)] || 0
+
+    const isBankPaid = (userId, year, month) => {
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      return total != null && paid > 0 && cents(paid) >= cents(total)
+    }
+
+    const isPartiallyPaid = (userId, year, month) => {
+      if (isMolliePaid(userId, year, month)) return false
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      return total != null && paid > 0 && cents(paid) < cents(total)
+    }
 
     const isPaymentPaid = (userId, year, month) =>
       isMolliePaid(userId, year, month) || isBankPaid(userId, year, month)
+
+    const invoiceCellClass = (userId, monthData) => ({
+      'invoice-cell-paid': isPaymentPaid(userId, monthData.year, monthData.month),
+      'invoice-cell-partial': isPartiallyPaid(userId, monthData.year, monthData.month)
+    })
+
+    const mobileMonthClass = (userId, monthData) => ({
+      'mobile-month-row-paid': isPaymentPaid(userId, monthData.year, monthData.month),
+      'mobile-month-row-partial': isPartiallyPaid(userId, monthData.year, monthData.month)
+    })
+
+    const partialTitle = (userId, year, month) => {
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      if (total == null) return ''
+      return `Paid €${paid.toFixed(2)} of €${total.toFixed(2)}`
+    }
 
     const isPaymentLinkLoading = (userId, year, month) =>
       !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
@@ -742,10 +790,11 @@ export default {
       bankIgnored.value = review?.ignored || []
       const paid = {}
       for (const row of bankConfirmed.value) {
-        if (row.appUserId != null && row.year != null && row.month != null)
-          paid[paymentLinkKey(row.appUserId, row.year, row.month)] = true
+        if (row.appUserId == null || row.year == null || row.month == null) continue
+        const key = paymentLinkKey(row.appUserId, row.year, row.month)
+        paid[key] = (paid[key] || 0) + Number(row.amount)
       }
-      bankPaidKeys.value = paid
+      bankPaidAmounts.value = paid
     }
 
     const fetchBankReview = async () => {
@@ -813,6 +862,7 @@ export default {
     const matchLabel = (row) => {
       if (row.suggestionKind === 'Certain') return 'Certain'
       if (row.suggestionKind === 'Suggested') return 'Suggested'
+      if (row.suggestionKind === 'Partial') return 'Partial'
       if (row.suggestionKind === 'AlreadyPaid') return 'Already paid'
       return row.suggestionKind
     }
@@ -825,7 +875,7 @@ export default {
     }
 
     const canConfirmSuggestion = (row) =>
-      (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested')
+      (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested' || row.suggestionKind === 'Partial')
       && row.appUserId != null && row.year != null && row.month != null
 
     const invoicesForUser = (userId) => {
@@ -938,6 +988,11 @@ export default {
       getPaymentLinkState,
       canOpenPaymentLink,
       isPaymentPaid,
+      isPartiallyPaid,
+      bankPaidAmount,
+      partialTitle,
+      invoiceCellClass,
+      mobileMonthClass,
       isPaymentLinkLoading,
       isEmailLoading,
       sendInvoiceEmail,
@@ -1485,6 +1540,14 @@ export default {
   background-color: #dee2e6;
 }
 
+.invoice-cell-partial {
+  background: #fde8e8;
+}
+
+.invoice-cell-partial .invoice-amount {
+  color: #9b2c2c;
+}
+
 .invoice-content {
   display: flex;
   flex-direction: column;
@@ -1633,6 +1696,14 @@ export default {
   color: #495057;
 }
 
+.mobile-month-row-partial {
+  background: #fde8e8;
+}
+
+.mobile-month-row-partial .mobile-amount {
+  color: #9b2c2c;
+}
+
 .mobile-month-name {
   font-weight: 500;
   color: #333;
@@ -1713,6 +1784,13 @@ export default {
 .payment-status-badge.bank {
   background-color: #d4edda;
   color: #155724;
+}
+
+.payment-status-badge.partial {
+  background-color: #f8d0d0;
+  color: #9b2c2c;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .payment-status-badge.open,

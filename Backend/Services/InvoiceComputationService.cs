@@ -150,11 +150,12 @@ public class InvoiceComputationService : IInvoiceComputationService
                 p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
                 cancellationToken);
         var invoiceIndex = await InvoiceIndexAsync(myCards, year, month, cancellationToken);
-        var bankPaid = await _context.InvoiceBankMatches
+        var roundedTotal = Math.Round(totalAmount, 2);
+        var bankPaidAmount = await _context.InvoiceBankMatches
             .AsNoTracking()
-            .AnyAsync(
-                match => match.AppUserId == appUserId && match.Year == year && match.Month == month,
-                cancellationToken);
+            .Where(match => match.AppUserId == appUserId && match.Year == year && match.Month == month)
+            .Select(match => (decimal?)match.BankTransaction.Amount)
+            .SumAsync(cancellationToken) ?? 0m;
 
         return new InvoiceData
         {
@@ -171,10 +172,10 @@ public class InvoiceComputationService : IInvoiceComputationService
             InvoiceNumber = InvoiceNumbers.Format(year, month, appUserId, invoiceIndex),
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = ratePerKwh,
-            TotalAmount = Math.Round(totalAmount, 2),
+            TotalAmount = roundedTotal,
             MollieSurchargeEur = GetMollieSurchargeForMonth(energyPrices, year, month),
             PaymentUrl = molliePayment?.CheckoutUrl,
-            IsPaid = molliePayment?.Status == "paid" || bankPaid,
+            IsPaid = molliePayment?.Status == "paid" || (bankPaidAmount > 0 && bankPaidAmount >= roundedTotal),
             Sessions = chargingSessions.Select(cs => MapDbSession(cs, ratePerKwh)).ToList(),
             GeneratedAt = DateTime.UtcNow
         };

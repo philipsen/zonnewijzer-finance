@@ -147,18 +147,11 @@ public sealed class BankStatementService
         if (invoice == null)
             return ("No invoice for that user and month.", null);
 
-        var taken = await _context.InvoiceBankMatches
-            .AnyAsync(match =>
-                match.AppUserId == request.AppUserId
-                && match.Year == request.Year
-                && match.Month == request.Month
-                && match.BankTransactionId != transactionId,
-                cancellationToken);
-        if (taken || invoice.IsPaid)
+        if (invoice.IsPaid)
             return ("That invoice is already paid.", null);
 
         var proposal = BankInvoiceMatcher.Match(transaction.Description, transaction.Amount, catalog);
-        var kind = proposal.Kind is BankMatchKind.Certain or BankMatchKind.Suggested
+        var kind = proposal.Kind is BankMatchKind.Certain or BankMatchKind.Suggested or BankMatchKind.Partial
             && proposal.UserId == request.AppUserId
             && proposal.Year == request.Year
             && proposal.Month == request.Month

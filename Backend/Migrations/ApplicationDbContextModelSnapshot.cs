@@ -341,8 +341,7 @@ namespace Backend.Migrations
                     b.HasIndex("BankTransactionId")
                         .IsUnique();
 
-                    b.HasIndex("AppUserId", "Year", "Month")
-                        .IsUnique();
+                    b.HasIndex("AppUserId", "Year", "Month");
 
                     b.ToTable("InvoiceBankMatches");
                 });

@@ -23,9 +23,19 @@ public class BankInvoiceMatcherTests
     }
 
     [Fact]
-    public void LegacyNumber_WrongAmount_IsUnmatched()
+    public void LegacyNumber_SmallerAmount_IsPartial()
     {
         var proposal = BankInvoiceMatcher.Match(ExampleDescription, 10m, [August(44.47m)]);
+
+        Assert.Equal(BankMatchKind.Partial, proposal.Kind);
+        Assert.Equal(14, proposal.UserId);
+        Assert.Equal(8, proposal.Month);
+    }
+
+    [Fact]
+    public void LegacyNumber_LargerAmount_IsUnmatched()
+    {
+        var proposal = BankInvoiceMatcher.Match(ExampleDescription, 50m, [August(44.47m)]);
 
         Assert.Null(proposal.Kind);
     }

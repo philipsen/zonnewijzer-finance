@@ -16,6 +16,7 @@ public static class BankMatchKind
 {
     public const string Certain = "Certain";
     public const string Suggested = "Suggested";
+    public const string Partial = "Partial";
     public const string AlreadyPaid = "AlreadyPaid";
 }
 
@@ -64,10 +65,14 @@ public static partial class BankInvoiceMatcher
             return None();
 
         var match = resolved[0];
-        if (match.TotalAmount != amount)
-            return None();
+        if (match.IsPaid)
+            return Proposal(BankMatchKind.AlreadyPaid, match);
+        if (match.TotalAmount == amount)
+            return Proposal(BankMatchKind.Certain, match);
+        if (amount > 0 && amount < match.TotalAmount)
+            return Proposal(BankMatchKind.Partial, match);
 
-        return Proposal(match.IsPaid ? BankMatchKind.AlreadyPaid : BankMatchKind.Certain, match);
+        return None();
     }
 
     private static BankMatchProposal MatchByNameAndMonth(
