@@ -62,9 +62,9 @@
           <ol>
             <li>Select the month and download <strong>e-Boekhouden</strong>. Each row is one sent invoice. There is no total row. Users marked inactive on the users page are left out of this file and the relation file.</li>
             <li>Import the members first. On the <router-link to="/users">users page</router-link>, download <strong>e-Boekhouden</strong> and import that file under <strong>Relaties &gt; Importeren</strong>. The relation <strong>Code</strong> is the code filled in on the user, at most 13 characters, and it is the <strong>Relatie</strong> column on the invoice file. <strong>Bedrijf/Naam</strong> is the member name. Map Code, Bedrijf/Naam, BP (<strong>P</strong> for a private person), Email, Adres, Postcode, Plaats and Land. Skip existing codes unless you want to overwrite them.</li>
-            <li>Open the file and fill <strong>Rekening</strong> with your debtors ledger code. <strong>Tegenrekening</strong> is already <strong>4301</strong>.</li>
+            <li>Open the file and fill <strong>Rekening</strong> with your debtors ledger code. <strong>Tegenrekening</strong> is already <strong>4301</strong> and <strong>Kostenplaats</strong> is already <strong>PV Warmoestuin</strong>.</li>
             <li>Go to <strong>Beheer &gt; Inrichting &gt; Mutaties importeren</strong>, choose the CSV, and continue.</li>
-            <li>Map each column to the property with the same name: Datum, Mutatiesoort, Rekening, Omschrijving, Boekstuk, Bedrag excl, BTW-code, Bedrag incl, Tegenrekening, Relatie, Factuurnummer, Betalingstermijn.</li>
+            <li>Map each column to the property with the same name: Datum, Mutatiesoort, Rekening, Omschrijving, Boekstuk, Bedrag excl, BTW-code, Bedrag incl, Tegenrekening, Relatie, Factuurnummer, Betalingstermijn, Kostenplaats.</li>
             <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the first day of the next month, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
             <li>Start the import. Rows with the same factuurnummer and the same relatie are combined into one mutation. Review the result under <strong>Boekhouden &gt; Overzichten &gt; Mutaties</strong>.</li>
           </ol>

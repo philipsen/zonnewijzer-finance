@@ -186,8 +186,8 @@ public class InvoicesControllerTests : IDisposable
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("eboekhouden_2024-04.csv", file.FileDownloadName);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
-        Assert.Contains("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn", csv);
-        Assert.Contains("1-5-2024;Factuur verstuurd;;Laadsessies april 2024, 10,00 kWh;240430 zonnewijzer 2-1;2,48;HOOG_VERK_21;3,00;4301;Card Holder;240430 zonnewijzer 2-1;30", csv);
+        Assert.Contains("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn;Kostenplaats", csv);
+        Assert.Contains("1-5-2024;Factuur verstuurd;;Laadsessies april 2024, 10,00 kWh;240430 zonnewijzer 2-1;2,48;HOOG_VERK_21;3,00;4301;Card Holder;240430 zonnewijzer 2-1;30;PV Warmoestuin", csv);
         Assert.DoesNotContain("TOTAAL", csv);
     }
 
