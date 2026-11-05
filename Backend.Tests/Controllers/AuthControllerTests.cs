@@ -85,6 +85,28 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadEboekhoudenRelationsCsv_IncludesNameCodeAndAddress()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var cardId = await AddChargeCardAsync("RF-REL");
+        var card = await _db.ChargeCards.SingleAsync(c => c.Id == cardId);
+        card.Street = "Laan";
+        card.HouseNumber = "1";
+        card.PostalCode = "2611 AA";
+        card.PlaceName = "Delft";
+        await AddUser(2, "Card Holder", chargeCardId: cardId);
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadEboekhoudenRelationsCsv();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("eboekhouden-relaties.csv", file.FileDownloadName);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Code;Bedrijf/Naam;BP;Email;Adres;Postcode;Plaats;Land", csv);
+        Assert.Contains("Card Holder;Card Holder;P;user2@test.com;Laan 1;2611 AA;Delft;Nederland", csv);
+    }
+
+    [Fact]
     public async Task Register_CreatesPasswordUser_AndReturnsToken()
     {
         _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("jwt-token");

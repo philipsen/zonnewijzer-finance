@@ -2,8 +2,19 @@
   <div class="users-page">
     <div class="page-header">
       <h1>All Users</h1>
-      <div class="user-count" v-if="users.length">
-        {{ users.length }} user{{ users.length !== 1 ? 's' : '' }} registered
+      <div class="header-actions">
+        <button
+          type="button"
+          class="btn btn-eboekhouden"
+          :disabled="eboekhoudenLoading || loading || users.length === 0"
+          title="Download relations for e-Boekhouden. Code is the member name and must match the invoice Relatie column. BP is P (private person)."
+          @click="downloadEboekhoudenCsv"
+        >
+          {{ eboekhoudenLoading ? '…' : 'e-Boekhouden' }}
+        </button>
+        <div class="user-count" v-if="users.length">
+          {{ users.length }} user{{ users.length !== 1 ? 's' : '' }} registered
+        </div>
       </div>
     </div>
 
@@ -148,6 +159,7 @@ export default {
     const inviteError = ref('')
     const devUserDeletionEnabled = ref(false)
     const deletingUserId = ref(null)
+    const eboekhoudenLoading = ref(false)
 
     const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
     const isOwnerView = computed(() => isOwner(currentUserRole.value))
@@ -266,6 +278,45 @@ export default {
       }
     }
 
+    const downloadEboekhoudenCsv = async () => {
+      eboekhoudenLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) {
+          alert('You must be logged in.')
+          return
+        }
+        const response = await axios.get('/api/auth/users/eboekhouden.csv', {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        })
+        const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' })
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'eboekhouden-relaties.csv'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+      } catch (err) {
+        console.error('e-Boekhouden relation CSV download failed:', err)
+        let msg = 'Failed to download e-Boekhouden CSV'
+        if (err.response?.data instanceof Blob) {
+          try {
+            msg = await err.response.data.text()
+          } catch {
+            /* keep default */
+          }
+        } else {
+          msg = err.response?.data?.message || err.response?.data || err.message || msg
+        }
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        eboekhoudenLoading.value = false
+      }
+    }
+
     const confirmDeleteUser = async (user) => {
       const ok = window.confirm(
         `Delete user "${user.name}" (${user.email})? This cannot be undone.`
@@ -342,7 +393,9 @@ export default {
       inviteUserByEmail,
       devUserDeletionEnabled,
       deletingUserId,
-      confirmDeleteUser
+      confirmDeleteUser,
+      eboekhoudenLoading,
+      downloadEboekhoudenCsv
     }
   }
 }
@@ -359,9 +412,29 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
   margin-bottom: 2rem;
   border-bottom: 2px solid #e9ecef;
   padding-bottom: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.btn-eboekhouden {
+  border: 1px solid #1d78be;
+  background: white;
+  color: #1d78be;
+}
+
+.btn-eboekhouden:hover:not(:disabled) {
+  background: #1d78be;
+  color: white;
 }
 
 .page-header h1 {
