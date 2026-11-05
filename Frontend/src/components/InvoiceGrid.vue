@@ -99,6 +99,7 @@
                 v-for="monthData in userRow.invoices"
                 :key="`${userRow.user.id}-${monthData.year}-${monthData.month}`"
                 class="invoice-cell"
+                :class="{ 'invoice-cell-paid': isPaymentPaid(userRow.user.id, monthData.year, monthData.month) }"
               >
                 <div class="invoice-content">
                   <template v-if="monthData.hasChargingSessions">
@@ -177,6 +178,7 @@
             v-for="monthData in selectedUserRow.invoices"
             :key="`${monthData.year}-${monthData.month}`"
             class="mobile-month-row"
+            :class="{ 'mobile-month-row-paid': isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month) }"
           >
             <span class="mobile-month-name">{{ formatMonthName(monthData.year, monthData.month) }}</span>
             <template v-if="monthData.hasChargingSessions">
@@ -343,9 +345,7 @@ export default {
           selectedUserId.value = still ? prev : response.data.gridData[0].user.id
         }
 
-        if (enableOnlinePaymentLinks.value) {
-          await fetchExistingPayments()
-        }
+        await fetchExistingPayments()
         
       } catch (err) {
         console.error('Failed to fetch invoices:', err)
@@ -1014,6 +1014,20 @@ export default {
   width: 140px;
 }
 
+.invoice-cell-paid {
+  background: #e9ecef;
+}
+
+.invoice-cell-paid .invoice-link,
+.invoice-cell-paid .invoice-kwh,
+.invoice-cell-paid .invoice-amount {
+  color: #6c757d;
+}
+
+.invoice-cell-paid .invoice-link:hover {
+  background-color: #dee2e6;
+}
+
 .invoice-content {
   display: flex;
   flex-direction: column;
@@ -1144,6 +1158,22 @@ export default {
 
 .mobile-month-row:last-child {
   border-bottom: none;
+}
+
+.mobile-month-row-paid {
+  background: #e9ecef;
+}
+
+.mobile-month-row-paid .mobile-month-name,
+.mobile-month-row-paid .mobile-invoice-link,
+.mobile-month-row-paid .mobile-amount {
+  color: #6c757d;
+  border-color: #adb5bd;
+}
+
+.mobile-month-row-paid .mobile-invoice-link:hover {
+  background-color: #dee2e6;
+  color: #495057;
 }
 
 .mobile-month-name {
