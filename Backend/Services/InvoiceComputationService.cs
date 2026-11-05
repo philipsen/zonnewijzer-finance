@@ -150,6 +150,11 @@ public class InvoiceComputationService : IInvoiceComputationService
                 p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
                 cancellationToken);
         var invoiceIndex = await InvoiceIndexAsync(myCards, year, month, cancellationToken);
+        var bankPaid = await _context.InvoiceBankMatches
+            .AsNoTracking()
+            .AnyAsync(
+                match => match.AppUserId == appUserId && match.Year == year && match.Month == month,
+                cancellationToken);
 
         return new InvoiceData
         {
@@ -169,7 +174,7 @@ public class InvoiceComputationService : IInvoiceComputationService
             TotalAmount = Math.Round(totalAmount, 2),
             MollieSurchargeEur = GetMollieSurchargeForMonth(energyPrices, year, month),
             PaymentUrl = molliePayment?.CheckoutUrl,
-            IsPaid = molliePayment?.Status == "paid",
+            IsPaid = molliePayment?.Status == "paid" || bankPaid,
             Sessions = chargingSessions.Select(cs => MapDbSession(cs, ratePerKwh)).ToList(),
             GeneratedAt = DateTime.UtcNow
         };

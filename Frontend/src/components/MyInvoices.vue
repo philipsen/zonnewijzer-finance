@@ -39,6 +39,7 @@
               <td class="num-cell amount">€{{ m.totalAmount.toFixed(2) }}</td>
               <td class="invoice-cell">
                 <a href="#" class="invoice-link" @click.prevent="downloadInvoice(m)">Invoice</a>
+                <span v-if="m.isPaid && !enableOnlinePaymentLinks" class="paid-text">✓ Paid</span>
               </td>
               <td v-if="enableOnlinePaymentLinks" class="pay-cell">
                 <template v-if="!m.isOngoingMonth">
