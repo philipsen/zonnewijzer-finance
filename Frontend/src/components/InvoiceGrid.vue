@@ -99,11 +99,11 @@
                   <td>{{ row.counterpartyName }}</td>
                   <td class="bank-description" :title="row.description">{{ row.description }}</td>
                   <td>
-                    <template v-if="row.suggestionKind">
+                    <template v-if="showMatchSuggestion(row)">
                       <span :class="['payment-status-badge', row.suggestionKind === 'AlreadyPaid' ? 'paid' : 'pending']">{{ matchLabel(row) }}</span>
                       <div class="bank-match-detail">{{ matchDetail(row) }}</div>
                     </template>
-                    <span v-else class="bank-unmatched">No match</span>
+                    <span v-else-if="!row.allocations?.length" class="bank-unmatched">No match</span>
                     <ul v-if="row.allocations?.length" class="bank-allocations">
                       <li v-for="link in row.allocations" :key="link.matchId">
                         €{{ Number(link.amount).toFixed(2) }} · {{ link.userName }} · {{ link.invoiceNumber }}
@@ -187,7 +187,9 @@
               <li v-for="row in bankConfirmed" :key="row.matchId || row.id">
                 {{ formatBankDate(row.bookedOn) }} · €{{ Number(row.allocatedAmount || row.amount).toFixed(2) }}
                 <template v-if="Number(row.allocatedAmount) > 0 && Number(row.allocatedAmount) < Number(row.amount)"> of €{{ row.amount.toFixed(2) }}</template>
-                · {{ row.userName }} · {{ row.invoiceNumber }}
+                · {{ row.counterpartyName }}
+                <span v-if="row.description" class="bank-confirmed-payment" :title="row.description">· {{ row.description }}</span>
+                → {{ row.userName }} · {{ row.invoiceNumber }}
                 <button type="button" class="btn-bank btn-bank-muted" :disabled="bankBusyId === row.id" @click="reopenBankPayment(row)">Undo</button>
               </li>
             </ul>
@@ -985,6 +987,9 @@ export default {
       return [row.userName, when, row.invoiceNumber, amount].filter(Boolean).join(' · ')
     }
 
+    const showMatchSuggestion = (row) =>
+      !!row.suggestionKind && !(row.suggestionKind === 'AlreadyPaid' && row.allocations?.length)
+
     const canConfirmSuggestion = (row) =>
       (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested' || row.suggestionKind === 'Partial' || row.suggestionKind === 'Split')
       && (row.shares?.length > 1 || (row.appUserId != null && row.year != null && row.month != null))
@@ -1199,6 +1204,7 @@ export default {
       formatBankDate,
       matchLabel,
       matchDetail,
+      showMatchSuggestion,
       canConfirmSuggestion,
       invoicesForUser,
       toggleBankLink,
@@ -1448,6 +1454,10 @@ export default {
 
 .bank-fold li {
   margin: 0.35rem 0;
+}
+
+.bank-confirmed-payment {
+  color: #444;
 }
 
 .import-help {
