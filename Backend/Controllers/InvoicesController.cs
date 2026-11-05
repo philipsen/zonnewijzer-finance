@@ -571,7 +571,7 @@ namespace Backend.Controllers
 
         /// <summary>
         /// Mutatie-import for e-Boekhouden.nl. Column names match the import manual so they can be mapped directly.
-        /// The date is the first day of the month after the billed month. Tegenrekening is 4301.
+        /// The date is the first day of the month after the billed month. Tegenrekening is 4301. Kostenplaats is PV Warmoestuin.
         /// </summary>
         [HttpGet("{year:int}/{month:int}/eboekhouden.csv")]
         public async Task<IActionResult> DownloadEboekhoudenCsv(int year, int month, CancellationToken cancellationToken)
@@ -600,7 +600,7 @@ namespace Backend.Controllers
                 var invoiceDate = new DateTime(year, month, 1).AddMonths(1).ToString("d-M-yyyy", CultureInfo.InvariantCulture);
                 var monthLabel = new DateTime(year, month, 1).ToString("MMMM yyyy", culture);
                 var sb = new StringBuilder();
-                sb.AppendLine("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn");
+                sb.AppendLine("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn;Kostenplaats");
 
                 var people = await _context.Users.AsNoTracking()
                     .Select(u => new { u.Id, u.IsActive, u.EboekhoudenCode })
@@ -634,7 +634,8 @@ namespace Backend.Controllers
                         .Append("4301;")
                         .Append(CsvEscape(relationCodes.GetValueOrDefault(appUserId))).Append(';')
                         .Append(CsvEscape(data.InvoiceNumber)).Append(';')
-                        .Append("30")
+                        .Append("30;")
+                        .Append(CsvEscape("PV Warmoestuin"))
                         .AppendLine();
                     rowCount++;
                 }
