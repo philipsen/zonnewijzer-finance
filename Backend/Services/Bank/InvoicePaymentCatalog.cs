@@ -61,10 +61,11 @@ public sealed class InvoicePaymentCatalog
 
         var bankPaid = await _context.InvoiceBankMatches
             .AsNoTracking()
-            .Select(match => new { match.AppUserId, match.Year, match.Month })
+            .Select(match => new { match.AppUserId, match.Year, match.Month, match.Amount })
             .ToListAsync(cancellationToken);
-        foreach (var match in bankPaid)
-            paid.Add((match.AppUserId, match.Year, match.Month));
+        var bankPaidByInvoice = bankPaid
+            .GroupBy(match => (match.AppUserId, match.Year, match.Month))
+            .ToDictionary(group => group.Key, group => group.Sum(match => match.Amount));
 
         var kwhByUserMonth = new Dictionary<(int UserId, int Year, int Month), decimal>();
         foreach (var session in sessions)
@@ -95,14 +96,16 @@ public sealed class InvoicePaymentCatalog
                 var invoiceNumber = InvoiceNumbers.UsesLegacyFormat(year, month)
                     ? InvoiceNumbers.Legacy(year, month, userId)
                     : InvoiceNumbers.Format(year, month, userId, index);
+                var totalAmount = Math.Round(entry.Value * rate, 2);
+                var bankAmount = bankPaidByInvoice.GetValueOrDefault((userId, year, month));
                 candidates.Add(new InvoiceCandidate(
                     userId,
                     name,
                     year,
                     month,
                     invoiceNumber,
-                    Math.Round(entry.Value * rate, 2),
-                    paid.Contains((userId, year, month))));
+                    totalAmount,
+                    paid.Contains((userId, year, month)) || (bankAmount > 0 && bankAmount >= totalAmount)));
             }
         }
 

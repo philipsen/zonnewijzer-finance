@@ -149,8 +149,9 @@ namespace Backend.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.InvoiceNumber).HasMaxLength(255).IsRequired();
                 entity.Property(e => e.MatchKind).HasMaxLength(20).IsRequired();
-                entity.HasIndex(e => e.BankTransactionId).IsUnique();
-                entity.HasIndex(e => new { e.AppUserId, e.Year, e.Month }).IsUnique();
+                entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
+                entity.HasIndex(e => e.BankTransactionId);
+                entity.HasIndex(e => new { e.AppUserId, e.Year, e.Month });
 
                 entity.HasOne(e => e.BankTransaction)
                     .WithMany()

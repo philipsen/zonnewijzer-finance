@@ -92,7 +92,10 @@
               <tbody>
                 <tr v-for="row in bankOpen" :key="row.id">
                   <td>{{ formatBankDate(row.bookedOn) }}</td>
-                  <td class="bank-amount">€{{ row.amount.toFixed(2) }}</td>
+                  <td class="bank-amount">
+                    €{{ row.amount.toFixed(2) }}
+                    <div v-if="hasPaymentLeft(row)" class="bank-left">€{{ Number(row.unallocatedAmount).toFixed(2) }} left</div>
+                  </td>
                   <td>{{ row.counterpartyName }}</td>
                   <td class="bank-description" :title="row.description">{{ row.description }}</td>
                   <td>
@@ -101,6 +104,19 @@
                       <div class="bank-match-detail">{{ matchDetail(row) }}</div>
                     </template>
                     <span v-else class="bank-unmatched">No match</span>
+                    <ul v-if="row.allocations?.length" class="bank-allocations">
+                      <li v-for="link in row.allocations" :key="link.matchId">
+                        €{{ Number(link.amount).toFixed(2) }} · {{ link.userName }} · {{ link.invoiceNumber }}
+                        <button
+                          type="button"
+                          class="btn-bank btn-bank-muted"
+                          :disabled="bankBusyId === row.id"
+                          @click="undoAllocation(row, link)"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    </ul>
                   </td>
                   <td class="bank-actions">
                     <button
@@ -108,7 +124,7 @@
                       type="button"
                       class="btn-bank"
                       :disabled="bankBusyId === row.id"
-                      @click="confirmBankMatch(row, row.appUserId, row.year, row.month)"
+                      @click="confirmSuggestion(row)"
                     >
                       Confirm
                     </button>
@@ -134,7 +150,7 @@
                           {{ userRow.user.name }}
                         </option>
                       </select>
-                      <select v-model="bankLinkDraft[row.id].periodKey">
+                      <select v-model="bankLinkDraft[row.id].periodKey" @change="onBankLinkPeriod(row.id)">
                         <option
                           v-for="invoice in invoicesForUser(bankLinkDraft[row.id].userId)"
                           :key="`${invoice.year}-${invoice.month}`"
@@ -143,10 +159,18 @@
                           {{ invoice.monthName }} · €{{ invoice.totalAmount.toFixed(2) }}
                         </option>
                       </select>
+                      <input
+                        v-model="bankLinkDraft[row.id].amount"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        class="bank-amount-input"
+                        aria-label="Amount to apply"
+                      >
                       <button
                         type="button"
                         class="btn-bank"
-                        :disabled="bankBusyId === row.id || !bankLinkDraft[row.id].periodKey"
+                        :disabled="bankBusyId === row.id || !bankLinkDraft[row.id].periodKey || !bankLinkDraft[row.id].amount"
                         @click="confirmDraft(row)"
                       >
                         Link
@@ -160,8 +184,10 @@
           <details v-if="bankConfirmed.length" class="bank-fold">
             <summary>Confirmed ({{ bankConfirmed.length }})</summary>
             <ul>
-              <li v-for="row in bankConfirmed" :key="row.id">
-                {{ formatBankDate(row.bookedOn) }} · €{{ row.amount.toFixed(2) }} · {{ row.userName }} · {{ row.invoiceNumber }}
+              <li v-for="row in bankConfirmed" :key="row.matchId || row.id">
+                {{ formatBankDate(row.bookedOn) }} · €{{ Number(row.allocatedAmount || row.amount).toFixed(2) }}
+                <template v-if="Number(row.allocatedAmount) > 0 && Number(row.allocatedAmount) < Number(row.amount)"> of €{{ row.amount.toFixed(2) }}</template>
+                · {{ row.userName }} · {{ row.invoiceNumber }}
                 <button type="button" class="btn-bank btn-bank-muted" :disabled="bankBusyId === row.id" @click="reopenBankPayment(row)">Undo</button>
               </li>
             </ul>
@@ -184,7 +210,7 @@
             <li>Open the file and fill <strong>Rekening</strong> with your debtors ledger code. <strong>Tegenrekening</strong> is already <strong>4301</strong> and <strong>Kostenplaats</strong> is already <strong>PV Warmoestuin</strong>.</li>
             <li>Go to <strong>Beheer &gt; Inrichting &gt; Mutaties importeren</strong>, choose the CSV, and continue.</li>
             <li>Map each column to the property with the same name: Datum, Mutatiesoort, Rekening, Omschrijving, Boekstuk, Bedrag excl, BTW-code, Bedrag incl, Tegenrekening, Relatie, Factuurnummer, Betalingstermijn, Kostenplaats.</li>
-            <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the first day of the next month, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
+            <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the first day of the next month, <strong>Boekstuk</strong> is empty, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
             <li>Start the import. Rows with the same factuurnummer and the same relatie are combined into one mutation. Review the result under <strong>Boekhouden &gt; Overzichten &gt; Mutaties</strong>.</li>
           </ol>
         </details>
@@ -196,6 +222,7 @@
           <thead>
             <tr>
               <th class="user-column">User</th>
+              <th class="balance-column">Balance</th>
               <th
                 v-for="month in months"
                 :key="`${month.year}-${month.month}`"
@@ -214,11 +241,14 @@
                   <div class="user-email">{{ userRow.user.email }}</div>
                 </div>
               </td>
+              <td class="balance-cell" :class="balanceClass(userRow.user.id)">
+                {{ formatBalance(userBalance(userRow.user.id)) }}
+              </td>
               <td
                 v-for="monthData in userRow.invoices"
                 :key="`${userRow.user.id}-${monthData.year}-${monthData.month}`"
                 class="invoice-cell"
-                :class="{ 'invoice-cell-paid': isPaymentPaid(userRow.user.id, monthData.year, monthData.month) }"
+                :class="invoiceCellClass(userRow.user.id, monthData)"
               >
                 <div class="invoice-content">
                   <template v-if="monthData.hasChargingSessions">
@@ -232,7 +262,12 @@
                     </a>
                     <div class="invoice-actions-area">
                       <span
-                        v-if="isBankPaid(userRow.user.id, monthData.year, monthData.month) && !isMolliePaid(userRow.user.id, monthData.year, monthData.month)"
+                        v-if="isPartiallyPaid(userRow.user.id, monthData.year, monthData.month)"
+                        class="payment-status-badge partial"
+                        :title="partialTitle(userRow.user.id, monthData.year, monthData.month)"
+                      >€{{ bankPaidAmount(userRow.user.id, monthData.year, monthData.month).toFixed(2) }}</span>
+                      <span
+                        v-else-if="isBankPaid(userRow.user.id, monthData.year, monthData.month) && !isMolliePaid(userRow.user.id, monthData.year, monthData.month)"
                         class="payment-status-badge bank"
                       >bank</span>
                       <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
@@ -294,6 +329,9 @@
               {{ userRow.user.name }}
             </option>
           </select>
+          <p v-if="selectedUserId" class="mobile-balance" :class="balanceClass(selectedUserId)">
+            Balance {{ formatBalance(userBalance(selectedUserId)) }}
+          </p>
         </div>
 
         <div v-if="selectedUserRow" class="mobile-month-list">
@@ -301,7 +339,7 @@
             v-for="monthData in selectedUserRow.invoices"
             :key="`${monthData.year}-${monthData.month}`"
             class="mobile-month-row"
-            :class="{ 'mobile-month-row-paid': isPaymentPaid(selectedUserRow.user.id, monthData.year, monthData.month) }"
+            :class="mobileMonthClass(selectedUserRow.user.id, monthData)"
           >
             <span class="mobile-month-name">{{ formatMonthName(monthData.year, monthData.month) }}</span>
             <template v-if="monthData.hasChargingSessions">
@@ -315,7 +353,12 @@
               </a>
               <div class="invoice-actions-area mobile-invoice-actions">
                 <span
-                  v-if="isBankPaid(selectedUserRow.user.id, monthData.year, monthData.month) && !isMolliePaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  v-if="isPartiallyPaid(selectedUserRow.user.id, monthData.year, monthData.month)"
+                  class="payment-status-badge partial"
+                  :title="partialTitle(selectedUserRow.user.id, monthData.year, monthData.month)"
+                >€{{ bankPaidAmount(selectedUserRow.user.id, monthData.year, monthData.month).toFixed(2) }}</span>
+                <span
+                  v-else-if="isBankPaid(selectedUserRow.user.id, monthData.year, monthData.month) && !isMolliePaid(selectedUserRow.user.id, monthData.year, monthData.month)"
                   class="payment-status-badge bank"
                 >bank</span>
                 <template v-if="enableOnlinePaymentLinks && !monthData.isOngoingMonth">
@@ -389,7 +432,7 @@ export default {
     const bankIgnored = ref([])
     const bankBusyId = ref(null)
     const bankLinkDraft = ref({})
-    const bankPaidKeys = ref({})
+    const bankPaidAmounts = ref({})
 
     const selectedUserRow = computed(() => {
       if (!gridData.value || !selectedUserId.value) return null
@@ -546,11 +589,82 @@ export default {
       return state?.status === 'paid'
     }
 
-    const isBankPaid = (userId, year, month) =>
-      !!bankPaidKeys.value[paymentLinkKey(userId, year, month)]
+    const cents = (value) => Math.round(Number(value) * 100)
+
+    const invoiceTotal = (userId, year, month) => {
+      const row = gridData.value?.find(entry => entry.user.id === userId)
+      const invoice = row?.invoices?.find(item => item.year === year && item.month === month)
+      return invoice?.hasChargingSessions ? invoice.totalAmount : null
+    }
+
+    const bankPaidAmount = (userId, year, month) =>
+      bankPaidAmounts.value[paymentLinkKey(userId, year, month)] || 0
+
+    const isBankPaid = (userId, year, month) => {
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      return total != null && paid > 0 && cents(paid) >= cents(total)
+    }
+
+    const isPartiallyPaid = (userId, year, month) => {
+      if (isMolliePaid(userId, year, month)) return false
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      return total != null && paid > 0 && cents(paid) < cents(total)
+    }
 
     const isPaymentPaid = (userId, year, month) =>
       isMolliePaid(userId, year, month) || isBankPaid(userId, year, month)
+
+    const userBalance = (userId) => {
+      const id = Number(userId)
+      const row = gridData.value?.find(entry => entry.user.id === id)
+      if (!row) return 0
+      return row.invoices.reduce((sum, invoice) => {
+        if (!invoice.hasChargingSessions) return sum
+        const bank = bankPaidAmount(id, invoice.year, invoice.month)
+        const covered = isMolliePaid(id, invoice.year, invoice.month) && bank <= invoice.totalAmount
+          ? invoice.totalAmount
+          : bank
+        return sum + invoice.totalAmount - covered
+      }, 0)
+    }
+
+    const formatBalance = (value) => {
+      const cents = Math.round(Number(value) * 100)
+      const text = `€${(Math.abs(cents) / 100).toFixed(2)}`
+      return cents < 0 ? `−${text}` : text
+    }
+
+    const balanceClass = (userId) => {
+      const cents = Math.round(userBalance(userId) * 100)
+      if (cents > 0) return 'balance-due'
+      if (cents < 0) return 'balance-credit'
+      return 'balance-settled'
+    }
+
+    const hasPaymentLeft = (row) => {
+      const left = Number(row.unallocatedAmount)
+      const total = Number(row.amount)
+      return left > 0 && left < total - 0.001
+    }
+
+    const invoiceCellClass = (userId, monthData) => ({
+      'invoice-cell-paid': isPaymentPaid(userId, monthData.year, monthData.month),
+      'invoice-cell-partial': isPartiallyPaid(userId, monthData.year, monthData.month)
+    })
+
+    const mobileMonthClass = (userId, monthData) => ({
+      'mobile-month-row-paid': isPaymentPaid(userId, monthData.year, monthData.month),
+      'mobile-month-row-partial': isPartiallyPaid(userId, monthData.year, monthData.month)
+    })
+
+    const partialTitle = (userId, year, month) => {
+      const total = invoiceTotal(userId, year, month)
+      const paid = bankPaidAmount(userId, year, month)
+      if (total == null) return ''
+      return `Paid €${paid.toFixed(2)} of €${total.toFixed(2)}`
+    }
 
     const isPaymentLinkLoading = (userId, year, month) =>
       !!paymentLinksLoading.value[paymentLinkKey(userId, year, month)]
@@ -741,11 +855,17 @@ export default {
       bankConfirmed.value = review?.confirmed || []
       bankIgnored.value = review?.ignored || []
       const paid = {}
-      for (const row of bankConfirmed.value) {
-        if (row.appUserId != null && row.year != null && row.month != null)
-          paid[paymentLinkKey(row.appUserId, row.year, row.month)] = true
+      const addPaid = (userId, year, month, amount) => {
+        if (userId == null || year == null || month == null) return
+        const key = paymentLinkKey(userId, year, month)
+        paid[key] = (paid[key] || 0) + Number(amount)
       }
-      bankPaidKeys.value = paid
+      for (const row of bankConfirmed.value)
+        addPaid(row.appUserId, row.year, row.month, row.allocatedAmount ?? row.amount)
+      for (const row of bankOpen.value)
+        for (const link of row.allocations || [])
+          addPaid(link.appUserId, link.year, link.month, link.amount)
+      bankPaidAmounts.value = paid
     }
 
     const fetchBankReview = async () => {
@@ -813,11 +933,18 @@ export default {
     const matchLabel = (row) => {
       if (row.suggestionKind === 'Certain') return 'Certain'
       if (row.suggestionKind === 'Suggested') return 'Suggested'
+      if (row.suggestionKind === 'Partial') return 'Partial'
+      if (row.suggestionKind === 'Split') return 'Split'
       if (row.suggestionKind === 'AlreadyPaid') return 'Already paid'
       return row.suggestionKind
     }
 
     const matchDetail = (row) => {
+      if (row.shares?.length > 1) {
+        return row.shares
+          .map(share => `${share.userName} · ${share.invoiceNumber} · €${Number(share.amount).toFixed(2)}`)
+          .join(' + ')
+      }
       if (!row.userName) return ''
       const when = row.year && row.month ? formatMonthName(row.year, row.month) : ''
       const amount = row.invoiceAmount != null ? `€${Number(row.invoiceAmount).toFixed(2)}` : ''
@@ -825,8 +952,8 @@ export default {
     }
 
     const canConfirmSuggestion = (row) =>
-      (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested')
-      && row.appUserId != null && row.year != null && row.month != null
+      (row.suggestionKind === 'Certain' || row.suggestionKind === 'Suggested' || row.suggestionKind === 'Partial' || row.suggestionKind === 'Split')
+      && (row.shares?.length > 1 || (row.appUserId != null && row.year != null && row.month != null))
 
     const invoicesForUser = (userId) => {
       const row = gridData.value?.find(entry => entry.user.id === Number(userId))
@@ -844,13 +971,26 @@ export default {
       const userId = row.appUserId || gridData.value?.[0]?.user.id || ''
       const invoices = invoicesForUser(userId)
       const preferred = invoices.find(invoice => invoice.year === row.year && invoice.month === row.month) || invoices[0]
+      const draft = {
+        userId,
+        periodKey: preferred ? `${preferred.year}-${preferred.month}` : '',
+        amount: ''
+      }
+      draft.amount = suggestedLinkAmount(row, draft)
       bankLinkDraft.value = {
         ...bankLinkDraft.value,
-        [row.id]: {
-          userId,
-          periodKey: preferred ? `${preferred.year}-${preferred.month}` : ''
-        }
+        [row.id]: draft
       }
+    }
+
+    const suggestedLinkAmount = (row, draft) => {
+      const left = Number(row.unallocatedAmount ?? row.amount)
+      const [year, month] = String(draft.periodKey || '').split('-').map(Number)
+      const invoice = invoicesForUser(draft.userId).find(item => item.year === year && item.month === month)
+      if (!invoice || !year || !month) return left > 0 ? left.toFixed(2) : ''
+      const outstanding = Math.max(0, invoice.totalAmount - bankPaidAmount(draft.userId, year, month))
+      const amount = Math.min(left, outstanding > 0 ? outstanding : left)
+      return amount > 0 ? amount.toFixed(2) : ''
     }
 
     const onBankLinkUser = (rowId) => {
@@ -867,17 +1007,32 @@ export default {
           }
         }
       }
+      refreshLinkAmount(rowId)
     }
 
-    const confirmBankMatch = async (row, appUserId, year, month) => {
+    const onBankLinkPeriod = (rowId) => refreshLinkAmount(rowId)
+
+    const refreshLinkAmount = (rowId) => {
+      const draft = bankLinkDraft.value[rowId]
+      const row = bankOpen.value.find(item => item.id === rowId)
+      if (!draft || !row) return
+      bankLinkDraft.value = {
+        ...bankLinkDraft.value,
+        [rowId]: { ...draft, amount: suggestedLinkAmount(row, draft) }
+      }
+    }
+
+    const confirmBankMatch = async (row, appUserId, year, month, amount) => {
       bankBusyId.value = row.id
       try {
         const token = localStorage.getItem('token')
-        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/confirm`, {
+        const body = {
           appUserId: Number(appUserId),
           year: Number(year),
           month: Number(month)
-        }, {
+        }
+        if (amount != null && amount !== '') body.amount = Number(amount)
+        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/confirm`, body, {
           headers: { Authorization: `Bearer ${token}` }
         })
         applyBankReview(response.data)
@@ -893,18 +1048,49 @@ export default {
       }
     }
 
+    const confirmSuggestion = async (row) => {
+      if (row.shares?.length > 1) {
+        bankBusyId.value = row.id
+        try {
+          const token = localStorage.getItem('token')
+          let review = null
+          for (const share of row.shares) {
+            const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/confirm`, {
+              appUserId: Number(share.userId),
+              year: Number(share.year),
+              month: Number(share.month),
+              amount: Number(share.amount)
+            }, {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+            review = response.data
+            applyBankReview(review)
+          }
+          bankUploadMessage.value = ''
+        } catch (err) {
+          console.error('Failed to confirm bank match:', err)
+          bankUploadMessage.value = apiMessage(err, 'Failed to match the payment.')
+        } finally {
+          bankBusyId.value = null
+        }
+        return
+      }
+      return confirmBankMatch(row, row.appUserId, row.year, row.month)
+    }
+
     const confirmDraft = (row) => {
       const draft = bankLinkDraft.value[row.id]
       if (!draft?.periodKey) return
       const [year, month] = draft.periodKey.split('-')
-      return confirmBankMatch(row, draft.userId, year, month)
+      return confirmBankMatch(row, draft.userId, year, month, draft.amount)
     }
 
     const postBankAction = async (row, action) => {
       bankBusyId.value = row.id
       try {
         const token = localStorage.getItem('token')
-        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/${action}`, null, {
+        const query = row.matchId ? `?matchId=${row.matchId}` : ''
+        const response = await axios.post(`/api/invoices/bank-transactions/${row.id}/${action}${query}`, null, {
           headers: { Authorization: `Bearer ${token}` }
         })
         applyBankReview(response.data)
@@ -918,6 +1104,7 @@ export default {
 
     const ignoreBankPayment = (row) => postBankAction(row, 'ignore')
     const reopenBankPayment = (row) => postBankAction(row, 'reopen')
+    const undoAllocation = (payment, link) => postBankAction({ id: payment.id, matchId: link.matchId }, 'reopen')
 
     onMounted(() => {
       fetchInvoicesGrid()
@@ -938,6 +1125,15 @@ export default {
       getPaymentLinkState,
       canOpenPaymentLink,
       isPaymentPaid,
+      isPartiallyPaid,
+      bankPaidAmount,
+      userBalance,
+      formatBalance,
+      balanceClass,
+      hasPaymentLeft,
+      partialTitle,
+      invoiceCellClass,
+      mobileMonthClass,
       isPaymentLinkLoading,
       isEmailLoading,
       sendInvoiceEmail,
@@ -972,7 +1168,10 @@ export default {
       invoicesForUser,
       toggleBankLink,
       onBankLinkUser,
+      onBankLinkPeriod,
       confirmBankMatch,
+      confirmSuggestion,
+      undoAllocation,
       confirmDraft,
       ignoreBankPayment,
       reopenBankPayment,
@@ -1164,9 +1363,26 @@ export default {
   margin-top: 0.4rem;
 }
 
-.bank-link-form select {
+.bank-link-form select,
+.bank-amount-input {
   max-width: 12rem;
   padding: 0.25rem;
+}
+
+.bank-amount-input {
+  width: 6rem;
+}
+
+.bank-left {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #9b2c2c;
+}
+
+.bank-allocations {
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.75rem;
 }
 
 .btn-bank {
@@ -1424,6 +1640,31 @@ export default {
   z-index: 11;
 }
 
+.balance-column,
+.balance-cell {
+  width: 96px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.balance-due {
+  color: #9b2c2c;
+  background: #fde8e8;
+}
+
+.balance-credit {
+  color: #155724;
+}
+
+.balance-settled {
+  color: #6c757d;
+}
+
+.mobile-balance {
+  margin: 0.5rem 0 0;
+  font-weight: 600;
+}
+
 .month-column {
   width: 140px;
   font-size: 0.85rem;
@@ -1483,6 +1724,14 @@ export default {
 
 .invoice-cell-paid .invoice-link:hover {
   background-color: #dee2e6;
+}
+
+.invoice-cell-partial {
+  background: #fde8e8;
+}
+
+.invoice-cell-partial .invoice-amount {
+  color: #9b2c2c;
 }
 
 .invoice-content {
@@ -1633,6 +1882,14 @@ export default {
   color: #495057;
 }
 
+.mobile-month-row-partial {
+  background: #fde8e8;
+}
+
+.mobile-month-row-partial .mobile-amount {
+  color: #9b2c2c;
+}
+
 .mobile-month-name {
   font-weight: 500;
   color: #333;
@@ -1713,6 +1970,13 @@ export default {
 .payment-status-badge.bank {
   background-color: #d4edda;
   color: #155724;
+}
+
+.payment-status-badge.partial {
+  background-color: #f8d0d0;
+  color: #9b2c2c;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .payment-status-badge.open,

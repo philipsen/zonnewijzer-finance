@@ -311,6 +311,10 @@ namespace Backend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("AppUserId")
                         .HasColumnType("INTEGER");
 
@@ -338,11 +342,9 @@ namespace Backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BankTransactionId")
-                        .IsUnique();
+                    b.HasIndex("BankTransactionId");
 
-                    b.HasIndex("AppUserId", "Year", "Month")
-                        .IsUnique();
+                    b.HasIndex("AppUserId", "Year", "Month");
 
                     b.ToTable("InvoiceBankMatches");
                 });

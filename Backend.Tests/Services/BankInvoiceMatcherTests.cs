@@ -23,9 +23,19 @@ public class BankInvoiceMatcherTests
     }
 
     [Fact]
-    public void LegacyNumber_WrongAmount_IsUnmatched()
+    public void LegacyNumber_SmallerAmount_IsPartial()
     {
         var proposal = BankInvoiceMatcher.Match(ExampleDescription, 10m, [August(44.47m)]);
+
+        Assert.Equal(BankMatchKind.Partial, proposal.Kind);
+        Assert.Equal(14, proposal.UserId);
+        Assert.Equal(8, proposal.Month);
+    }
+
+    [Fact]
+    public void LegacyNumber_LargerAmount_IsUnmatched()
+    {
+        var proposal = BankInvoiceMatcher.Match(ExampleDescription, 50m, [August(44.47m)]);
 
         Assert.Null(proposal.Kind);
     }
@@ -54,6 +64,23 @@ public class BankInvoiceMatcherTests
         Assert.Null(proposal.Kind);
         Assert.False(InvoiceNumbers.UsesLegacyFormat(2026, 10));
         Assert.True(InvoiceNumbers.UsesLegacyFormat(2026, 9));
+    }
+
+    [Fact]
+    public void TwoInvoiceNumbers_WhoseTotalsSumToThePayment_AreSplit()
+    {
+        var invoices = new[]
+        {
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 8, "260831 zonnewijzer 14-2", 20m, false),
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260731 zonnewijzer 14-1", 24.47m, false)
+        };
+
+        var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14 INV-2026-07-U14", 44.47m, invoices);
+
+        Assert.Equal(BankMatchKind.Split, proposal.Kind);
+        Assert.Equal(2, proposal.Shares?.Count);
+        Assert.Equal(20m, proposal.Shares?[0].Amount);
+        Assert.Equal(24.47m, proposal.Shares?[1].Amount);
     }
 
     [Fact]

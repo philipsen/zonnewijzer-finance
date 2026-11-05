@@ -17,7 +17,21 @@ public sealed record BankReviewRow(
     int? Year,
     int? Month,
     string? InvoiceNumber,
-    decimal? InvoiceAmount);
+    decimal? InvoiceAmount,
+    int? MatchId = null,
+    decimal AllocatedAmount = 0,
+    decimal UnallocatedAmount = 0,
+    IReadOnlyList<BankAllocation>? Allocations = null,
+    IReadOnlyList<BankMatchShare>? Shares = null);
+
+public sealed record BankAllocation(
+    int MatchId,
+    int AppUserId,
+    string? UserName,
+    int Year,
+    int Month,
+    string InvoiceNumber,
+    decimal Amount);
 
 public sealed record BankReview(
     IReadOnlyList<BankReviewRow> Open,
@@ -36,6 +50,7 @@ public sealed class ConfirmBankMatchRequest
     public int AppUserId { get; set; }
     public int Year { get; set; }
     public int Month { get; set; }
+    public decimal? Amount { get; set; }
 }
 
 public sealed class BankStatementService
@@ -136,7 +151,12 @@ public sealed class BankStatementService
             return ("Payment not found.", null);
         if (!string.Equals(transaction.Direction, BankTransaction.DirectionCredit, StringComparison.Ordinal))
             return ("Only incoming payments can be matched to an invoice.", null);
-        if (transaction.ReviewStatus == BankTransaction.StatusConfirmed)
+
+        var links = await _context.InvoiceBankMatches
+            .Where(match => match.BankTransactionId == transactionId)
+            .ToListAsync(cancellationToken);
+        var unallocated = transaction.Amount - links.Sum(match => match.Amount);
+        if (unallocated <= 0)
             return ("This payment is already matched.", null);
 
         var catalog = await _catalog.LoadAsync(cancellationToken);
@@ -147,27 +167,51 @@ public sealed class BankStatementService
         if (invoice == null)
             return ("No invoice for that user and month.", null);
 
-        var taken = await _context.InvoiceBankMatches
-            .AnyAsync(match =>
-                match.AppUserId == request.AppUserId
-                && match.Year == request.Year
-                && match.Month == request.Month
-                && match.BankTransactionId != transactionId,
-                cancellationToken);
-        if (taken || invoice.IsPaid)
+        var alreadyOnInvoice = await _context.InvoiceBankMatches
+            .Where(match =>
+                match.AppUserId == invoice.UserId
+                && match.Year == invoice.Year
+                && match.Month == invoice.Month)
+            .SumAsync(match => (decimal?)match.Amount, cancellationToken) ?? 0m;
+        var outstanding = invoice.IsPaid ? 0m : Math.Max(0m, invoice.TotalAmount - alreadyOnInvoice);
+
+        decimal amount;
+        if (request.Amount is decimal requested)
+        {
+            if (requested <= 0)
+                return ("Enter an amount greater than zero.", null);
+            if (requested > unallocated)
+                return ("That is more than this payment has left.", null);
+            amount = decimal.Round(requested, 2, MidpointRounding.AwayFromZero);
+        }
+        else
+        {
+            if (outstanding <= 0)
+                return ("That invoice is already paid.", null);
+            amount = Math.Min(unallocated, outstanding);
+        }
+
+        if (amount <= 0)
             return ("That invoice is already paid.", null);
 
         var proposal = BankInvoiceMatcher.Match(transaction.Description, transaction.Amount, catalog);
-        var kind = proposal.Kind is BankMatchKind.Certain or BankMatchKind.Suggested
-            && proposal.UserId == request.AppUserId
-            && proposal.Year == request.Year
-            && proposal.Month == request.Month
+        var coversInvoice = proposal.Shares?.Any(share =>
+                share.UserId == request.AppUserId
+                && share.Year == request.Year
+                && share.Month == request.Month) == true
+            || (proposal.UserId == request.AppUserId
+                && proposal.Year == request.Year
+                && proposal.Month == request.Month);
+        var kind = coversInvoice
+            && proposal.Kind is BankMatchKind.Certain or BankMatchKind.Suggested or BankMatchKind.Partial or BankMatchKind.Split
             ? proposal.Kind
             : InvoiceBankMatch.KindManual;
 
-        var existing = await _context.InvoiceBankMatches
-            .FirstOrDefaultAsync(match => match.BankTransactionId == transactionId, cancellationToken);
-        if (existing == null)
+        var sameInvoice = links.FirstOrDefault(match =>
+            match.AppUserId == invoice.UserId
+            && match.Year == invoice.Year
+            && match.Month == invoice.Month);
+        if (sameInvoice == null)
         {
             _context.InvoiceBankMatches.Add(new InvoiceBankMatch
             {
@@ -176,20 +220,21 @@ public sealed class BankStatementService
                 Year = invoice.Year,
                 Month = invoice.Month,
                 InvoiceNumber = invoice.InvoiceNumber,
+                Amount = amount,
                 MatchKind = kind,
                 CreatedAt = DateTime.UtcNow
             });
         }
         else
         {
-            existing.AppUserId = invoice.UserId;
-            existing.Year = invoice.Year;
-            existing.Month = invoice.Month;
-            existing.InvoiceNumber = invoice.InvoiceNumber;
-            existing.MatchKind = kind;
+            sameInvoice.Amount += amount;
+            sameInvoice.MatchKind = kind;
+            sameInvoice.InvoiceNumber = invoice.InvoiceNumber;
         }
 
-        transaction.ReviewStatus = BankTransaction.StatusConfirmed;
+        transaction.ReviewStatus = unallocated - amount <= 0
+            ? BankTransaction.StatusConfirmed
+            : BankTransaction.StatusOpen;
         await _context.SaveChangesAsync(cancellationToken);
         return (null, await GetReviewAsync(cancellationToken));
     }
@@ -200,7 +245,9 @@ public sealed class BankStatementService
             .FirstOrDefaultAsync(row => row.Id == transactionId, cancellationToken);
         if (transaction == null)
             return ("Payment not found.", null);
-        if (transaction.ReviewStatus == BankTransaction.StatusConfirmed)
+        var linked = await _context.InvoiceBankMatches
+            .AnyAsync(match => match.BankTransactionId == transactionId, cancellationToken);
+        if (linked || transaction.ReviewStatus == BankTransaction.StatusConfirmed)
             return ("Undo the match before ignoring this payment.", null);
 
         transaction.ReviewStatus = BankTransaction.StatusIgnored;
@@ -208,7 +255,10 @@ public sealed class BankStatementService
         return (null, await GetReviewAsync(cancellationToken));
     }
 
-    public async Task<(string? Error, BankReview? Review)> ReopenAsync(int transactionId, CancellationToken cancellationToken = default)
+    public async Task<(string? Error, BankReview? Review)> ReopenAsync(
+        int transactionId,
+        int? matchId = null,
+        CancellationToken cancellationToken = default)
     {
         var transaction = await _context.BankTransactions
             .FirstOrDefaultAsync(row => row.Id == transactionId, cancellationToken);
@@ -218,8 +268,25 @@ public sealed class BankStatementService
         var matches = await _context.InvoiceBankMatches
             .Where(match => match.BankTransactionId == transactionId)
             .ToListAsync(cancellationToken);
-        _context.InvoiceBankMatches.RemoveRange(matches);
-        transaction.ReviewStatus = BankTransaction.StatusOpen;
+        if (matchId is int selected)
+        {
+            var one = matches.FirstOrDefault(match => match.Id == selected);
+            if (one == null)
+                return ("That link was not found.", null);
+            _context.InvoiceBankMatches.Remove(one);
+        }
+        else
+        {
+            _context.InvoiceBankMatches.RemoveRange(matches);
+        }
+
+        var removed = matchId ?? 0;
+        var stillAllocated = matches
+            .Where(match => matchId == null || match.Id != removed)
+            .Sum(match => match.Amount);
+        transaction.ReviewStatus = matchId != null && stillAllocated >= transaction.Amount
+            ? BankTransaction.StatusConfirmed
+            : BankTransaction.StatusOpen;
         await _context.SaveChangesAsync(cancellationToken);
         return (null, await GetReviewAsync(cancellationToken));
     }
@@ -230,7 +297,9 @@ public sealed class BankStatementService
         IReadOnlyDictionary<int, string> names,
         IReadOnlyList<InvoiceCandidate> catalog)
     {
-        var matchByTransaction = matches.ToDictionary(match => match.BankTransactionId);
+        var matchesByTransaction = matches
+            .GroupBy(match => match.BankTransactionId)
+            .ToDictionary(group => group.Key, group => group.ToList());
         var open = new List<BankReviewRow>();
         var confirmed = new List<BankReviewRow>();
         var ignored = new List<BankReviewRow>();
@@ -240,17 +309,23 @@ public sealed class BankStatementService
             if (!string.Equals(transaction.Direction, BankTransaction.DirectionCredit, StringComparison.Ordinal))
                 continue;
 
-            if (transaction.ReviewStatus == BankTransaction.StatusConfirmed
-                && matchByTransaction.TryGetValue(transaction.Id, out var match))
+            matchesByTransaction.TryGetValue(transaction.Id, out var links);
+            links ??= [];
+            var allocated = links.Sum(match => match.Amount);
+            var unallocated = transaction.Amount - allocated;
+            if (links.Count > 0 && unallocated <= 0)
             {
-                names.TryGetValue(match.AppUserId, out var name);
-                confirmed.Add(RowFromMatch(transaction, match, name));
+                foreach (var match in links)
+                {
+                    names.TryGetValue(match.AppUserId, out var name);
+                    confirmed.Add(RowFromMatch(transaction, match, name));
+                }
                 continue;
             }
 
-            var proposal = BankInvoiceMatcher.Match(transaction.Description, transaction.Amount, catalog);
-            var row = RowFromProposal(transaction, proposal);
-            if (transaction.ReviewStatus == BankTransaction.StatusIgnored)
+            var proposal = BankInvoiceMatcher.Match(transaction.Description, unallocated > 0 ? unallocated : transaction.Amount, catalog);
+            var row = RowFromProposal(transaction, proposal, names, links, unallocated);
+            if (transaction.ReviewStatus == BankTransaction.StatusIgnored && links.Count == 0)
                 ignored.Add(row);
             else
                 open.Add(row);
@@ -273,10 +348,34 @@ public sealed class BankStatementService
             match.Year,
             match.Month,
             match.InvoiceNumber,
-            transaction.Amount);
+            match.Amount,
+            match.Id,
+            match.Amount,
+            0,
+            Array.Empty<BankAllocation>());
 
-    private static BankReviewRow RowFromProposal(BankTransaction transaction, BankMatchProposal proposal) =>
-        new(
+    private static BankReviewRow RowFromProposal(
+        BankTransaction transaction,
+        BankMatchProposal proposal,
+        IReadOnlyDictionary<int, string> names,
+        IReadOnlyList<InvoiceBankMatch> links,
+        decimal unallocated)
+    {
+        var allocations = links
+            .Select(match =>
+            {
+                names.TryGetValue(match.AppUserId, out var name);
+                return new BankAllocation(
+                    match.Id,
+                    match.AppUserId,
+                    name,
+                    match.Year,
+                    match.Month,
+                    match.InvoiceNumber,
+                    match.Amount);
+            })
+            .ToList();
+        return new BankReviewRow(
             transaction.Id,
             transaction.BookedOn,
             transaction.Amount,
@@ -289,5 +388,11 @@ public sealed class BankStatementService
             proposal.Year,
             proposal.Month,
             proposal.InvoiceNumber,
-            proposal.InvoiceAmount);
+            proposal.InvoiceAmount,
+            null,
+            transaction.Amount - unallocated,
+            unallocated,
+            allocations,
+            proposal.Shares);
+    }
 }

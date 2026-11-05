@@ -627,7 +627,7 @@ namespace Backend.Controllers
                         .Append(CsvEscape("Factuur verstuurd")).Append(';')
                         .Append(';')
                         .Append(CsvEscape(description)).Append(';')
-                        .Append(CsvEscape(data.InvoiceNumber)).Append(';')
+                        .Append(';')
                         .Append(exclVat.ToString("0.00", culture)).Append(';')
                         .Append(CsvEscape("HOOG_VERK_21")).Append(';')
                         .Append(data.TotalAmount.ToString("0.00", culture)).Append(';')

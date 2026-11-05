@@ -16,8 +16,18 @@ public static class BankMatchKind
 {
     public const string Certain = "Certain";
     public const string Suggested = "Suggested";
+    public const string Partial = "Partial";
+    public const string Split = "Split";
     public const string AlreadyPaid = "AlreadyPaid";
 }
+
+public sealed record BankMatchShare(
+    int UserId,
+    string UserName,
+    int Year,
+    int Month,
+    string InvoiceNumber,
+    decimal Amount);
 
 public sealed record BankMatchProposal(
     string? Kind,
@@ -26,7 +36,8 @@ public sealed record BankMatchProposal(
     int? Year,
     int? Month,
     string? InvoiceNumber,
-    decimal? InvoiceAmount);
+    decimal? InvoiceAmount,
+    IReadOnlyList<BankMatchShare>? Shares = null);
 
 /// <summary>
 /// Matches one incoming bank description to an invoice.
@@ -60,14 +71,18 @@ public static partial class BankInvoiceMatcher
                 resolved.Add(invoice);
         }
 
-        if (resolved.Count != 1)
-            return None();
+        if (resolved.Count > 1)
+            return MatchSeveral(resolved, amount);
 
         var match = resolved[0];
-        if (match.TotalAmount != amount)
-            return None();
+        if (match.IsPaid)
+            return Proposal(BankMatchKind.AlreadyPaid, match);
+        if (match.TotalAmount == amount)
+            return Proposal(BankMatchKind.Certain, match);
+        if (amount > 0 && amount < match.TotalAmount)
+            return Proposal(BankMatchKind.Partial, match);
 
-        return Proposal(match.IsPaid ? BankMatchKind.AlreadyPaid : BankMatchKind.Certain, match);
+        return None();
     }
 
     private static BankMatchProposal MatchByNameAndMonth(
@@ -93,6 +108,47 @@ public static partial class BankInvoiceMatcher
             return None();
 
         return Proposal(invoice.IsPaid ? BankMatchKind.AlreadyPaid : BankMatchKind.Suggested, invoice);
+    }
+
+    private static BankMatchProposal MatchSeveral(IReadOnlyList<InvoiceCandidate> invoices, decimal amount)
+    {
+        if (invoices.All(invoice => invoice.IsPaid))
+            return Proposal(BankMatchKind.AlreadyPaid, invoices[0]);
+
+        var open = invoices.Where(invoice => !invoice.IsPaid).ToList();
+        if (open.Count == 1)
+        {
+            var only = open[0];
+            if (only.TotalAmount == amount)
+                return Proposal(BankMatchKind.Certain, only);
+            if (amount > 0 && amount < only.TotalAmount)
+                return Proposal(BankMatchKind.Partial, only);
+            return None();
+        }
+
+        var sum = open.Sum(invoice => invoice.TotalAmount);
+        if (open.Count < 2 || sum != amount)
+            return None();
+
+        var shares = open
+            .Select(invoice => new BankMatchShare(
+                invoice.UserId,
+                invoice.UserName,
+                invoice.Year,
+                invoice.Month,
+                invoice.InvoiceNumber,
+                invoice.TotalAmount))
+            .ToList();
+        var first = shares[0];
+        return new BankMatchProposal(
+            BankMatchKind.Split,
+            first.UserId,
+            first.UserName,
+            first.Year,
+            first.Month,
+            first.InvoiceNumber,
+            sum,
+            shares);
     }
 
     private static InvoiceCandidate? Resolve(InvoiceRef reference, IReadOnlyList<InvoiceCandidate> invoices)
