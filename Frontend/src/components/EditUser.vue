@@ -66,6 +66,19 @@
           >
         </div>
 
+        <div class="form-group">
+          <label for="eboekhouden-code" class="form-label">e-Boekhouden code</label>
+          <input
+            id="eboekhouden-code"
+            v-model="form.eboekhoudenCode"
+            type="text"
+            maxlength="13"
+            class="form-input"
+            placeholder="At most 13 characters"
+          >
+          <p class="field-hint">Used as the relation code in the e-Boekhouden files. Leave empty to omit the code.</p>
+        </div>
+
         <div v-if="canEditUserProfiles" class="form-group">
           <label for="role" class="form-label">Role</label>
           <select
@@ -146,7 +159,8 @@ export default {
     const form = ref({
       name: '',
       email: '',
-      role: ''
+      role: '',
+      eboekhoudenCode: ''
     })
 
     const hasChanges = computed(() => {
@@ -154,7 +168,8 @@ export default {
       const nameChanged = form.value.name !== user.value.name
       const emailChanged = form.value.email !== user.value.email
       const roleChanged = canEditUserProfiles.value && form.value.role !== user.value.role
-      return nameChanged || emailChanged || roleChanged
+      const codeChanged = (form.value.eboekhoudenCode ?? '') !== (user.value.eboekhoudenCode ?? '')
+      return nameChanged || emailChanged || roleChanged || codeChanged
     })
 
     const fetchUser = async () => {
@@ -185,7 +200,8 @@ export default {
         form.value = {
           name: response.data.name,
           email: response.data.email,
-          role: response.data.role || 'Base'
+          role: response.data.role || 'Base',
+          eboekhoudenCode: response.data.eboekhoudenCode || ''
         }
       } catch (err) {
         console.error('Failed to fetch user:', err)
@@ -213,7 +229,8 @@ export default {
 
         const updateData = {
           name: form.value.name,
-          email: form.value.email
+          email: form.value.email,
+          eboekhoudenCode: form.value.eboekhoudenCode ?? ''
         }
         
         if (canEditUserProfiles.value) {
@@ -408,6 +425,12 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.field-hint {
+  margin: 0.35rem 0 0;
+  color: #666;
+  font-size: 0.85rem;
 }
 
 .form-label {

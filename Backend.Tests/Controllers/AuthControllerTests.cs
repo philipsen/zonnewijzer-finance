@@ -94,7 +94,8 @@ public class AuthControllerTests : IDisposable
         card.HouseNumber = "1";
         card.PostalCode = "2611 AA";
         card.PlaceName = "Delft";
-        await AddUser(2, "Card Holder", chargeCardId: cardId);
+        var holder = await AddUser(2, "Card Holder", chargeCardId: cardId);
+        holder.EboekhoudenCode = "Card Holder";
         await _db.SaveChangesAsync();
 
         var result = await BuildController().DownloadEboekhoudenRelationsCsv();
@@ -112,52 +113,32 @@ public class AuthControllerTests : IDisposable
         await AddUser(1, "Admin", UserRole.Admin);
         var inactive = await AddUser(2, "Inactive Member");
         inactive.IsActive = false;
-        await AddUser(3, "Active Member");
+        inactive.EboekhoudenCode = "INACTIVE";
+        var active = await AddUser(3, "Active Member");
+        active.EboekhoudenCode = "ACTIVE";
         await _db.SaveChangesAsync();
 
         var result = await BuildController().DownloadEboekhoudenRelationsCsv();
 
         var file = Assert.IsType<FileContentResult>(result);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
-        Assert.Contains("Active Member;Active Member;P;user3@test.com", csv);
-        Assert.DoesNotContain("Inactive Member", csv);
+        Assert.Contains("ACTIVE;Active Member;P;user3@test.com", csv);
+        Assert.DoesNotContain("INACTIVE", csv);
     }
 
     [Fact]
-    public async Task DownloadEboekhoudenRelationsCsv_LimitsCodeTo13Characters()
-    {
-        await AddUser(1, "Admin", UserRole.Admin);
-        await AddUser(2, "Bram van den Nouweland");
-        await AddUser(3, "Wim Philipsen");
-        await AddUser(4, "Wim Philipsen");
-
-        var result = await BuildController().DownloadEboekhoudenRelationsCsv();
-
-        var file = Assert.IsType<FileContentResult>(result);
-        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
-        Assert.Contains("Bram van den;Bram van den Nouweland;P;user2@test.com", csv);
-        Assert.Contains("Wim Philipsen;Wim Philipsen;P;user3@test.com", csv);
-        Assert.DoesNotContain("Wim Philipsen;Wim Philipsen;P;user4@test.com", csv);
-        var codes = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Skip(1)
-            .Select(line => line.Split(';')[0]);
-        Assert.All(codes, code => Assert.True(code.Length <= 13));
-        Assert.Equal(codes.Count(), codes.Distinct(StringComparer.OrdinalIgnoreCase).Count());
-    }
-
-    [Fact]
-    public async Task DownloadEboekhoudenRelationsCsv_UsesShortCodeFromChargeCardComment()
+    public async Task DownloadEboekhoudenRelationsCsv_UsesCodeFilledInOnTheUser()
     {
         await AddUser(1, "Admin", UserRole.Admin);
         var cardId = await AddChargeCardAsync("RF-KIA");
         var card = await _db.ChargeCards.SingleAsync(c => c.Id == cardId);
-        card.Comment = "Wim Philipsen (Kia deeelauto)";
         card.Street = "Warmoestuin";
         card.HouseNumber = "6";
         card.PostalCode = "2286XZ";
         card.PlaceName = "Rijswijk";
         var user = await AddUser(2, "Wim Philipsen", chargeCardId: cardId);
         user.Email = "kia@maak-t.com";
+        user.EboekhoudenCode = "Kia deeelauto";
         await _db.SaveChangesAsync();
 
         var result = await BuildController().DownloadEboekhoudenRelationsCsv();
@@ -165,9 +146,27 @@ public class AuthControllerTests : IDisposable
         var file = Assert.IsType<FileContentResult>(result);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
         Assert.Contains(
-            "Kia deeelauto;Wim Philipsen (Kia deeelauto);P;kia@maak-t.com;Warmoestuin 6;2286XZ;Rijswijk;Nederland",
+            "Kia deeelauto;Wim Philipsen;P;kia@maak-t.com;Warmoestuin 6;2286XZ;Rijswijk;Nederland",
             csv);
-        Assert.Equal(13, "Kia deeelauto".Length);
+    }
+
+    [Fact]
+    public async Task SetEboekhoudenCode_RejectsMoreThan13CharactersAndDuplicates()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Member");
+        await AddUser(3, "Other");
+
+        var controller = BuildController();
+        var tooLong = await controller.SetEboekhoudenCode(2, new SetEboekhoudenCodeRequest { Code = "12345678901234" });
+        Assert.IsType<BadRequestObjectResult>(tooLong);
+
+        var ok = await controller.SetEboekhoudenCode(2, new SetEboekhoudenCodeRequest { Code = "Kia deeelauto" });
+        Assert.IsType<OkObjectResult>(ok);
+        Assert.Equal("Kia deeelauto", (await _db.Users.FindAsync(2))!.EboekhoudenCode);
+
+        var duplicate = await controller.SetEboekhoudenCode(3, new SetEboekhoudenCodeRequest { Code = "kia deeelauto" });
+        Assert.IsType<BadRequestObjectResult>(duplicate);
     }
 
     [Fact]

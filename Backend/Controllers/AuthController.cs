@@ -564,6 +564,7 @@ namespace Backend.Controllers
                     createdAt = u.CreatedAt,
                     lastLoginAt = u.LastLoginAt,
                     isActive = u.IsActive,
+                    eboekhoudenCode = u.EboekhoudenCode,
                     hasPendingInvite = _context.PasswordResetTokens.Any(t =>
                         t.UserId == u.Id &&
                         t.UsedAt == null &&
@@ -615,14 +616,13 @@ namespace Backend.Controllers
                     return EboekhoudenRelationCodes.PreferredCard(linked);
                 }
 
-                var labels = EboekhoudenRelationCodes.Assign(allUsers.Select(u =>
-                    (u.Id, (string?)u.Name, (string?)u.Email, ProfileFor(u.Id)?.Comment)));
-
                 var sb = new StringBuilder();
                 sb.AppendLine("Code;Bedrijf/Naam;BP;Email;Adres;Postcode;Plaats;Land");
                 foreach (var user in userRows)
                 {
-                    var label = labels[user.Id];
+                    var code = EboekhoudenRelationCodes.Normalize(user.EboekhoudenCode);
+                    var name = EboekhoudenRelationCodes.ClipName(
+                        string.IsNullOrWhiteSpace(user.Name) ? user.Email : user.Name);
                     var profile = ProfileFor(user.Id);
 
                     var address = JoinAddress(profile?.Street, profile?.HouseNumber);
@@ -630,8 +630,8 @@ namespace Backend.Controllers
                         || !string.IsNullOrWhiteSpace(profile?.PostalCode)
                         || !string.IsNullOrWhiteSpace(profile?.PlaceName);
 
-                    sb.Append(CsvEscape(label.Code)).Append(';')
-                        .Append(CsvEscape(label.Name)).Append(';')
+                    sb.Append(CsvEscape(code)).Append(';')
+                        .Append(CsvEscape(name)).Append(';')
                         .Append("P;").Append(CsvEscape(user.Email)).Append(';')
                         .Append(CsvEscape(address)).Append(';')
                         .Append(CsvEscape(profile?.PostalCode)).Append(';')
@@ -901,6 +901,19 @@ namespace Backend.Controllers
                     user.Email = request.Email.Trim();
                 }
 
+                if (request.EboekhoudenCode != null)
+                {
+                    var codeError = await ValidateEboekhoudenCodeAsync(id, request.EboekhoudenCode);
+                    if (codeError != null)
+                        return BadRequest(new { message = codeError });
+                    var storedCode = EboekhoudenRelationCodes.StoredCode(request.EboekhoudenCode);
+                    if (!string.Equals(user.EboekhoudenCode, storedCode, StringComparison.Ordinal))
+                    {
+                        changes.Add($"e-Boekhouden code: '{user.EboekhoudenCode}' → '{storedCode}'");
+                        user.EboekhoudenCode = storedCode;
+                    }
+                }
+
                 if (!string.IsNullOrWhiteSpace(request.Role))
                 {
                     if (Enum.TryParse<UserRole>(request.Role, true, out var newRole) && newRole != user.Role)
@@ -939,6 +952,7 @@ namespace Backend.Controllers
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
                     chargeCardIds = myCards,
+                    eboekhoudenCode = user.EboekhoudenCode,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });
@@ -1061,6 +1075,64 @@ namespace Backend.Controllers
                 _logger.LogError(ex, "Error updating active flag for user {UserId}", id);
                 return BadRequest(new { message = $"Update failed: {ex.Message}" });
             }
+        }
+
+        [HttpPut("users/{id}/eboekhouden-code")]
+        public async Task<IActionResult> SetEboekhoudenCode(int id, [FromBody] SetEboekhoudenCodeRequest? request)
+        {
+            try
+            {
+                if (request == null)
+                    return BadRequest(new { message = "Send JSON body { \"code\": \"...\" }." });
+
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var editor = await _context.Users.FindAsync(currentUserId);
+                if (editor == null || !editor.Role.CanManageUserProfiles())
+                    return Forbid();
+
+                var user = await _context.Users.FindAsync(id);
+                if (user == null)
+                    return NotFound("User not found");
+
+                var error = await ValidateEboekhoudenCodeAsync(id, request.Code);
+                if (error != null)
+                    return BadRequest(new { message = error });
+
+                user.EboekhoudenCode = EboekhoudenRelationCodes.StoredCode(request.Code);
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    id = user.Id,
+                    eboekhoudenCode = user.EboekhoudenCode
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating e-Boekhouden code for user {UserId}", id);
+                return BadRequest(new { message = $"Update failed: {ex.Message}" });
+            }
+        }
+
+        private async Task<string?> ValidateEboekhoudenCodeAsync(int userId, string? raw)
+        {
+            var stored = EboekhoudenRelationCodes.StoredCode(raw);
+            if (stored == null)
+                return null;
+            if (stored.Length > EboekhoudenRelationCodes.MaxLength)
+                return "The e-Boekhouden code can be at most 13 characters.";
+
+            var codes = await _context.Users.AsNoTracking()
+                .Where(u => u.Id != userId && u.EboekhoudenCode != null)
+                .Select(u => u.EboekhoudenCode!)
+                .ToListAsync();
+            if (codes.Any(c => string.Equals(c, stored, StringComparison.OrdinalIgnoreCase)))
+                return "That e-Boekhouden code is already used.";
+            return null;
         }
 
         [Authorize(Roles = "Admin,Owner")]
@@ -1371,6 +1443,7 @@ namespace Backend.Controllers
                     picture = user.PictureUrl,
                     role = user.Role.ToString(),
                     chargeCardIds = theirCards,
+                    eboekhoudenCode = user.EboekhoudenCode,
                     createdAt = user.CreatedAt,
                     lastLoginAt = user.LastLoginAt
                 });

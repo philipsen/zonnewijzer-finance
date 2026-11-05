@@ -173,7 +173,7 @@ public class InvoicesControllerTests : IDisposable
     {
         await SeedAdminAsync();
         var appUserId = 2;
-        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base, EboekhoudenCode = "Card Holder" });
         var cid = await AddChargeCardAsync("ebh-csv");
         _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
         var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
@@ -197,8 +197,8 @@ public class InvoicesControllerTests : IDisposable
         await SeedAdminAsync();
         var activeId = 2;
         var inactiveId = 3;
-        _db.Users.Add(new User { Id = activeId, Email = "active@test.com", Name = "Active Member", GoogleId = "g2", Role = UserRole.Base });
-        _db.Users.Add(new User { Id = inactiveId, Email = "inactive@test.com", Name = "Inactive Member", GoogleId = "g3", Role = UserRole.Base, IsActive = false });
+        _db.Users.Add(new User { Id = activeId, Email = "active@test.com", Name = "Active Member", GoogleId = "g2", Role = UserRole.Base, EboekhoudenCode = "ACTIVE" });
+        _db.Users.Add(new User { Id = inactiveId, Email = "inactive@test.com", Name = "Inactive Member", GoogleId = "g3", Role = UserRole.Base, IsActive = false, EboekhoudenCode = "INACTIVE" });
         var activeCard = await AddChargeCardAsync("ebh-active");
         var inactiveCard = await AddChargeCardAsync("ebh-inactive");
         _db.UserChargeCards.Add(new UserChargeCard { UserId = activeId, ChargeCardId = activeCard });
@@ -213,8 +213,8 @@ public class InvoicesControllerTests : IDisposable
 
         var file = Assert.IsType<FileContentResult>(result);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
-        Assert.Contains("Active Member", csv);
-        Assert.DoesNotContain("Inactive Member", csv);
+        Assert.Contains("ACTIVE", csv);
+        Assert.DoesNotContain("INACTIVE", csv);
     }
 
     [Fact]

@@ -7,7 +7,7 @@
           type="button"
           class="btn btn-eboekhouden"
           :disabled="eboekhoudenLoading || loading || users.length === 0"
-          title="Download active users as e-Boekhouden relations. Code is at most 13 characters. A charge-card comment like Name (code) fills Code and Bedrijf/Naam."
+          title="Download active users as e-Boekhouden relations. Code is the value filled in on each user, at most 13 characters."
           @click="downloadEboekhoudenCsv"
         >
           {{ eboekhoudenLoading ? '…' : 'e-Boekhouden' }}
@@ -102,6 +102,19 @@
               </div>
             </div>
             <div class="date-item">
+              <label class="date-label" :for="`eboekhouden-code-${user.id}`">Code:</label>
+              <input
+                :id="`eboekhouden-code-${user.id}`"
+                v-model="user.eboekhoudenCode"
+                class="code-input"
+                maxlength="13"
+                placeholder="max 13"
+                title="e-Boekhouden relation code, at most 13 characters. This is the Relatie column on the invoice file."
+                :disabled="codeSavingId === user.id"
+                @change="saveEboekhoudenCode(user)"
+              >
+            </div>
+            <div class="date-item">
               <span class="date-label">e-Boekhouden:</span>
               <label class="active-toggle" :title="user.isActive === false ? 'Inactive users are left out of the e-Boekhouden files.' : 'Active users are included in the e-Boekhouden files.'">
                 <input
@@ -173,6 +186,7 @@ export default {
     const deletingUserId = ref(null)
     const eboekhoudenLoading = ref(false)
     const activeSavingId = ref(null)
+    const codeSavingId = ref(null)
 
     const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
     const isOwnerView = computed(() => isOwner(currentUserRole.value))
@@ -247,6 +261,36 @@ export default {
         alert(msg)
       } finally {
         activeSavingId.value = null
+      }
+    }
+
+    const saveEboekhoudenCode = async (user) => {
+      const code = (user.eboekhoudenCode ?? '').trim()
+      if (code.length > 13) {
+        alert('The e-Boekhouden code can be at most 13 characters.')
+        return
+      }
+      user.eboekhoudenCode = code
+      codeSavingId.value = user.id
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) {
+          alert('You must be logged in.')
+          return
+        }
+        await axios.put(`/api/auth/users/${user.id}/eboekhouden-code`, { code }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      } catch (err) {
+        console.error('Failed to update e-Boekhouden code:', err)
+        const msg =
+          err.response?.data?.message ??
+          (typeof err.response?.data === 'string' ? err.response.data : null) ??
+          'Failed to update the code.'
+        alert(msg)
+        await fetchUsers()
+      } finally {
+        codeSavingId.value = null
       }
     }
 
@@ -437,7 +481,9 @@ export default {
       eboekhoudenLoading,
       downloadEboekhoudenCsv,
       activeSavingId,
-      setUserActive
+      setUserActive,
+      codeSavingId,
+      saveEboekhoudenCode
     }
   }
 }
@@ -713,6 +759,15 @@ export default {
 
 .active-toggle input {
   margin: 0;
+}
+
+.code-input {
+  width: 9.5rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
 }
 
 .date-label {
