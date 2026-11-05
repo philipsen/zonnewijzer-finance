@@ -42,6 +42,11 @@ namespace Backend.Models
         public string Role { get; set; } = string.Empty;
     }
 
+    public class SetUserActiveRequest
+    {
+        public bool Active { get; set; }
+    }
+
     public class InviteUserRequest
     {
         public string Email { get; set; } = string.Empty;

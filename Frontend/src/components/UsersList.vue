@@ -7,7 +7,7 @@
           type="button"
           class="btn btn-eboekhouden"
           :disabled="eboekhoudenLoading || loading || users.length === 0"
-          title="Download relations for e-Boekhouden. Code is the member name and must match the invoice Relatie column. BP is P (private person)."
+          title="Download active users as e-Boekhouden relations. Code is at most 13 characters. A charge-card comment like Name (code) fills Code and Bedrijf/Naam."
           @click="downloadEboekhoudenCsv"
         >
           {{ eboekhoudenLoading ? '…' : 'e-Boekhouden' }}
@@ -66,7 +66,7 @@
     </div>
     
     <div v-else class="users-grid">
-      <div v-for="user in users" :key="user.id" class="user-card">
+      <div v-for="user in users" :key="user.id" class="user-card" :class="{ 'user-card-inactive': user.isActive === false }">
         <div class="user-avatar">
           <img 
             v-if="user.picture" 
@@ -100,6 +100,18 @@
                   <option v-if="isOwnerView || (isAppAdminView && user.id === currentUserId)" value="Owner">Owner</option>
                 </select>
               </div>
+            </div>
+            <div class="date-item">
+              <span class="date-label">e-Boekhouden:</span>
+              <label class="active-toggle" :title="user.isActive === false ? 'Inactive users are left out of the e-Boekhouden files.' : 'Active users are included in the e-Boekhouden files.'">
+                <input
+                  type="checkbox"
+                  :checked="user.isActive !== false"
+                  :disabled="activeSavingId === user.id"
+                  @change="setUserActive(user, $event.target.checked)"
+                >
+                <span>{{ user.isActive === false ? 'Inactive' : 'Active' }}</span>
+              </label>
             </div>
             <div class="date-item">
               <span class="date-label">Joined:</span>
@@ -160,6 +172,7 @@ export default {
     const devUserDeletionEnabled = ref(false)
     const deletingUserId = ref(null)
     const eboekhoudenLoading = ref(false)
+    const activeSavingId = ref(null)
 
     const isAppAdminView = computed(() => isAppAdmin(currentUserRole.value))
     const isOwnerView = computed(() => isOwner(currentUserRole.value))
@@ -207,6 +220,33 @@ export default {
         } else {
           alert('Failed to update role. Please try again.')
         }
+      }
+    }
+
+    const setUserActive = async (user, active) => {
+      const previous = user.isActive !== false
+      user.isActive = active
+      activeSavingId.value = user.id
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) {
+          user.isActive = previous
+          alert('You must be logged in.')
+          return
+        }
+        await axios.put(`/api/auth/users/${user.id}/active`, { active }, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      } catch (err) {
+        user.isActive = previous
+        console.error('Failed to update active flag:', err)
+        const msg =
+          err.response?.data?.message ??
+          (typeof err.response?.data === 'string' ? err.response.data : null) ??
+          'Failed to update the user.'
+        alert(msg)
+      } finally {
+        activeSavingId.value = null
       }
     }
 
@@ -395,7 +435,9 @@ export default {
       deletingUserId,
       confirmDeleteUser,
       eboekhoudenLoading,
-      downloadEboekhoudenCsv
+      downloadEboekhoudenCsv,
+      activeSavingId,
+      setUserActive
     }
   }
 }
@@ -654,6 +696,23 @@ export default {
 
 .date-item:last-child {
   border-bottom: none;
+}
+
+.user-card-inactive {
+  opacity: 0.72;
+}
+
+.active-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #333;
+  cursor: pointer;
+}
+
+.active-toggle input {
+  margin: 0;
 }
 
 .date-label {

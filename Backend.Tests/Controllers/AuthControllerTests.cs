@@ -107,6 +107,82 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadEboekhoudenRelationsCsv_OmitsInactiveUsers()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var inactive = await AddUser(2, "Inactive Member");
+        inactive.IsActive = false;
+        await AddUser(3, "Active Member");
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadEboekhoudenRelationsCsv();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Active Member;Active Member;P;user3@test.com", csv);
+        Assert.DoesNotContain("Inactive Member", csv);
+    }
+
+    [Fact]
+    public async Task DownloadEboekhoudenRelationsCsv_LimitsCodeTo13Characters()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Bram van den Nouweland");
+        await AddUser(3, "Wim Philipsen");
+        await AddUser(4, "Wim Philipsen");
+
+        var result = await BuildController().DownloadEboekhoudenRelationsCsv();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Bram van den;Bram van den Nouweland;P;user2@test.com", csv);
+        Assert.Contains("Wim Philipsen;Wim Philipsen;P;user3@test.com", csv);
+        Assert.DoesNotContain("Wim Philipsen;Wim Philipsen;P;user4@test.com", csv);
+        var codes = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Select(line => line.Split(';')[0]);
+        Assert.All(codes, code => Assert.True(code.Length <= 13));
+        Assert.Equal(codes.Count(), codes.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public async Task DownloadEboekhoudenRelationsCsv_UsesShortCodeFromChargeCardComment()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        var cardId = await AddChargeCardAsync("RF-KIA");
+        var card = await _db.ChargeCards.SingleAsync(c => c.Id == cardId);
+        card.Comment = "Wim Philipsen (Kia deeelauto)";
+        card.Street = "Warmoestuin";
+        card.HouseNumber = "6";
+        card.PostalCode = "2286XZ";
+        card.PlaceName = "Rijswijk";
+        var user = await AddUser(2, "Wim Philipsen", chargeCardId: cardId);
+        user.Email = "kia@maak-t.com";
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadEboekhoudenRelationsCsv();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains(
+            "Kia deeelauto;Wim Philipsen (Kia deeelauto);P;kia@maak-t.com;Warmoestuin 6;2286XZ;Rijswijk;Nederland",
+            csv);
+        Assert.Equal(13, "Kia deeelauto".Length);
+    }
+
+    [Fact]
+    public async Task SetUserActive_ChangesFlag()
+    {
+        await AddUser(1, "Admin", UserRole.Admin);
+        await AddUser(2, "Member");
+
+        var result = await BuildController().SetUserActive(2, new SetUserActiveRequest { Active = false });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.False((await _db.Users.FindAsync(2))!.IsActive);
+    }
+
+    [Fact]
     public async Task Register_CreatesPasswordUser_AndReturnsToken()
     {
         _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("jwt-token");
