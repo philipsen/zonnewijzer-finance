@@ -222,7 +222,7 @@
           <thead>
             <tr>
               <th class="user-column">User</th>
-              <th class="balance-column">Balance</th>
+              <th class="balance-column" :title="balanceTitle">Balance</th>
               <th
                 v-for="month in months"
                 :key="`${month.year}-${month.month}`"
@@ -241,7 +241,7 @@
                   <div class="user-email">{{ userRow.user.email }}</div>
                 </div>
               </td>
-              <td class="balance-cell" :class="balanceClass(userRow.user.id)">
+              <td class="balance-cell" :class="balanceClass(userRow.user.id)" :title="balanceTitle">
                 {{ formatBalance(userBalance(userRow.user.id)) }}
               </td>
               <td
@@ -329,7 +329,7 @@
               {{ userRow.user.name }}
             </option>
           </select>
-          <p v-if="selectedUserId" class="mobile-balance" :class="balanceClass(selectedUserId)">
+          <p v-if="selectedUserId" class="mobile-balance" :class="balanceClass(selectedUserId)" :title="balanceTitle">
             Balance {{ formatBalance(userBalance(selectedUserId)) }}
           </p>
         </div>
@@ -616,12 +616,46 @@ export default {
     const isPaymentPaid = (userId, year, month) =>
       isMolliePaid(userId, year, month) || isBankPaid(userId, year, month)
 
+    const brusselsYearMonth = () => {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Brussels',
+        year: 'numeric',
+        month: 'numeric'
+      }).formatToParts(new Date())
+      return {
+        year: Number(parts.find(part => part.type === 'year').value),
+        month: Number(parts.find(part => part.type === 'month').value)
+      }
+    }
+
+    // Invoices for a month go out during the next month. The balance stops at the
+    // month before last, so the current month and the unsent previous month stay out.
+    const lastBalanceMonth = () => {
+      const now = brusselsYearMonth()
+      const month = now.month - 2
+      return month >= 1
+        ? { year: now.year, month }
+        : { year: now.year - 1, month: month + 12 }
+    }
+
+    const countsTowardBalance = (invoice) => {
+      if (!invoice.hasChargingSessions) return false
+      const cutoff = lastBalanceMonth()
+      return invoice.year < cutoff.year || (invoice.year === cutoff.year && invoice.month <= cutoff.month)
+    }
+
+    const balanceTitle = computed(() => {
+      const cutoff = lastBalanceMonth()
+      const name = new Date(cutoff.year, cutoff.month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      return `Invoices through ${name}`
+    })
+
     const userBalance = (userId) => {
       const id = Number(userId)
       const row = gridData.value?.find(entry => entry.user.id === id)
       if (!row) return 0
       return row.invoices.reduce((sum, invoice) => {
-        if (!invoice.hasChargingSessions) return sum
+        if (!countsTowardBalance(invoice)) return sum
         const bank = bankPaidAmount(id, invoice.year, invoice.month)
         const covered = isMolliePaid(id, invoice.year, invoice.month) && bank <= invoice.totalAmount
           ? invoice.totalAmount
@@ -1128,6 +1162,7 @@ export default {
       isPartiallyPaid,
       bankPaidAmount,
       userBalance,
+      balanceTitle,
       formatBalance,
       balanceClass,
       hasPaymentLeft,
