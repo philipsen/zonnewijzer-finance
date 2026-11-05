@@ -47,7 +47,28 @@
           >
             {{ csvLoading ? '…' : 'Download CSV' }}
           </button>
+          <button
+            type="button"
+            class="btn-csv-month"
+            :disabled="eboekhoudenLoading || !monthHasCsvExport"
+            :title="eboekhoudenTitle"
+            @click="downloadEboekhoudenCsv"
+          >
+            {{ eboekhoudenLoading ? '…' : 'e-Boekhouden' }}
+          </button>
         </div>
+        <details v-if="months.length" class="import-help" open>
+          <summary>Import into e-Boekhouden</summary>
+          <ol>
+            <li>Select the month and download <strong>e-Boekhouden</strong>. Each row is one sent invoice. There is no total row.</li>
+            <li>Import the members first. On the <router-link to="/users">users page</router-link>, download <strong>e-Boekhouden</strong> and import that file under <strong>Relaties &gt; Importeren</strong>. The relation code is the member name, which is also the <strong>Relatie</strong> column on the invoice file. Map Code, Bedrijf/Naam, BP (<strong>P</strong> for a private person), Email, Adres, Postcode, Plaats and Land. Skip existing codes unless you want to overwrite them.</li>
+            <li>Open the file and fill <strong>Rekening</strong> with your debtors ledger code and <strong>Tegenrekening</strong> with your 21% sales ledger code. Those codes belong to your administration, so the file leaves them empty.</li>
+            <li>Go to <strong>Beheer &gt; Inrichting &gt; Mutaties importeren</strong>, choose the CSV, and continue.</li>
+            <li>Map each column to the property with the same name: Datum, Mutatiesoort, Rekening, Omschrijving, Boekstuk, Bedrag excl, BTW-code, Bedrag incl, Tegenrekening, Relatie, Factuurnummer, Betalingstermijn.</li>
+            <li>Check the rows. Mutatiesoort is <strong>Factuur verstuurd</strong>, the date is the last day of the month, BTW-code is <strong>HOOG_VERK_21</strong> (21% sales), and the payment term is 30 days. Amounts use a comma and have no euro sign.</li>
+            <li>Start the import. Rows with the same factuurnummer and the same relatie are combined into one mutation. Review the result under <strong>Boekhouden &gt; Overzichten &gt; Mutaties</strong>.</li>
+          </ol>
+        </details>
       </div>
 
       <!-- Desktop: table grid -->
@@ -229,6 +250,7 @@ export default {
     const selectedPeriodKey = ref('')
     const emailBulkLoading = ref(false)
     const csvLoading = ref(false)
+    const eboekhoudenLoading = ref(false)
     const enableOnlinePaymentLinks = ref(false)
 
     const selectedUserRow = computed(() => {
@@ -275,6 +297,13 @@ export default {
       if (selectedMonthInvoices.value.length === 0)
         return 'No invoices to export for this period.'
       return `Download CSV overview for ${selectedPeriod.value.name} (${selectedMonthInvoices.value.length} invoice(s)).`
+    })
+
+    const eboekhoudenTitle = computed(() => {
+      if (!selectedPeriod.value) return 'Select a period.'
+      if (selectedMonthInvoices.value.length === 0)
+        return 'No invoices to export for this period.'
+      return `Download an e-Boekhouden import file for ${selectedPeriod.value.name} (${selectedMonthInvoices.value.length} invoice(s)).`
     })
 
     const fetchInvoicesGrid = async (options = {}) => {
@@ -504,6 +533,46 @@ export default {
       }
     }
 
+    const downloadEboekhoudenCsv = async () => {
+      if (!selectedPeriod.value) {
+        alert('Select a period.')
+        return
+      }
+      const { year, month } = selectedPeriod.value
+      eboekhoudenLoading.value = true
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.get(`/api/invoices/${year}/${month}/eboekhouden.csv`, {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        })
+        const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' })
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `eboekhouden_${year}-${String(month).padStart(2, '0')}.csv`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+      } catch (err) {
+        console.error('e-Boekhouden CSV download failed:', err)
+        let msg = 'Failed to download e-Boekhouden CSV'
+        if (err.response?.data instanceof Blob) {
+          try {
+            msg = await err.response.data.text()
+          } catch {
+            /* keep default */
+          }
+        } else {
+          msg = err.response?.data?.message || err.response?.data || err.message || msg
+        }
+        alert(typeof msg === 'string' ? msg : JSON.stringify(msg))
+      } finally {
+        eboekhoudenLoading.value = false
+      }
+    }
+
     const fetchExistingPayments = async () => {
       try {
         const token = localStorage.getItem('token')
@@ -550,12 +619,15 @@ export default {
       selectedPeriodKey,
       emailBulkLoading,
       csvLoading,
+      eboekhoudenLoading,
       monthHasEmailable,
       monthHasCsvExport,
       emailMonthTitle,
       csvMonthTitle,
+      eboekhoudenTitle,
       sendMonthEmails,
       downloadMonthOverviewCsv,
+      downloadEboekhoudenCsv,
       enableOnlinePaymentLinks
     }
   }
@@ -668,6 +740,35 @@ export default {
 .btn-csv-month:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.import-help {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  color: #333;
+  font-size: 0.92rem;
+}
+
+.import-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.import-help ol {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.import-help li + li {
+  margin-top: 0.45rem;
+}
+
+.import-help a {
+  color: #1d78be;
+  font-weight: 600;
 }
 
 .btn-email-invoice {
@@ -982,6 +1083,10 @@ export default {
   .btn-email-month,
   .btn-csv-month {
     width: 100%;
+  }
+
+  .import-help {
+    font-size: 0.85rem;
   }
 
   .desktop-grid {

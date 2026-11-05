@@ -581,6 +581,85 @@ namespace Backend.Controllers
         }
 
         /// <summary>
+        /// Relation import for e-Boekhouden.nl. Code matches the invoice Relatie column (the member name).
+        /// </summary>
+        [HttpGet("users/eboekhouden.csv")]
+        public async Task<IActionResult> DownloadEboekhoudenRelationsCsv()
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+                if (userIdString == null || !int.TryParse(userIdString, out int userId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FindAsync(userId);
+                if (requestingUser == null || !requestingUser.Role.CanManageUserProfiles())
+                    return Forbid();
+
+                var userRows = await _context.Users.AsNoTracking().OrderBy(u => u.Name).ThenBy(u => u.Id).ToListAsync();
+                var links = await _context.UserChargeCards.AsNoTracking().ToListAsync();
+                var cardIds = links.Select(l => l.ChargeCardId).Distinct().ToList();
+                var cards = await _context.ChargeCards.AsNoTracking()
+                    .Where(c => cardIds.Contains(c.Id))
+                    .ToListAsync();
+                var cardsById = cards.ToDictionary(c => c.Id);
+
+                var sb = new StringBuilder();
+                sb.AppendLine("Code;Bedrijf/Naam;BP;Email;Adres;Postcode;Plaats;Land");
+                foreach (var user in userRows)
+                {
+                    var code = string.IsNullOrWhiteSpace(user.Name) ? user.Email : user.Name.Trim();
+                    var linked = links.Where(l => l.UserId == user.Id).Select(l => l.ChargeCardId).ToList();
+                    var profile = linked
+                        .Select(id => cardsById.GetValueOrDefault(id))
+                        .Where(c => c != null)
+                        .OrderBy(c => c!.Id)
+                        .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c!.Street) || !string.IsNullOrWhiteSpace(c!.PostalCode))
+                        ?? linked.Select(id => cardsById.GetValueOrDefault(id)).FirstOrDefault(c => c != null);
+
+                    var address = JoinAddress(profile?.Street, profile?.HouseNumber);
+                    var hasAddress = !string.IsNullOrWhiteSpace(address)
+                        || !string.IsNullOrWhiteSpace(profile?.PostalCode)
+                        || !string.IsNullOrWhiteSpace(profile?.PlaceName);
+
+                    sb.Append(CsvEscape(code)).Append(';')
+                        .Append(CsvEscape(code)).Append(';')
+                        .Append("P;").Append(CsvEscape(user.Email)).Append(';')
+                        .Append(CsvEscape(address)).Append(';')
+                        .Append(CsvEscape(profile?.PostalCode)).Append(';')
+                        .Append(CsvEscape(profile?.PlaceName)).Append(';')
+                        .Append(hasAddress ? "Nederland" : string.Empty)
+                        .AppendLine();
+                }
+
+                var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+                return File(bytes, "text/csv; charset=utf-8", "eboekhouden-relaties.csv");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating e-Boekhouden relation CSV");
+                return BadRequest($"Failed to generate e-Boekhouden CSV: {ex.Message}");
+            }
+        }
+
+        private static string JoinAddress(string? street, string? houseNumber)
+        {
+            var line = (street ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(houseNumber))
+                line = string.IsNullOrEmpty(line) ? houseNumber.Trim() : $"{line} {houseNumber.Trim()}";
+            return line;
+        }
+
+        private static string CsvEscape(string? value)
+        {
+            var text = value ?? string.Empty;
+            if (text.Contains('"') || text.Contains(';') || text.Contains('\n') || text.Contains('\r'))
+                return $"\"{text.Replace("\"", "\"\"")}\"";
+            return text;
+        }
+
+        /// <summary>
         /// Permanently removes charging sessions, invoices, Mollie payments, energy prices, charging user profiles, and event logs.
         /// User accounts are preserved; each user's charging profile link is cleared.
         /// Requires an authenticated admin and <c>{ "confirm": true }</c> in the JSON body.

@@ -569,6 +569,79 @@ namespace Backend.Controllers
             }
         }
 
+        /// <summary>
+        /// Mutatie-import for e-Boekhouden.nl. Column names match the import manual so they can be mapped directly.
+        /// Ledger accounts are left blank: they differ per administration.
+        /// </summary>
+        [HttpGet("{year:int}/{month:int}/eboekhouden.csv")]
+        public async Task<IActionResult> DownloadEboekhoudenCsv(int year, int month, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var token = Request.Headers.Authorization.ToString().Replace("Bearer ", "");
+                var userIdString = _jwtService.ValidateToken(token);
+
+                if (userIdString == null || !int.TryParse(userIdString, out int currentUserId))
+                    return Unauthorized();
+
+                var requestingUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                if (requestingUser == null || !requestingUser.Role.IsAppAdministrator())
+                    return Forbid();
+
+                if (month is < 1 or > 12 || year < 2000 || year > 2100)
+                    return BadRequest("Invalid year or month.");
+
+                var appUserIds = await _invoiceComputation.GetAppUserIdsForMonthAsync(
+                    year, month, null, cancellationToken);
+                if (appUserIds.Count == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                var culture = CultureInfo.GetCultureInfo("nl-NL");
+                var invoiceDate = InvoiceNumbers.PeriodEnd(year, month).ToString("d-M-yyyy", CultureInfo.InvariantCulture);
+                var monthLabel = new DateTime(year, month, 1).ToString("MMMM yyyy", culture);
+                var sb = new StringBuilder();
+                sb.AppendLine("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn");
+
+                var rowCount = 0;
+                foreach (var appUserId in appUserIds)
+                {
+                    var data = await _invoiceComputation.BuildInvoiceDataForAppUserAsync(
+                        appUserId, year, month, cancellationToken);
+                    if (data == null)
+                        continue;
+
+                    var (exclVat, _) = InvoiceVat.SplitInclusive(data.TotalAmount);
+                    var description = $"Laadsessies {monthLabel}, {data.TotalKwh.ToString("0.00", culture)} kWh";
+                    sb.Append(CsvEscape(invoiceDate)).Append(';')
+                        .Append(CsvEscape("Factuur verstuurd")).Append(';')
+                        .Append(';')
+                        .Append(CsvEscape(description)).Append(';')
+                        .Append(CsvEscape(data.InvoiceNumber)).Append(';')
+                        .Append(exclVat.ToString("0.00", culture)).Append(';')
+                        .Append(CsvEscape("HOOG_VERK_21")).Append(';')
+                        .Append(data.TotalAmount.ToString("0.00", culture)).Append(';')
+                        .Append(';')
+                        .Append(CsvEscape(data.UserName)).Append(';')
+                        .Append(CsvEscape(data.InvoiceNumber)).Append(';')
+                        .Append("30")
+                        .AppendLine();
+                    rowCount++;
+                }
+
+                if (rowCount == 0)
+                    return NotFound("No charging sessions for that period.");
+
+                var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+                var fileName = $"eboekhouden_{year}-{month:D2}.csv";
+                return File(bytes, "text/csv; charset=utf-8", fileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating e-Boekhouden CSV for {Year}-{Month}", year, month);
+                return BadRequest($"Failed to generate e-Boekhouden CSV: {ex.Message}");
+            }
+        }
+
         private static string CsvEscape(string? value)
         {
             var text = value ?? string.Empty;

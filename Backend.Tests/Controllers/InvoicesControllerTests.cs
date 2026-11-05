@@ -169,6 +169,29 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadEboekhoudenCsv_WithSessions_ReturnsImportRows()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("ebh-csv");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.30m });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().DownloadEboekhoudenCsv(2024, 4, CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("eboekhouden_2024-04.csv", file.FileDownloadName);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Contains("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn", csv);
+        Assert.Contains("30-4-2024;Factuur verstuurd;;Laadsessies april 2024, 10,00 kWh;240430 zonnewijzer 2-1;2,48;HOOG_VERK_21;3,00;;Card Holder;240430 zonnewijzer 2-1;30", csv);
+        Assert.DoesNotContain("TOTAAL", csv);
+    }
+
+    [Fact]
     public async Task GenerateInvoicePdf_NoSessions_ReturnsNotFound()
     {
         await SeedAdminAsync();
