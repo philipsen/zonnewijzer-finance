@@ -7,6 +7,7 @@ import MyChargingSessions from '../components/MyChargingSessions.vue'
 import ChargingUsersList from '../components/ChargingUsersList.vue'
 import EditChargingUser from '../components/EditChargingUser.vue'
 import InvoiceGrid from '../components/InvoiceGrid.vue'
+import InvoiceCorrections from '../components/InvoiceCorrections.vue'
 import MyInvoices from '../components/MyInvoices.vue'
 import PaymentsList from '../components/PaymentsList.vue'
 import PaymentReturn from '../components/PaymentReturn.vue'
@@ -83,6 +84,16 @@ const routes = [
   {
     path: '/charging-users/:id/edit',
     redirect: (to) => ({ path: `/charge-cards/${to.params.id}/edit` })
+  },
+  {
+    path: '/invoices/corrections',
+    name: 'InvoiceCorrections',
+    component: InvoiceCorrections,
+    beforeEnter: () => {
+      const token = localStorage.getItem('token')
+      const role = roleFromToken(token)
+      if (!isAppAdmin(role)) return '/'
+    }
   },
   {
     path: '/invoices',

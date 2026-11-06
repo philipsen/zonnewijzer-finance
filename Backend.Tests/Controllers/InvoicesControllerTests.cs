@@ -120,6 +120,38 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task GetInvoicesGrid_AddsCorrectionToMonthTotal()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "cardholder@test.com", Name = "Card Holder", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("corr-grid");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 4, 8, 9, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2024, Month = 4, PricePerKwh = 0.30m });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = appUserId,
+            Date = new DateOnly(2024, 4, 9),
+            Description = "Extra",
+            Amount = 1.25m
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetInvoicesGrid(CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var cell = doc.RootElement.GetProperty("GridData")[0].GetProperty("Invoices")
+            .EnumerateArray()
+            .Single(item => item.GetProperty("Year").GetInt32() == 2024 && item.GetProperty("Month").GetInt32() == 4);
+        Assert.Equal(1.25m, cell.GetProperty("CorrectionAmount").GetDecimal());
+        Assert.Equal(4.25m, cell.GetProperty("TotalAmount").GetDecimal());
+        Assert.True(cell.GetProperty("HasInvoice").GetBoolean());
+    }
+
+    [Fact]
     public async Task DownloadMonthOverviewCsv_NonAdmin_ReturnsForbid()
     {
         await SeedAdminAsync();

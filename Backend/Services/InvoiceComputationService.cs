@@ -53,7 +53,25 @@ public class InvoiceComputationService : IInvoiceComputationService
         CancellationToken cancellationToken = default)
     {
         var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
-        return await GetAppUserIdsInWindowAsync(startMs, endMs, appUserIdFilter, cancellationToken);
+        var fromSessions = await GetAppUserIdsInWindowAsync(startMs, endMs, appUserIdFilter, cancellationToken);
+        var fromCorrections = await GetAppUserIdsWithCorrectionsAsync(year, month, appUserIdFilter, cancellationToken);
+        return fromSessions.Union(fromCorrections).OrderBy(id => id).ToList();
+    }
+
+    private async Task<IReadOnlyList<int>> GetAppUserIdsWithCorrectionsAsync(
+        int year,
+        int month,
+        int? appUserIdFilter,
+        CancellationToken cancellationToken)
+    {
+        var start = new DateOnly(year, month, 1);
+        var end = start.AddMonths(1);
+        var query = _context.InvoiceCorrections
+            .AsNoTracking()
+            .Where(c => c.Date >= start && c.Date < end);
+        if (appUserIdFilter.HasValue)
+            query = query.Where(c => c.UserId == appUserIdFilter.Value);
+        return await query.Select(c => c.UserId).Distinct().ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<int>> GetAppUserIdsForRangeAsync(
@@ -117,19 +135,22 @@ public class InvoiceComputationService : IInvoiceComputationService
         CancellationToken cancellationToken = default)
     {
         var myCards = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, appUserId, cancellationToken);
-        if (myCards.Count == 0)
-            return null;
+        var corrections = await LoadCorrectionsForMonthAsync(appUserId, year, month, cancellationToken);
 
-        var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
-        var chargingSessions = await _context.ChargingSessions
-            .Where(cs => myCards.Contains(cs.ChargeCardId)
-                && cs.ToTimestamp.HasValue
-                && cs.ToTimestamp >= startMs
-                && cs.ToTimestamp < endMs)
-            .OrderBy(cs => cs.FromTimestamp)
-            .ToListAsync(cancellationToken);
+        var chargingSessions = new List<Models.ChargingSession>();
+        if (myCards.Count > 0)
+        {
+            var (startMs, endMs) = BrusselsTime.MonthRangeUnixMilliseconds(year, month);
+            chargingSessions = await _context.ChargingSessions
+                .Where(cs => myCards.Contains(cs.ChargeCardId)
+                    && cs.ToTimestamp.HasValue
+                    && cs.ToTimestamp >= startMs
+                    && cs.ToTimestamp < endMs)
+                .OrderBy(cs => cs.FromTimestamp)
+                .ToListAsync(cancellationToken);
+        }
 
-        if (chargingSessions.Count == 0)
+        if (chargingSessions.Count == 0 && corrections.Count == 0)
             return null;
 
         var appUser = await _context.Users.AsNoTracking()
@@ -137,20 +158,28 @@ public class InvoiceComputationService : IInvoiceComputationService
         if (appUser == null)
             return null;
 
-        var profile = await ResolveChargeCardProfileAsync(myCards, cancellationToken);
+        var profile = myCards.Count == 0
+            ? null
+            : await ResolveChargeCardProfileAsync(myCards, cancellationToken);
         var energyPrices = await LoadEnergyPricesAsync(cancellationToken);
         var ratePerKwh = GetRateForMonth(energyPrices, year, month);
 
         var totalKwh = chargingSessions.Sum(ChargingSessionEnergy.ChargedKwh);
-        var totalAmount = totalKwh * ratePerKwh;
+        var energyAmount = Math.Round(totalKwh * ratePerKwh, 2);
+        var correctionLines = corrections.Select(c => new InvoiceCorrectionLine
+        {
+            Date = c.Date,
+            Description = c.Description,
+            Amount = c.Amount
+        }).ToList();
+        var roundedTotal = energyAmount + correctionLines.Sum(c => c.Amount);
 
         var molliePayment = await _context.MolliePayments
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 p => p.AppUserId == appUserId && p.Year == year && p.Month == month,
                 cancellationToken);
-        var invoiceIndex = await InvoiceIndexAsync(myCards, year, month, cancellationToken);
-        var roundedTotal = Math.Round(totalAmount, 2);
+        var invoiceIndex = await InvoiceIndexAsync(appUserId, myCards, year, month, cancellationToken);
         var bankPaidAmount = await _context.InvoiceBankMatches
             .AsNoTracking()
             .Where(match => match.AppUserId == appUserId && match.Year == year && match.Month == month)
@@ -172,7 +201,9 @@ public class InvoiceComputationService : IInvoiceComputationService
             InvoiceNumber = InvoiceNumbers.Format(year, month, appUserId, invoiceIndex),
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = ratePerKwh,
+            EnergyAmount = energyAmount,
             TotalAmount = roundedTotal,
+            Corrections = correctionLines,
             MollieSurchargeEur = GetMollieSurchargeForMonth(energyPrices, year, month),
             PaymentUrl = molliePayment?.CheckoutUrl,
             IsPaid = molliePayment?.Status == "paid" || (bankPaidAmount > 0 && bankPaidAmount >= roundedTotal),
@@ -232,7 +263,8 @@ public class InvoiceComputationService : IInvoiceComputationService
         var totalKwh = sessions.Sum(s => s.ChargedKwh);
         var totalAmount = sessions.Sum(s => s.Amount);
         var weightedRate = totalKwh > 0 ? totalAmount / totalKwh : DefaultRatePerKwh;
-        var invoiceIndex = await InvoiceIndexAsync(myCards, endYear, endMonth, cancellationToken);
+        var invoiceIndex = await InvoiceIndexAsync(appUserId, myCards, endYear, endMonth, cancellationToken);
+        var roundedTotal = Math.Round(totalAmount, 2);
 
         return new InvoiceData
         {
@@ -248,7 +280,8 @@ public class InvoiceComputationService : IInvoiceComputationService
             InvoiceNumber = CombinedInvoiceNumber(appUserId, endYear, endMonth, invoiceIndex),
             TotalKwh = Math.Round(totalKwh, 2),
             RatePerKwh = Math.Round(weightedRate, 4),
-            TotalAmount = Math.Round(totalAmount, 2),
+            EnergyAmount = roundedTotal,
+            TotalAmount = roundedTotal,
             PaymentUrl = null,
             IsPaid = false,
             UsePaymentRequestNotice = true,
@@ -257,19 +290,46 @@ public class InvoiceComputationService : IInvoiceComputationService
         };
     }
 
+    private async Task<List<Models.InvoiceCorrection>> LoadCorrectionsForMonthAsync(
+        int appUserId,
+        int year,
+        int month,
+        CancellationToken cancellationToken)
+    {
+        var start = new DateOnly(year, month, 1);
+        var end = start.AddMonths(1);
+        return await _context.InvoiceCorrections
+            .AsNoTracking()
+            .Where(c => c.UserId == appUserId && c.Date >= start && c.Date < end)
+            .OrderBy(c => c.Date)
+            .ThenBy(c => c.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     private async Task<int> InvoiceIndexAsync(
+        int appUserId,
         IReadOnlyList<int> cardIds,
         int year,
         int month,
         CancellationToken cancellationToken)
     {
-        var endTimestamps = await _context.ChargingSessions
-            .AsNoTracking()
-            .Where(cs => cardIds.Contains(cs.ChargeCardId) && cs.ToTimestamp.HasValue)
-            .Select(cs => cs.ToTimestamp!.Value)
-            .ToListAsync(cancellationToken);
+        var billedMonths = new List<(int Year, int Month)>();
+        if (cardIds.Count > 0)
+        {
+            var endTimestamps = await _context.ChargingSessions
+                .AsNoTracking()
+                .Where(cs => cardIds.Contains(cs.ChargeCardId) && cs.ToTimestamp.HasValue)
+                .Select(cs => cs.ToTimestamp!.Value)
+                .ToListAsync(cancellationToken);
+            billedMonths.AddRange(endTimestamps.Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds));
+        }
 
-        var billedMonths = endTimestamps.Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds);
+        var correctionDates = await _context.InvoiceCorrections
+            .AsNoTracking()
+            .Where(c => c.UserId == appUserId)
+            .Select(c => c.Date)
+            .ToListAsync(cancellationToken);
+        billedMonths.AddRange(correctionDates.Select(date => (date.Year, date.Month)));
         return InvoiceNumbers.IndexForMonth(billedMonths, year, month);
     }
 

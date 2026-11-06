@@ -27,7 +27,12 @@ public sealed class InvoicePaymentCatalog
             })
             .ToListAsync(cancellationToken);
 
-        if (sessions.Count == 0)
+        var corrections = await _context.InvoiceCorrections
+            .AsNoTracking()
+            .Select(correction => new { correction.UserId, correction.Date, correction.Amount })
+            .ToListAsync(cancellationToken);
+
+        if (sessions.Count == 0 && corrections.Count == 0)
             return Array.Empty<InvoiceCandidate>();
 
         var links = await _context.UserChargeCards
@@ -81,22 +86,31 @@ public sealed class InvoicePaymentCatalog
             }
         }
 
+        var correctionTotals = new Dictionary<(int UserId, int Year, int Month), decimal>();
+        foreach (var correction in corrections)
+        {
+            var key = (correction.UserId, correction.Date.Year, correction.Date.Month);
+            correctionTotals[key] = correctionTotals.GetValueOrDefault(key) + correction.Amount;
+        }
+
+        var invoiceKeys = kwhByUserMonth.Keys.Concat(correctionTotals.Keys).Distinct().ToList();
         var candidates = new List<InvoiceCandidate>();
-        foreach (var userGroup in kwhByUserMonth.GroupBy(entry => entry.Key.UserId))
+        foreach (var userGroup in invoiceKeys.GroupBy(key => key.UserId))
         {
             if (!names.TryGetValue(userGroup.Key, out var name))
                 continue;
 
-            var billedMonths = userGroup.Select(entry => (entry.Key.Year, entry.Key.Month)).ToList();
-            foreach (var entry in userGroup)
+            var billedMonths = userGroup.Select(key => (key.Year, key.Month)).ToList();
+            foreach (var key in userGroup)
             {
-                var (userId, year, month) = entry.Key;
+                var (userId, year, month) = key;
                 var rate = RateFor(prices, year, month);
                 var index = InvoiceNumbers.IndexForMonth(billedMonths, year, month);
                 var invoiceNumber = InvoiceNumbers.UsesLegacyFormat(year, month)
                     ? InvoiceNumbers.Legacy(year, month, userId)
                     : InvoiceNumbers.Format(year, month, userId, index);
-                var totalAmount = Math.Round(entry.Value * rate, 2);
+                var energyAmount = Math.Round(kwhByUserMonth.GetValueOrDefault(key) * rate, 2);
+                var totalAmount = energyAmount + correctionTotals.GetValueOrDefault(key);
                 var bankAmount = bankPaidByInvoice.GetValueOrDefault((userId, year, month));
                 candidates.Add(new InvoiceCandidate(
                     userId,

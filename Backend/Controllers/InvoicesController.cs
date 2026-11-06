@@ -121,8 +121,11 @@ namespace Backend.Controllers
 
                 _logger.LogInformation("User {UserId} requesting invoices grid", currentUserId);
 
-                // One row per app user with sessions (only cards linked to an account; sessions are combined per user).
+                // One row per app user with sessions or invoice corrections.
                 var allSessions = await _context.ChargingSessions
+                    .ToListAsync(cancellationToken);
+                var corrections = await _context.InvoiceCorrections
+                    .AsNoTracking()
                     .ToListAsync(cancellationToken);
 
                 var cardIdsWithSessions = allSessions.Select(s => s.ChargeCardId).Distinct().ToList();
@@ -131,8 +134,12 @@ namespace Backend.Controllers
                     .Where(ucc => cardIdsWithSessions.Contains(ucc.ChargeCardId))
                     .Select(ucc => ucc.UserId)
                     .Distinct()
-                    .OrderBy(id => id)
                     .ToListAsync(cancellationToken);
+                appUserIdsWithActivity = appUserIdsWithActivity
+                    .Union(corrections.Select(c => c.UserId))
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
 
                 var appUserRecords = await _context.Users
                     .AsNoTracking()
@@ -164,11 +171,20 @@ namespace Backend.Controllers
                     .ToList();
                 var rawMonths = sessionEndTimestamps
                     .Select(BrusselsTime.BrusselsYearMonthFromUnixMilliseconds)
+                    .Concat(corrections.Select(c => (c.Date.Year, c.Date.Month)))
                     .Distinct()
                     .OrderBy(d => d.Year)
                     .ThenBy(d => d.Month)
                     .Select(d => new { d.Year, d.Month })
                     .ToList();
+
+                decimal CorrectionAmount(int userId, int year, int month) =>
+                    corrections
+                        .Where(c => c.UserId == userId && c.Date.Year == year && c.Date.Month == month)
+                        .Sum(c => c.Amount);
+
+                bool HasCorrection(int userId, int year, int month) =>
+                    corrections.Any(c => c.UserId == userId && c.Date.Year == year && c.Date.Month == month);
 
                 // Pre-load all energy prices
                 var energyPrices = await _context.EnergyPrices
@@ -197,15 +213,18 @@ namespace Backend.Controllers
                     {
                         if (!cardsByAppUser.TryGetValue(user.Id, out var cids) || cids.Count == 0)
                         {
+                            var onlyCorrection = CorrectionAmount(user.Id, m.Year, m.Month);
                             return new
                             {
                                 Year = m.Year,
                                 Month = m.Month,
                                 MonthName = m.Name,
                                 HasChargingSessions = false,
+                                HasInvoice = HasCorrection(user.Id, m.Year, m.Month),
                                 TotalKwh = 0m,
                                 RatePerKwh = GetRate(m.Year, m.Month),
-                                TotalAmount = 0m,
+                                CorrectionAmount = onlyCorrection,
+                                TotalAmount = onlyCorrection,
                                 IsOngoingMonth = m.IsOngoingMonth
                             };
                         }
@@ -216,15 +235,18 @@ namespace Backend.Controllers
                             .Where(cs => cids.Contains(cs.ChargeCardId) &&
                                         BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month))
                             .Sum(ChargingSessionEnergy.ChargedKwh);
+                        var correctionAmount = CorrectionAmount(user.Id, m.Year, m.Month);
                         return new
                         {
                             Year = m.Year,
                             Month = m.Month,
                             MonthName = m.Name,
                             HasChargingSessions = hasCharging,
+                            HasInvoice = hasCharging || HasCorrection(user.Id, m.Year, m.Month),
                             TotalKwh = Math.Round(kwh, 2),
                             RatePerKwh = GetRate(m.Year, m.Month),
-                            TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2),
+                            CorrectionAmount = correctionAmount,
+                            TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2) + correctionAmount,
                             IsOngoingMonth = m.IsOngoingMonth
                         };
                     }).ToList()
@@ -468,7 +490,7 @@ namespace Backend.Controllers
 
                 var prepared = await BuildInvoicePdfAsync(userId, year, month, createPaymentIfMissing: true, cancellationToken);
                 if (prepared == null)
-                    return NotFound("No charging sessions found for this user and month");
+                    return NotFound("No charging sessions or corrections found for this user and month");
 
                 var (invoiceData, pdfBytes) = prepared.Value;
                 var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
@@ -814,7 +836,7 @@ namespace Backend.Controllers
                 {
                     "sent" => Ok(new { message = $"Invoice sent to {targetUser.Email}." }),
                     "skipped_no_email" => BadRequest("This user has no email address."),
-                    "skipped_no_sessions" => NotFound("No charging sessions found for this user and month"),
+                    "skipped_no_sessions" => NotFound("No charging sessions or corrections found for this user and month"),
                     _ => BadRequest(attempt.Detail ?? "Failed to send invoice email.")
                 };
             }
@@ -846,7 +868,7 @@ namespace Backend.Controllers
 
             var prepared = await BuildInvoicePdfAsync(targetUser.Id, year, month, createPaymentIfMissing: true, cancellationToken);
             if (prepared == null)
-                return new InvoiceEmailSendAttempt(targetUser.Id, targetUser.Email, "skipped_no_sessions", "No charging sessions found for this user and month");
+                return new InvoiceEmailSendAttempt(targetUser.Id, targetUser.Email, "skipped_no_sessions", "No charging sessions or corrections found for this user and month");
 
             var (invoiceData, pdfBytes) = prepared.Value;
             var fileName = $"Invoice_{invoiceData.InvoiceNumber}_{year}_{month:D2}.pdf";
@@ -856,7 +878,7 @@ namespace Backend.Controllers
             var subject = $"Factuur {invoiceData.InvoiceNumber} – {invoiceData.MonthName}";
             var body = $"""
                 <p>Beste {encodedName},</p>
-                <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor laadsessies in {encodedMonth}.</p>
+                <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor {encodedMonth}.</p>
                 <p>Totaalbedrag: <strong>€{invoiceData.TotalAmount:F2}</strong></p>
                 <p>Heb je vragen over de factuur, je laadverbruik of ZonneWijzer? Neem dan gerust contact op via <a href="mailto:zonnewijzer@warmoestuin.nl">zonnewijzer@warmoestuin.nl</a>.</p>
                 <p>Dank dat je gebruik maakt van ZonneWijzer en daarmee bijdraagt aan het lokaal opwekken én delen van duurzame energie.</p>
@@ -1002,7 +1024,7 @@ namespace Backend.Controllers
                 {
                     if (existing is { Status: "open" })
                         return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
-                    return NotFound("No charging sessions found for this user and month");
+                    return NotFound("No charging sessions or corrections found for this user and month");
                 }
 
                 var totalAmount = WeroChargeAmount(invoicePreview.TotalAmount, invoicePreview.MollieSurchargeEur);

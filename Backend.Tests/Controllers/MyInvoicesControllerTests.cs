@@ -104,6 +104,30 @@ public class MyInvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task GetMyInvoices_IncludesCorrectionInMonthAmount()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "a@test.com", Name = "Sam", GoogleId = "g1" });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = 1,
+            Date = new DateOnly(2026, 11, 6),
+            Description = "Adjustment",
+            Amount = 2.40m
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await BuildController().GetMyInvoices();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var months = doc.RootElement.GetProperty("months");
+        Assert.Equal(1, months.GetArrayLength());
+        Assert.Equal(2026, months[0].GetProperty("Year").GetInt32());
+        Assert.Equal(11, months[0].GetProperty("Month").GetInt32());
+        Assert.Equal(2.40m, months[0].GetProperty("TotalAmount").GetDecimal());
+    }
+
+    [Fact]
     public async Task GetMyInvoices_RefreshesOpenPaymentFromMollie()
     {
         _db.ChargeCards.Add(new ChargeCard { Value = "RF-INV-2" });

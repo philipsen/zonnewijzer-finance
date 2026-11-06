@@ -20,6 +20,7 @@ const adminNavLinks = [
   'Sessions',
   'Stations',
   'Invoices',
+  'Corrections',
   'Payments',
   'Prices',
   'Events',
@@ -114,6 +115,10 @@ test.describe('Admin navbar (E2E_ADMIN_EMAIL + UserAdminPassword)', () => {
       await nav.getByRole('link', { name: 'Invoices', exact: true }).click()
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/invoices')
       await expect(page.getByRole('heading', { name: 'Invoice Grid' })).toBeVisible({ timeout: 20_000 })
+
+      await nav.getByRole('link', { name: 'Corrections', exact: true }).click()
+      await expect(page).toHaveURL((url) => new URL(url).pathname === '/invoices/corrections')
+      await expect(page.getByRole('heading', { name: 'Invoice corrections' })).toBeVisible({ timeout: 20_000 })
 
       await nav.getByRole('link', { name: 'Payments', exact: true }).click()
       await expect(page).toHaveURL((url) => new URL(url).pathname === '/payments')

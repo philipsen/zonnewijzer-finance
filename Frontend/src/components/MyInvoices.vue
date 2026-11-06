@@ -109,11 +109,12 @@ export default {
         })
         userName.value = response.data.userName
         const cardIds = response.data.chargeCardIds
-        if (!cardIds || !cardIds.length) {
+        const loadedMonths = response.data.months || []
+        if ((!cardIds || !cardIds.length) && loadedMonths.length === 0) {
           hasChargingAccount.value = false
           return
         }
-        months.value = response.data.months
+        months.value = loadedMonths
         enableOnlinePaymentLinks.value = response.data.enableOnlinePaymentLinks === true
       } catch (err) {
         console.error('Failed to fetch invoices:', err)

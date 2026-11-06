@@ -13,6 +13,7 @@ namespace Backend.Data
         public DbSet<User> Users { get; set; }
         public DbSet<ChargingSession> ChargingSessions { get; set; }
         public DbSet<Invoice> Invoices { get; set; }
+        public DbSet<InvoiceCorrection> InvoiceCorrections { get; set; }
         public DbSet<EventLog> EventLogs { get; set; }
         public DbSet<EnergyPrice> EnergyPrices { get; set; }
         public DbSet<ChargeCard> ChargeCards { get; set; }
@@ -98,6 +99,21 @@ namespace Backend.Data
                       .OnDelete(DeleteBehavior.Cascade);
 
                 entity.HasIndex(e => new { e.UserId, e.Year, e.Month }).IsUnique();
+            });
+
+            modelBuilder.Entity<InvoiceCorrection>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.Date).IsRequired();
+                entity.Property(e => e.Description).HasMaxLength(500).IsRequired();
+                entity.Property(e => e.Amount).HasPrecision(10, 2).IsRequired();
+                entity.HasIndex(e => new { e.UserId, e.Date });
+
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<EnergyPrice>(entity =>

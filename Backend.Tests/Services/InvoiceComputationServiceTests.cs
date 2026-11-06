@@ -162,4 +162,72 @@ public class InvoiceComputationServiceTests : IDisposable
         Assert.Single(ids);
         Assert.Equal(10, ids[0]);
     }
+
+    [Fact]
+    public async Task BuildInvoiceData_AddsCorrectionToMonthTotal()
+    {
+        const int appUserId = 7;
+        _db.Users.Add(new User { Id = appUserId, Email = "corr@test.com", Name = "Corr", GoogleId = "g7", Role = UserRole.Base });
+        var cid = new ChargeCard { Value = "corr-card" };
+        _db.ChargeCards.Add(cid);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid.Id });
+
+        var april = new DateTime(2026, 4, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid.Id, 1, april, april.AddHours(1), 10));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 4, PricePerKwh = 0.20m });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = appUserId,
+            Date = new DateOnly(2026, 4, 12),
+            Description = "Missed session",
+            Amount = 1.50m
+        });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = appUserId,
+            Date = new DateOnly(2026, 5, 2),
+            Description = "Next month",
+            Amount = 9m
+        });
+        await _db.SaveChangesAsync();
+
+        var aprilInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 4);
+        var mayInvoice = await _service.BuildInvoiceDataForAppUserAsync(appUserId, 2026, 5);
+
+        Assert.NotNull(aprilInvoice);
+        Assert.Equal(2.00m, aprilInvoice!.EnergyAmount);
+        Assert.Equal(3.50m, aprilInvoice.TotalAmount);
+        Assert.Single(aprilInvoice.Corrections);
+        Assert.Equal("Missed session", aprilInvoice.Corrections[0].Description);
+        Assert.Equal(1.50m, aprilInvoice.Corrections[0].Amount);
+
+        Assert.NotNull(mayInvoice);
+        Assert.Equal(0m, mayInvoice!.EnergyAmount);
+        Assert.Equal(9m, mayInvoice.TotalAmount);
+        Assert.Empty(mayInvoice.Sessions);
+        Assert.Equal("260601 zonnewijzer U7-2", mayInvoice.InvoiceNumber);
+    }
+
+    [Fact]
+    public async Task GetAppUserIdsForMonth_IncludesCorrectionOnlyUser()
+    {
+        _db.Users.Add(new User { Id = 8, Email = "only@test.com", Name = "Only", GoogleId = "g8", Role = UserRole.Base });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = 8,
+            Date = new DateOnly(2026, 11, 3),
+            Description = "Credit",
+            Amount = -4.25m
+        });
+        await _db.SaveChangesAsync();
+
+        var ids = await _service.GetAppUserIdsForMonthAsync(2026, 11, null);
+        var invoice = await _service.BuildInvoiceDataForAppUserAsync(8, 2026, 11);
+
+        Assert.Equal(new[] { 8 }, ids);
+        Assert.NotNull(invoice);
+        Assert.Equal(-4.25m, invoice!.TotalAmount);
+        Assert.Equal("261201 zonnewijzer U8-1", invoice.InvoiceNumber);
+    }
 }
