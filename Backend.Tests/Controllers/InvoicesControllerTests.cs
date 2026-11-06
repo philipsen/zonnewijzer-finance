@@ -342,7 +342,7 @@ public class InvoicesControllerTests : IDisposable
         await _db.SaveChangesAsync();
 
         _pdfMock.Setup(p => p.GenerateInvoicePdf(It.IsAny<InvoiceData>())).Returns(new byte[] { 0x25, 0x50, 0x44, 0x46 });
-        _configMock.Setup(c => c["Smtp:InvoiceBcc"]).Returns("zonnewijzer@warmoestuin.nl,jan@deelstroomdelft.nl");
+        _configMock.Setup(c => c["Smtp:InvoiceBcc"]).Returns("zonnewijzer@warmoestuin.nl");
 
         var result = await BuildController().SendInvoiceEmail(appUserId, 2024, 4, CancellationToken.None);
 
@@ -352,7 +352,7 @@ public class InvoicesControllerTests : IDisposable
             It.Is<string>(s => s.Contains("Factuur")),
             It.IsAny<string>(),
             It.Is<EmailAttachment>(a => a.Content.Length == 4 && a.FileName.EndsWith(".pdf")),
-            "zonnewijzer@warmoestuin.nl,jan@deelstroomdelft.nl"), Times.Once);
+            "zonnewijzer@warmoestuin.nl"), Times.Once);
         var log = await _db.EventLogs.SingleAsync();
         Assert.Contains("Invoice emailed", log.Action);
         Assert.NotNull(ok.Value);
