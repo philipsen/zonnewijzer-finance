@@ -1,8 +1,8 @@
 namespace Backend.Services;
 
 /// <summary>
-/// Invoice number: <c>YYMMDD zonnewijzer &lt;user id&gt;-&lt;index&gt;</c>.
-/// The date is the last day of the billed month. The index is that user's 1-based invoice sequence.
+/// Invoice number: <c>YYMMDD zonnewijzer U&lt;user id&gt;-&lt;index&gt;</c>.
+/// The date is the first day of the month after the billed month. The index is that user's 1-based invoice sequence.
 /// </summary>
 public static class InvoiceNumbers
 {
@@ -16,11 +16,11 @@ public static class InvoiceNumbers
     public static string Legacy(int year, int month, int userId) =>
         $"INV-{year}-{month:00}-U{userId}";
 
-    public static DateTime PeriodEnd(int year, int month) =>
-        new(year, month, DateTime.DaysInMonth(year, month));
+    public static DateTime InvoiceDate(int year, int month) =>
+        new DateTime(year, month, 1).AddMonths(1);
 
     public static string Format(int year, int month, int userId, int index) =>
-        $"{PeriodEnd(year, month):yyMMdd} zonnewijzer {userId}-{index}";
+        $"{InvoiceDate(year, month):yyMMdd} zonnewijzer U{userId}-{index}";
 
     public static int IndexForMonth(IEnumerable<(int Year, int Month)> billedMonths, int year, int month)
     {

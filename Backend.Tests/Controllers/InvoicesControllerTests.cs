@@ -161,7 +161,7 @@ public class InvoicesControllerTests : IDisposable
         Assert.Equal("InvoiceOverview_2024-04.csv", file.FileDownloadName);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
         Assert.Contains("Factuurnummer;Gebruiker;kWh;Bedrag excl. BTW;BTW;Bedrag incl. BTW", csv);
-        Assert.Contains("240430 zonnewijzer 2-1", csv);
+        Assert.Contains("240501 zonnewijzer U2-1", csv);
         Assert.Contains("Card Holder", csv);
         Assert.Contains("10,00", csv); // kWh
         Assert.Contains("3,00", csv);  // incl. 10 * 0.30
@@ -187,7 +187,7 @@ public class InvoicesControllerTests : IDisposable
         Assert.Equal("eboekhouden_2024-04.csv", file.FileDownloadName);
         var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
         Assert.Contains("Datum;Mutatiesoort;Rekening;Omschrijving;Boekstuk;Bedrag excl;BTW-code;Bedrag incl;Tegenrekening;Relatie;Factuurnummer;Betalingstermijn;Kostenplaats", csv);
-        Assert.Contains("1-5-2024;Factuur verstuurd;;Laadsessies april 2024, 10,00 kWh;;2,48;HOOG_VERK_21;3,00;4301;Card Holder;240430 zonnewijzer 2-1;30;PV Warmoestuin", csv);
+        Assert.Contains("1-5-2024;Factuur verstuurd;;Laadsessies april 2024, 10,00 kWh;;2,48;HOOG_VERK_21;3,00;4301;Card Holder;240501 zonnewijzer U2-1;30;PV Warmoestuin", csv);
         Assert.DoesNotContain("TOTAAL", csv);
     }
 

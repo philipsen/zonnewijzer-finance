@@ -9,7 +9,7 @@ public class BankInvoiceMatcherTests
         "59 20016328  INV-2026-08-U14 INV-2026-08-U14 Laadkosten auto T. van Leeuwen - Aug-2026 2627 AN Delft";
 
     private static InvoiceCandidate August(decimal amount, bool paid = false) =>
-        new(14, "T. van Leeuwen", 2026, 8, "260831 zonnewijzer 14-1", amount, paid);
+        new(14, "T. van Leeuwen", 2026, 8, "260901 zonnewijzer U14-1", amount, paid);
 
     [Fact]
     public void LegacyNumber_ThroughSeptember_MatchesUserAndAmount()
@@ -48,7 +48,7 @@ public class BankInvoiceMatcherTests
 
         var proposal = BankInvoiceMatcher.Match($"Betaling {number}", 12.50m, [invoice]);
 
-        Assert.Equal("261031 zonnewijzer 14-1", number);
+        Assert.Equal("261101 zonnewijzer U14-1", number);
         Assert.Equal(BankMatchKind.Certain, proposal.Kind);
         Assert.Equal(10, proposal.Month);
     }
@@ -71,8 +71,8 @@ public class BankInvoiceMatcherTests
     {
         var invoices = new[]
         {
-            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 8, "260831 zonnewijzer 14-2", 20m, false),
-            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260731 zonnewijzer 14-1", 24.47m, false)
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 8, "260901 zonnewijzer U14-2", 20m, false),
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260801 zonnewijzer U14-1", 24.47m, false)
         };
 
         var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14 INV-2026-07-U14", 44.47m, invoices);
@@ -89,7 +89,7 @@ public class BankInvoiceMatcherTests
         var invoices = new[]
         {
             August(44.47m),
-            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260731 zonnewijzer 14-1", 44.47m, false)
+            new InvoiceCandidate(14, "T. van Leeuwen", 2026, 7, "260801 zonnewijzer U14-1", 44.47m, false)
         };
 
         var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14 INV-2026-07-U14", 44.47m, invoices);
