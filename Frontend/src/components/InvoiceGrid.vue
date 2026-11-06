@@ -168,6 +168,17 @@
                           {{ invoice.monthName }} · €{{ invoice.totalAmount.toFixed(2) }}
                         </option>
                       </select>
+                      <div v-if="linkParts(row.id).length" class="bank-link-parts">
+                        <label v-for="part in linkParts(row.id)" :key="part.key">
+                          <input
+                            type="checkbox"
+                            :checked="isPartSelected(row.id, part.key)"
+                            @change="toggleLinkPart(row.id, part.key)"
+                          >
+                          <span>{{ part.label }}</span>
+                          <span>€{{ Number(part.amount).toFixed(2) }}</span>
+                        </label>
+                      </div>
                       <input
                         v-model="bankLinkDraft[row.id].amount"
                         type="number"
@@ -175,6 +186,7 @@
                         step="0.01"
                         class="bank-amount-input"
                         aria-label="Amount to apply"
+                        @input="clearLinkParts(row.id)"
                       >
                       <button
                         type="button"
@@ -1038,9 +1050,10 @@ export default {
       const draft = {
         userId,
         periodKey: preferred ? `${preferred.year}-${preferred.month}` : '',
-        amount: ''
+        amount: '',
+        selected: []
       }
-      draft.amount = suggestedLinkAmount(row, draft)
+      applySuggestedAmount(row, draft)
       bankLinkDraft.value = {
         ...bankLinkDraft.value,
         [row.id]: draft
@@ -1076,14 +1089,96 @@ export default {
 
     const onBankLinkPeriod = (rowId) => refreshLinkAmount(rowId)
 
+    const invoiceParts = (userId, periodKey) => {
+      const [year, month] = String(periodKey || '').split('-').map(Number)
+      const invoice = invoicesForUser(userId).find(item => item.year === year && item.month === month)
+      if (!invoice?.corrections?.length) return []
+      const parts = []
+      const energy = Number(invoice.energyAmount)
+      if (energy !== 0)
+        parts.push({ key: 'charge', label: 'Charge', amount: energy })
+      for (const correction of invoice.corrections)
+        parts.push({
+          key: `c-${correction.id}`,
+          label: correction.description || 'Correction',
+          amount: Number(correction.amount)
+        })
+      return parts
+    }
+
+    const linkParts = (rowId) => {
+      const draft = bankLinkDraft.value[rowId]
+      if (!draft) return []
+      return invoiceParts(draft.userId, draft.periodKey)
+    }
+
+    const selectPartsForAmount = (parts, amountText) => {
+      const target = Math.round(Number(amountText) * 100)
+      if (!parts.length || !Number.isFinite(target)) return []
+      const count = parts.length
+      if (count > 16) return []
+      let best = []
+      for (let mask = 1; mask < (1 << count); mask++) {
+        let sum = 0
+        const keys = []
+        for (let index = 0; index < count; index++) {
+          if ((mask & (1 << index)) === 0) continue
+          sum += Math.round(parts[index].amount * 100)
+          keys.push(parts[index].key)
+        }
+        if (sum === target && keys.length > best.length)
+          best = keys
+      }
+      return best
+    }
+
+    const applySuggestedAmount = (row, draft) => {
+      const amount = suggestedLinkAmount(row, draft)
+      const parts = invoiceParts(draft.userId, draft.periodKey)
+      draft.selected = selectPartsForAmount(parts, amount)
+      draft.amount = amount
+    }
+
     const refreshLinkAmount = (rowId) => {
       const draft = bankLinkDraft.value[rowId]
       const row = bankOpen.value.find(item => item.id === rowId)
       if (!draft || !row) return
+      const next = { ...draft }
+      applySuggestedAmount(row, next)
       bankLinkDraft.value = {
         ...bankLinkDraft.value,
-        [rowId]: { ...draft, amount: suggestedLinkAmount(row, draft) }
+        [rowId]: next
       }
+    }
+
+    const isPartSelected = (rowId, key) =>
+      (bankLinkDraft.value[rowId]?.selected || []).includes(key)
+
+    const toggleLinkPart = (rowId, key) => {
+      const draft = bankLinkDraft.value[rowId]
+      if (!draft) return
+      const parts = invoiceParts(draft.userId, draft.periodKey)
+      const selected = new Set(draft.selected || [])
+      if (selected.has(key)) selected.delete(key)
+      else selected.add(key)
+      const sum = parts
+        .filter(part => selected.has(part.key))
+        .reduce((total, part) => total + part.amount, 0)
+      const rounded = Math.round(sum * 100) / 100
+      bankLinkDraft.value = {
+        ...bankLinkDraft.value,
+        [rowId]: {
+          ...draft,
+          selected: [...selected],
+          amount: rounded !== 0 ? rounded.toFixed(2) : ''
+        }
+      }
+    }
+
+    const clearLinkParts = (rowId) => {
+      const draft = bankLinkDraft.value[rowId]
+      if (!draft?.selected?.length) return
+      draft.selected = []
     }
 
     const confirmBankMatch = async (row, appUserId, year, month, amount) => {
@@ -1237,6 +1332,10 @@ export default {
       toggleBankLink,
       onBankLinkUser,
       onBankLinkPeriod,
+      linkParts,
+      isPartSelected,
+      toggleLinkPart,
+      clearLinkParts,
       confirmBankMatch,
       confirmSuggestion,
       undoAllocation,
@@ -1447,6 +1546,20 @@ export default {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.4rem;
+}
+
+.bank-link-parts {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.bank-link-parts label {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
 }
 
 .bank-link-form select,

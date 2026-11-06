@@ -186,6 +186,20 @@ namespace Backend.Controllers
                 bool HasCorrection(int userId, int year, int month) =>
                     corrections.Any(c => c.UserId == userId && c.Date.Year == year && c.Date.Month == month);
 
+                object[] CorrectionsFor(int userId, int year, int month) =>
+                    corrections
+                        .Where(c => c.UserId == userId && c.Date.Year == year && c.Date.Month == month)
+                        .OrderBy(c => c.Date)
+                        .ThenBy(c => c.Id)
+                        .Select(c => new
+                        {
+                            c.Id,
+                            Date = c.Date.ToString("yyyy-MM-dd"),
+                            c.Description,
+                            c.Amount
+                        })
+                        .ToArray();
+
                 // Pre-load all energy prices
                 var energyPrices = await _context.EnergyPrices
                     .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
@@ -223,7 +237,9 @@ namespace Backend.Controllers
                                 HasInvoice = HasCorrection(user.Id, m.Year, m.Month),
                                 TotalKwh = 0m,
                                 RatePerKwh = GetRate(m.Year, m.Month),
+                                EnergyAmount = 0m,
                                 CorrectionAmount = onlyCorrection,
+                                Corrections = CorrectionsFor(user.Id, m.Year, m.Month),
                                 TotalAmount = onlyCorrection,
                                 IsOngoingMonth = m.IsOngoingMonth
                             };
@@ -236,6 +252,7 @@ namespace Backend.Controllers
                                         BrusselsTime.IsEndedInBrusselsMonth(cs.ToTimestamp, m.Year, m.Month))
                             .Sum(ChargingSessionEnergy.ChargedKwh);
                         var correctionAmount = CorrectionAmount(user.Id, m.Year, m.Month);
+                        var energyAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2);
                         return new
                         {
                             Year = m.Year,
@@ -245,8 +262,10 @@ namespace Backend.Controllers
                             HasInvoice = hasCharging || HasCorrection(user.Id, m.Year, m.Month),
                             TotalKwh = Math.Round(kwh, 2),
                             RatePerKwh = GetRate(m.Year, m.Month),
+                            EnergyAmount = energyAmount,
                             CorrectionAmount = correctionAmount,
-                            TotalAmount = Math.Round(kwh * GetRate(m.Year, m.Month), 2) + correctionAmount,
+                            Corrections = CorrectionsFor(user.Id, m.Year, m.Month),
+                            TotalAmount = energyAmount + correctionAmount,
                             IsOngoingMonth = m.IsOngoingMonth
                         };
                     }).ToList()
