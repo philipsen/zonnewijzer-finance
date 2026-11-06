@@ -100,7 +100,7 @@ public class MyInvoicesControllerTests : IDisposable
         Assert.Equal(1, months[0].GetProperty("appUserId").GetInt32());
         Assert.Equal(2024, months[0].GetProperty("Year").GetInt32());
         Assert.Equal(6, months[0].GetProperty("Month").GetInt32());
-        Assert.Equal("240630 zonnewijzer 1-1", months[0].GetProperty("InvoiceNumber").GetString());
+        Assert.Equal("240701 zonnewijzer U1-1", months[0].GetProperty("InvoiceNumber").GetString());
     }
 
     [Fact]

@@ -42,7 +42,7 @@ public sealed record BankMatchProposal(
 /// <summary>
 /// Matches one incoming bank description to an invoice.
 /// Through September 2026 the printed number is <c>INV-yyyy-MM-U{userId}</c>.
-/// From October 2026 it is <c>yyMMdd zonnewijzer {userId}-{index}</c>.
+/// From October 2026 it is <c>yyMMdd zonnewijzer U{userId}-{index}</c>.
 /// </summary>
 public static partial class BankInvoiceMatcher
 {
@@ -256,7 +256,7 @@ public static partial class BankInvoiceMatcher
     [GeneratedRegex(@"INV-(?<year>\d{4})-(?<month>\d{2})-U(?<user>\d+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LegacyRef();
 
-    [GeneratedRegex(@"(?<date>\d{6})\s+zonnewijzer\s+(?<user>\d+)-(?<index>\d+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<date>\d{6})\s+zonnewijzer\s+U(?<user>\d+)-(?<index>\d+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CurrentRef();
 
     [GeneratedRegex(@"\b(?<mon>januari|january|jan|februari|february|feb|maart|march|mrt|mar|april|apr|mei|may|juni|june|jun|juli|july|jul|augustus|august|aug|september|sep|oktober|october|okt|oct|november|nov|december|dec)\b[\s.\-]+(?<year>20\d{2})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

@@ -43,8 +43,8 @@ namespace Backend.Services
             string PaymentPaid,
             string PaymentDue,
             string PayOnline,
+            string PayLink,
             string QrHint,
-            string ScanToPay,
             string PaymentRequestNotice,
             string PaymentContact,
             string PortalPrefix,
@@ -75,11 +75,11 @@ namespace Backend.Services
                     Total: "Totaal",
                     PaymentTitle: "Betaling",
                     PaymentPaid: "✓ Deze factuur is betaald. Er is geen actie vereist.",
-                    PaymentDue: "Gelieve te betalen binnen 30 dagen na factuurdatum.",
-                    PayOnline: "Pay with Wero",
-                    QrHint: "Scannen kan ook via de QR-code.",
-                    ScanToPay: "Scan om te betalen",
-                    PaymentRequestNotice: "Gelieve het bedrag over te maken op rekening NL40 TRIO 0321 2476 04, t.n.v. Coöperatie Deelstroom Delft U.A., onder vermelding van het factuurnummer.",
+                    PaymentDue: "Graag te betalen binnen 30 dagen na factuurdatum.",
+                    PayOnline: "Betalen met Wero/iDEAL",
+                    PayLink: "klik hier",
+                    QrHint: "of scan de QR code",
+                    PaymentRequestNotice: "Graag het bedrag over te maken op rekening NL40 TRIO 0321 2476 04, t.n.v. Coöperatie Deelstroom Delft U.A., onder vermelding van het factuurnummer.",
                     PaymentContact: $"Voor vragen over deze factuur kunt u contact opnemen met de administratie o.v.v. factuurnummer via {BillingEmail}",
                     PortalPrefix: "Bekijk facturen en betaalstatus online:",
                     SessionsTitle: "Specificatie factuurnummer:",
@@ -108,8 +108,8 @@ namespace Backend.Services
                     PaymentPaid: "✓ This invoice has been paid. No further action required.",
                     PaymentDue: "Please remit payment within 30 days of invoice date.",
                     PayOnline: "Pay with Wero",
+                    PayLink: "click here",
                     QrHint: "If scanning is easier, use the QR code.",
-                    ScanToPay: "Scan to pay",
                     PaymentRequestNotice: "You will receive a separate payment request for this amount.",
                     PaymentContact: $"For questions regarding this invoice, please contact billing quoting the invoice number at {BillingEmail}",
                     PortalPrefix: "View invoices and payment status online:",
@@ -163,8 +163,8 @@ namespace Backend.Services
                         .FontFamily(InvoiceFontSetup.Family).FontSize(9).FontColor(MutedGrey);
                     linkCol.Item().PaddingTop(6).Text(text =>
                     {
-                        text.Hyperlink(paymentUrl, paymentUrl)
-                            .FontFamily(InvoiceFontSetup.Family).FontColor(BrandBlue).FontSize(10);
+                        text.Hyperlink(labels.PayLink, paymentUrl)
+                            .FontFamily(InvoiceFontSetup.Family).FontColor(BrandBlue).FontSize(10).Underline();
                     });
                     if (qrCode != null)
                     {
@@ -177,9 +177,7 @@ namespace Backend.Services
                 {
                     row.ConstantItem(120).AlignRight().Column(qrCol =>
                     {
-                        qrCol.Item().AlignCenter().Text(labels.ScanToPay)
-                            .FontFamily(InvoiceFontSetup.Family).FontSize(9).Bold();
-                        qrCol.Item().PaddingTop(4).Width(100).Height(100).Image(qrCode);
+                        qrCol.Item().AlignCenter().Width(100).Height(100).Image(qrCode);
                     });
                 }
             });
