@@ -146,9 +146,13 @@ public class InvoicesControllerTests : IDisposable
         var cell = doc.RootElement.GetProperty("GridData")[0].GetProperty("Invoices")
             .EnumerateArray()
             .Single(item => item.GetProperty("Year").GetInt32() == 2024 && item.GetProperty("Month").GetInt32() == 4);
+        Assert.Equal(3.00m, cell.GetProperty("EnergyAmount").GetDecimal());
         Assert.Equal(1.25m, cell.GetProperty("CorrectionAmount").GetDecimal());
         Assert.Equal(4.25m, cell.GetProperty("TotalAmount").GetDecimal());
         Assert.True(cell.GetProperty("HasInvoice").GetBoolean());
+        var correction = Assert.Single(cell.GetProperty("Corrections").EnumerateArray());
+        Assert.Equal("Extra", correction.GetProperty("Description").GetString());
+        Assert.Equal(1.25m, correction.GetProperty("Amount").GetDecimal());
     }
 
     [Fact]
