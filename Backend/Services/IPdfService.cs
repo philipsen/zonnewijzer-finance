@@ -21,7 +21,14 @@ namespace Backend.Services
         public string InvoiceNumber { get; set; } = string.Empty;
         public decimal TotalKwh { get; set; }
         public decimal RatePerKwh { get; set; }
+
+        /// <summary>Charging amount before corrections. VAT-inclusive.</summary>
+        public decimal EnergyAmount { get; set; }
+
+        /// <summary>Charging amount plus corrections. VAT-inclusive.</summary>
         public decimal TotalAmount { get; set; }
+
+        public List<InvoiceCorrectionLine> Corrections { get; set; } = new();
 
         /// <summary>Added to the Mollie checkout for this invoice. Not included in <see cref="TotalAmount"/>.</summary>
         public decimal MollieSurchargeEur { get; set; }
@@ -45,6 +52,13 @@ namespace Backend.Services
         public string? Connector { get; set; }
         public string? ChargingStationName { get; set; }
         public decimal ChargedKwh { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+    public class InvoiceCorrectionLine
+    {
+        public DateOnly Date { get; set; }
+        public string Description { get; set; } = string.Empty;
         public decimal Amount { get; set; }
     }
 }

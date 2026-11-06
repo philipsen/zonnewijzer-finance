@@ -14,8 +14,9 @@
       <div class="grid-info">
         <h2>Invoice Grid</h2>
         <p class="description">
-          Click on any link to generate and download an invoice PDF based on charging session data.
+          Click on any link to generate and download an invoice PDF. Corrections are included in the total for the month of their date.
         </p>
+        <router-link to="/invoices/corrections" class="btn-csv-month corrections-link">Add correction</router-link>
         <div v-if="months.length" class="period-toolbar">
           <label class="period-field">
             <span>Period</span>
@@ -261,13 +262,14 @@
                 :class="invoiceCellClass(userRow.user.id, monthData)"
               >
                 <div class="invoice-content">
-                  <template v-if="monthData.hasChargingSessions">
+                  <template v-if="invoiceVisible(monthData)">
                     <a
                       href="#"
                       class="invoice-link"
                       @click.prevent="generatePdfInvoice(userRow.user.id, monthData.year, monthData.month)"
                     >
-                      <div class="invoice-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</div>
+                      <div class="invoice-kwh">{{ monthData.hasChargingSessions ? `${monthData.totalKwh.toFixed(2)} kWh` : 'Correction' }}</div>
+                      <div v-if="Number(monthData.correctionAmount)" class="invoice-correction">incl. €{{ Number(monthData.correctionAmount).toFixed(2) }}</div>
                       <div class="invoice-amount">€{{ monthData.totalAmount.toFixed(2) }}</div>
                     </a>
                     <div class="invoice-actions-area">
@@ -352,13 +354,14 @@
             :class="mobileMonthClass(selectedUserRow.user.id, monthData)"
           >
             <span class="mobile-month-name">{{ formatMonthName(monthData.year, monthData.month) }}</span>
-            <template v-if="monthData.hasChargingSessions">
+            <template v-if="invoiceVisible(monthData)">
               <a
                 href="#"
                 class="mobile-invoice-link"
                 @click.prevent="generatePdfInvoice(selectedUserRow.user.id, monthData.year, monthData.month)"
               >
-                <span class="mobile-kwh">{{ monthData.totalKwh.toFixed(2) }} kWh</span>
+                <span class="mobile-kwh">{{ monthData.hasChargingSessions ? `${monthData.totalKwh.toFixed(2)} kWh` : 'Correction' }}</span>
+                <span v-if="Number(monthData.correctionAmount)" class="invoice-correction">incl. €{{ Number(monthData.correctionAmount).toFixed(2) }}</span>
                 <span class="mobile-amount">€{{ monthData.totalAmount.toFixed(2) }}</span>
               </a>
               <div class="invoice-actions-area mobile-invoice-actions">
@@ -407,7 +410,7 @@
                 </button>
               </div>
             </template>
-            <span v-else class="mobile-no-invoice">No sessions</span>
+            <span v-else class="mobile-no-invoice">No invoice</span>
           </div>
         </div>
       </div>
@@ -459,12 +462,14 @@ export default {
       return months.value.find(m => m.year === year && m.month === month) || { year, month, name: `${year}-${String(month).padStart(2, '0')}`, isOngoingMonth: false }
     })
 
+    const invoiceVisible = (monthData) => !!(monthData?.hasInvoice || monthData?.hasChargingSessions)
+
     const selectedMonthInvoices = computed(() => {
       if (!selectedPeriod.value || !gridData.value?.length) return []
       const { year, month } = selectedPeriod.value
       return gridData.value
         .map(row => row.invoices.find(i => i.year === year && i.month === month))
-        .filter(inv => inv?.hasChargingSessions)
+        .filter(inv => invoiceVisible(inv))
     })
 
     const monthHasEmailable = computed(() =>
@@ -605,7 +610,7 @@ export default {
     const invoiceTotal = (userId, year, month) => {
       const row = gridData.value?.find(entry => entry.user.id === userId)
       const invoice = row?.invoices?.find(item => item.year === year && item.month === month)
-      return invoice?.hasChargingSessions ? invoice.totalAmount : null
+      return invoiceVisible(invoice) ? invoice.totalAmount : null
     }
 
     const bankPaidAmount = (userId, year, month) =>
@@ -650,7 +655,7 @@ export default {
     }
 
     const countsTowardBalance = (invoice) => {
-      if (!invoice.hasChargingSessions) return false
+      if (!invoiceVisible(invoice)) return false
       const cutoff = lastBalanceMonth()
       return invoice.year < cutoff.year || (invoice.year === cutoff.year && invoice.month <= cutoff.month)
     }
@@ -1017,7 +1022,7 @@ export default {
     const invoicesForUser = (userId) => {
       const row = gridData.value?.find(entry => entry.user.id === Number(userId))
       if (!row) return []
-      return row.invoices.filter(invoice => invoice.hasChargingSessions)
+      return row.invoices.filter(invoice => invoiceVisible(invoice))
     }
 
     const toggleBankLink = (row) => {
@@ -1239,7 +1244,8 @@ export default {
       ignoreBankPayment,
       reopenBankPayment,
       isBankPaid,
-      isMolliePaid
+      isMolliePaid,
+      invoiceVisible
     }
   }
 }
@@ -1843,7 +1849,14 @@ export default {
   text-decoration: none;
 }
 
-.invoice-kwh {
+.corrections-link {
+  display: inline-flex;
+  margin: 0.75rem 0 0;
+  text-decoration: none;
+}
+
+.invoice-kwh,
+.invoice-correction {
   font-size: 0.75rem;
   color: #6b7280;
 }

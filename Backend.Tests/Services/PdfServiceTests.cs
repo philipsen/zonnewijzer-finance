@@ -56,4 +56,39 @@ public class PdfServiceTests
         Assert.Equal(0x25, pdf[0]);
         Assert.Contains("/Subtype /Image", System.Text.Encoding.ASCII.GetString(pdf));
     }
+
+    [Fact]
+    public void GenerateInvoicePdf_WithCorrection_Generates()
+    {
+        var service = new PdfService();
+        var data = new InvoiceData
+        {
+            UserId = 1,
+            UserName = "Test User",
+            Year = 2026,
+            Month = 11,
+            MonthName = "November 2026",
+            InvoiceNumber = "261201 zonnewijzer U1-1",
+            TotalKwh = 10,
+            RatePerKwh = 0.22m,
+            EnergyAmount = 2.20m,
+            TotalAmount = 0.70m,
+            Corrections =
+            [
+                new InvoiceCorrectionLine
+                {
+                    Date = new DateOnly(2026, 11, 4),
+                    Description = "Credit for outage",
+                    Amount = -1.50m
+                }
+            ],
+            UsePaymentRequestNotice = true,
+            GeneratedAt = DateTime.UtcNow
+        };
+
+        var pdf = service.GenerateInvoicePdf(data);
+
+        Assert.NotEmpty(pdf);
+        Assert.Equal(0x25, pdf[0]);
+    }
 }

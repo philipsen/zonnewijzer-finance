@@ -146,6 +146,7 @@ test.describe('Logged-in user (E2E_EMAIL / E2E_PASSWORD)', () => {
       'Sessions',
       'Stations',
       'Invoices',
+      'Corrections',
       'Payments',
       'Prices',
       'Events',

@@ -349,6 +349,40 @@ namespace Backend.Migrations
                     b.ToTable("InvoiceBankMatches");
                 });
 
+            modelBuilder.Entity("Backend.Models.InvoiceCorrection", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Date");
+
+                    b.ToTable("InvoiceCorrections");
+                });
+
             modelBuilder.Entity("Backend.Models.MolliePayment", b =>
                 {
                     b.Property<int>("Id")
@@ -687,6 +721,17 @@ namespace Backend.Migrations
                         .IsRequired();
 
                     b.Navigation("BankTransaction");
+                });
+
+            modelBuilder.Entity("Backend.Models.InvoiceCorrection", b =>
+                {
+                    b.HasOne("Backend.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Backend.Models.MolliePayment", b =>

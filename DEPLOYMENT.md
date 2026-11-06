@@ -59,10 +59,11 @@ BACKEND_PORT=5001
 # App
 APP_PORT=5000
 
-# SMTP — production uses mail.warmoestuin.nl:2525 (587 times out from the container)
+# SMTP — DigitalOcean blocks outbound 587, and the provider closed 2525.
+# Production uses the socat relay on the Mac (WireGuard). See ops/mac-smtp-relay/README.md.
 SMTP_PASSWORD=your-warmoestuin-mailbox-password
-# SMTP_HOST=mail.warmoestuin.nl
-# SMTP_PORT=2525
+SMTP_HOST=10.0.0.2
+SMTP_PORT=2525
 ```
 
 ### Production secrets (server `.env`)
@@ -72,12 +73,18 @@ Host, port, username, from address, invoice BCC, and certificate skip are in `Ba
 | Variable | Used for | Action for Warmoestuin SMTP |
 |----------|----------|-----------------------------|
 | `SMTP_PASSWORD` | `Smtp__Password` | Warmoestuin mailbox password for `zonnewijzer@warmoestuin.nl` |
-| `SMTP_HOST` | `Smtp__Host` | Default **`mail.warmoestuin.nl`** |
-| `SMTP_PORT` | `Smtp__Port` | Default **`2525`** (port 587 times out from the container; 2525 is reachable) |
+| `SMTP_HOST` | `Smtp__Host` | **`10.0.0.2`**, the Mac's WireGuard address running socat |
+| `SMTP_PORT` | `Smtp__Port` | **`2525`** on the Mac. socat forwards that to `mail.warmoestuin.nl:587` |
 
-Production sends directly to Warmoestuin mail on **port 2525** with STARTTLS (`SkipCertificateValidation=true` for the bb-host cert mismatch). Local dev uses **587** in `appsettings.Development.json`.
+Production does not open 587 itself. DigitalOcean blocks that port, and `mail.warmoestuin.nl:2525` is closed. The backend connects to socat on the Mac over WireGuard. socat connects onward to port 587. STARTTLS still runs end to end (`SkipCertificateValidation=true` for the bb-host cert mismatch). Local dev uses **587** in `appsettings.Development.json` and does not need the relay.
 
-After updating secrets, redeploy or restart:
+Start the relay on the Mac before sending mail. Setup and the script are in [ops/mac-smtp-relay/README.md](ops/mac-smtp-relay/README.md).
+
+```bash
+./ops/mac-smtp-relay/smtp-relay.sh
+```
+
+After updating secrets, recreate the backend. `docker restart` does not reload `.env`.
 
 ```bash
 docker compose -f docker-compose.production.yml up -d backend
@@ -86,7 +93,7 @@ docker compose -f docker-compose.production.yml up -d backend
 Test from the backend container:
 
 ```bash
-docker exec finance-backend nc -zv -w 5 mail.warmoestuin.nl 2525
+docker exec finance-backend nc -zv -w 5 10.0.0.2 2525
 ```
 
 Other backend secrets (unchanged by this SMTP move):
@@ -175,10 +182,10 @@ cp data/finance.db data/finance.db.backup.$(date +%Y%m%d)
 
 3. **Container health checks failing**: Check logs with `docker-compose logs`
 
-4. **Invoice email returns 504 or times out**: Check connectivity from the backend container to **`mail.warmoestuin.nl:2525`** (production default). Port **587** often times out from Docker.
+4. **Invoice email returns 504 or times out**: The backend sends through the Mac socat relay at **`10.0.0.2:2525`**. DigitalOcean blocks outbound **587**, and the provider no longer accepts **2525**. Confirm WireGuard is up and `./ops/mac-smtp-relay/smtp-relay.sh` is running on the Mac.
 
    ```bash
-   docker exec finance-backend nc -zv -w 5 mail.warmoestuin.nl 2525
+   docker exec finance-backend nc -zv -w 5 10.0.0.2 2525
    docker compose -f docker-compose.production.yml logs backend --tail 50
    ```
 

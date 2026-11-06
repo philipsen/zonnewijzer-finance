@@ -48,7 +48,11 @@ public class MyInvoicesController : ControllerBase
                 return Unauthorized();
 
             var myCardIds = await UserChargeCardQuery.GetChargeCardIdsForUserAsync(_context, currentUserId);
-            if (myCardIds.Count == 0)
+            var corrections = await _context.InvoiceCorrections
+                .AsNoTracking()
+                .Where(c => c.UserId == currentUserId)
+                .ToListAsync();
+            if (myCardIds.Count == 0 && corrections.Count == 0)
                 return Ok(new
                 {
                     userName = currentUser.Name,
@@ -57,9 +61,11 @@ public class MyInvoicesController : ControllerBase
                     months = new List<object>()
                 });
 
-            var allSessions = await _context.ChargingSessions
-                .Where(cs => myCardIds.Contains(cs.ChargeCardId))
-                .ToListAsync();
+            var allSessions = myCardIds.Count == 0
+                ? new List<ChargingSession>()
+                : await _context.ChargingSessions
+                    .Where(cs => myCardIds.Contains(cs.ChargeCardId))
+                    .ToListAsync();
 
             var monthKeys = allSessions
                 .Where(cs => cs.ToTimestamp.HasValue)
@@ -68,6 +74,7 @@ public class MyInvoicesController : ControllerBase
                     var (y, mo) = BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.ToTimestamp!.Value);
                     return new { Year = y, Month = mo };
                 })
+                .Concat(corrections.Select(c => new { Year = c.Date.Year, Month = c.Date.Month }))
                 .Distinct()
                 .OrderByDescending(x => x.Year)
                 .ThenByDescending(x => x.Month)
@@ -117,6 +124,7 @@ public class MyInvoicesController : ControllerBase
             var billedMonths = allSessions
                 .Where(cs => myCardIds.Contains(cs.ChargeCardId) && cs.ToTimestamp.HasValue)
                 .Select(cs => BrusselsTime.BrusselsYearMonthFromUnixMilliseconds(cs.ToTimestamp!.Value))
+                .Concat(corrections.Select(c => (c.Date.Year, c.Date.Month)))
                 .ToList();
 
             var result = monthKeys.Select(m =>
@@ -128,7 +136,10 @@ public class MyInvoicesController : ControllerBase
                     .ToList();
                 var rate = GetRate(m.Year, m.Month);
                 var totalKwh = Math.Round(sessions.Sum(ChargingSessionEnergy.ChargedKwh), 2);
-                var totalAmount = Math.Round(totalKwh * rate, 2);
+                var correctionAmount = corrections
+                    .Where(c => c.Date.Year == m.Year && c.Date.Month == m.Month)
+                    .Sum(c => c.Amount);
+                var totalAmount = Math.Round(totalKwh * rate, 2) + correctionAmount;
                 var payment = allPayments.FirstOrDefault(p =>
                     p.Year == m.Year && p.Month == m.Month);
                 return new

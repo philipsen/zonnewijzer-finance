@@ -35,6 +35,8 @@ namespace Backend.Services
             string ColQuantity,
             string ColRate,
             string ColTotal,
+            string ColAmountExcl,
+            string ColVat,
             string LineKwh,
             string SubtotalExclVat,
             string VatLine,
@@ -69,6 +71,8 @@ namespace Backend.Services
                     ColQuantity: "Aantal",
                     ColRate: "Tarief (incl. Btw)",
                     ColTotal: "Totaal",
+                    ColAmountExcl: "Bedrag excl.",
+                    ColVat: "BTW",
                     LineKwh: "KWh",
                     SubtotalExclVat: "Subtotaal excl BTW",
                     VatLine: "BTW (21%)",
@@ -100,6 +104,8 @@ namespace Backend.Services
                     ColQuantity: "Quantity",
                     ColRate: "Rate (incl. VAT)",
                     ColTotal: "Total",
+                    ColAmountExcl: "Amount excl.",
+                    ColVat: "VAT",
                     LineKwh: "kWh",
                     SubtotalExclVat: "Subtotal excl. VAT",
                     VatLine: "VAT (21%)",
@@ -315,25 +321,58 @@ namespace Backend.Services
             {
                 table.ColumnsDefinition(columns =>
                 {
-                    columns.RelativeColumn(2.5f);  // Omschrijving / labels
-                    columns.RelativeColumn(0.9f); // Aantal (numeric)
-                    columns.RelativeColumn(1.15f); // Tarief €0.0000
-                    columns.RelativeColumn(1.15f); // Totaal €0.00
+                    columns.RelativeColumn(2.2f);
+                    columns.RelativeColumn(1.15f);
+                    columns.RelativeColumn(1.05f);
+                    columns.RelativeColumn(1.15f);
                 });
 
-                table.Cell().BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6)
-                    .Text(labels.ColDescription).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
-                table.Cell().BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
-                    .Text(labels.ColQuantity).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
-                table.Cell().BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
-                    .Text(labels.ColRate).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
-                table.Cell().BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
-                    .Text(labels.ColTotal).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
+                var hasCorrections = invoiceData.Corrections.Count > 0;
+                var showEnergyLine = invoiceData.Sessions.Count > 0 || !hasCorrections;
 
-                table.Cell().PaddingTop(4).Text(labels.LineKwh).FontFamily(InvoiceFontSetup.Family).FontSize(11);
-                table.Cell().PaddingTop(4).AlignRight().Text($"{invoiceData.TotalKwh:F2}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
-                table.Cell().PaddingTop(4).AlignRight().Text($"€{invoiceData.RatePerKwh:F4}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
-                table.Cell().PaddingTop(4).AlignRight().Text($"€{invoiceData.TotalAmount:F2}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                void SummaryHeader(string description, string quantity, string rate, string total, float paddingTop = 0)
+                {
+                    table.Cell().PaddingTop(paddingTop).BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6)
+                        .Text(description).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
+                    table.Cell().PaddingTop(paddingTop).BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
+                        .Text(quantity).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
+                    table.Cell().PaddingTop(paddingTop).BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
+                        .Text(rate).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
+                    table.Cell().PaddingTop(paddingTop).BorderBottom(1).BorderColor(BrandBlue).PaddingBottom(6).AlignRight()
+                        .Text(total).FontFamily(InvoiceFontSetup.Family).Bold().FontSize(11).FontColor(BrandBlue);
+                }
+
+                if (showEnergyLine)
+                    SummaryHeader(labels.ColDescription, labels.ColQuantity, labels.ColRate, labels.ColTotal);
+                else
+                    SummaryHeader(labels.ColDescription, labels.ColAmountExcl, labels.ColVat, labels.ColTotal);
+
+                var energyLineAmount = hasCorrections
+                    ? invoiceData.EnergyAmount
+                    : invoiceData.TotalAmount;
+                if (showEnergyLine)
+                {
+                    table.Cell().PaddingTop(4).Text(labels.LineKwh).FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"{invoiceData.TotalKwh:F2}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"€{invoiceData.RatePerKwh:F4}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"€{energyLineAmount:F2}").FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                }
+
+                if (hasCorrections && showEnergyLine)
+                    SummaryHeader(string.Empty, labels.ColAmountExcl, labels.ColVat, labels.ColTotal, paddingTop: 10);
+
+                foreach (var correction in invoiceData.Corrections)
+                {
+                    var (correctionExcl, correctionVat) = InvoiceVat.SplitInclusive(correction.Amount);
+                    table.Cell().PaddingTop(4).Text($"{correction.Date:dd-MM-yyyy}  {correction.Description}")
+                        .FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"€{correctionExcl:F2}")
+                        .FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"€{correctionVat:F2}")
+                        .FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                    table.Cell().PaddingTop(4).AlignRight().Text($"€{correction.Amount:F2}")
+                        .FontFamily(InvoiceFontSetup.Family).FontSize(11);
+                }
 
                 table.Cell().PaddingTop(8).Text(labels.SubtotalExclVat).FontFamily(InvoiceFontSetup.Family).FontSize(11);
                 table.Cell().ColumnSpan(2);
