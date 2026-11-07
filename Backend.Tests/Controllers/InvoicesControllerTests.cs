@@ -593,6 +593,73 @@ public class InvoicesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task CreatePaymentLink_WhenOpenIdealUrl_ReplacesItWithPaymentLink()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "p2@test.com", Name = "P2", GoogleId = "g2", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-pay-ideal");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            AppUserId = appUserId,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "tr_ideal",
+            CheckoutUrl = "https://pay.ideal.nl/transactions/abc",
+            Amount = 1.20m,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        _configMock.Setup(c => c["Mollie:RedirectUrl"]).Returns((string?)null);
+        _configMock.Setup(c => c["Mollie:BaseUrl"]).Returns((string?)null);
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("tr_ideal")).ReturnsAsync("open");
+        _mollieMock
+            .Setup(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new MolliePaymentResult("pl_durable", "https://payment-links.mollie.com/payment/abc", "open"));
+
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var payment = await _db.MolliePayments.SingleAsync();
+        Assert.Equal("pl_durable", payment.MolliePaymentId);
+        Assert.Equal("https://payment-links.mollie.com/payment/abc", payment.CheckoutUrl);
+    }
+
+    [Fact]
+    public async Task CreatePaymentLink_WhenPaymentLinkStillOpen_ReusesIt()
+    {
+        await SeedAdminAsync();
+        var appUserId = 2;
+        _db.Users.Add(new User { Id = appUserId, Email = "p3@test.com", Name = "P3", GoogleId = "g3", Role = UserRole.Base });
+        var cid = await AddChargeCardAsync("inv-pay-link");
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = appUserId, ChargeCardId = cid });
+        var t = new DateTime(2024, 3, 10, 0, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(cid, 1, t, t.AddHours(1), 4));
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            AppUserId = appUserId,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "pl_keep",
+            CheckoutUrl = "https://payment-links.mollie.com/payment/keep",
+            Amount = 1.20m,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+        _mollieMock.Setup(m => m.GetPaymentStatusAsync("pl_keep")).ReturnsAsync("open");
+
+        var result = await BuildController().CreatePaymentLink(appUserId, 2024, 3, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        _mollieMock.Verify(m => m.CreatePaymentAsync(It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        Assert.Equal("pl_keep", (await _db.MolliePayments.SingleAsync()).MolliePaymentId);
+    }
+
+    [Fact]
     public async Task CreatePaymentLink_WhenExistingExpired_CreatesFreshPayment()
     {
         await SeedAdminAsync();
@@ -829,8 +896,73 @@ public class InvoicesControllerTests : IDisposable
         var ctx = new DefaultHttpContext();
         ctx.Features.Set<IFormFeature>(new FormFeature(form));
 
+        _mollieMock.Setup(m => m.GetWebhookPaymentAsync("tr_unknown")).ReturnsAsync((MollieWebhookPayment?)null);
+
         var result = await BuildController(httpContext: ctx).MollieWebhook();
         Assert.IsType<OkResult>(result);
+        _mollieMock.Verify(m => m.GetPaymentStatusAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MollieWebhook_PaidAttempt_MarksPaymentLinkPaid()
+    {
+        _db.Users.Add(new User { Id = 2, Email = "wh2@test.com", Name = "P", GoogleId = "g2", Role = UserRole.Base });
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            AppUserId = 2,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "pl_link",
+            CheckoutUrl = "https://payment-links.mollie.com/payment/link",
+            Amount = 1.20m,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        var description = $"Charging invoice {InvoiceNumbers.Format(2024, 3, 2, 1)} – P – March 2024";
+        _mollieMock.Setup(m => m.GetWebhookPaymentAsync("tr_attempt"))
+            .ReturnsAsync(new MollieWebhookPayment("paid", description));
+
+        var form = new FormCollection(new Dictionary<string, StringValues> { { "id", "tr_attempt" } });
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IFormFeature>(new FormFeature(form));
+
+        var result = await BuildController(httpContext: ctx).MollieWebhook();
+        Assert.IsType<OkResult>(result);
+
+        var payment = await _db.MolliePayments.SingleAsync();
+        Assert.Equal("paid", payment.Status);
+        Assert.Equal("pl_link", payment.MolliePaymentId);
+    }
+
+    [Fact]
+    public async Task MollieWebhook_ExpiredAttempt_LeavesPaymentLinkOpen()
+    {
+        _db.MolliePayments.Add(new MolliePayment
+        {
+            AppUserId = 2,
+            Year = 2024,
+            Month = 3,
+            MolliePaymentId = "pl_link",
+            CheckoutUrl = "https://payment-links.mollie.com/payment/link",
+            Amount = 1.20m,
+            Status = "open"
+        });
+        await _db.SaveChangesAsync();
+
+        var description = $"Charging invoice {InvoiceNumbers.Format(2024, 3, 2, 1)} – P – March 2024";
+        _mollieMock.Setup(m => m.GetWebhookPaymentAsync("tr_expired_attempt"))
+            .ReturnsAsync(new MollieWebhookPayment("expired", description));
+
+        var form = new FormCollection(new Dictionary<string, StringValues> { { "id", "tr_expired_attempt" } });
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IFormFeature>(new FormFeature(form));
+
+        var result = await BuildController(httpContext: ctx).MollieWebhook();
+        Assert.IsType<OkResult>(result);
+
+        var payment = await _db.MolliePayments.SingleAsync();
+        Assert.Equal("open", payment.Status);
         _mollieMock.Verify(m => m.GetPaymentStatusAsync(It.IsAny<string>()), Times.Never);
     }
 

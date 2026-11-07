@@ -82,7 +82,16 @@ namespace Backend.Controllers
 
         private static bool CanReuseMolliePayment(MolliePayment payment, decimal chargeAmount) =>
             payment.Status is "paid" or "pending"
-            || (payment.Status == "open" && payment.Amount == chargeAmount);
+            || (payment.Status == "open" && payment.Amount == chargeAmount && IsDurableCheckoutUrl(payment.CheckoutUrl));
+
+        /// <summary>
+        /// pay.ideal.nl URLs are the iDEAL session and expire in about 15 minutes.
+        /// A Mollie payment link stays valid until the invoice is paid.
+        /// </summary>
+        private static bool IsDurableCheckoutUrl(string? url) =>
+            !string.IsNullOrWhiteSpace(url)
+            && (url.Contains("paymentlink.mollie.com", StringComparison.OrdinalIgnoreCase)
+                || url.Contains("payment-links.mollie.com", StringComparison.OrdinalIgnoreCase));
 
         /// <summary>Dutch bank-transfer notice. A Mollie checkout link is kept when one is available.</summary>
         private static void ApplyBankTransferInvoicePresentation(InvoiceData invoiceData)
@@ -1047,7 +1056,7 @@ namespace Backend.Controllers
                 }
 
                 var totalAmount = WeroChargeAmount(invoicePreview.TotalAmount, invoicePreview.MollieSurchargeEur);
-                if (existing is { Status: "open" } && existing.Amount == totalAmount)
+                if (existing is { Status: "open" } && existing.Amount == totalAmount && IsDurableCheckoutUrl(existing.CheckoutUrl))
                     return Ok(new { checkoutUrl = existing.CheckoutUrl, paymentId = existing.MolliePaymentId, status = existing.Status });
                 var invoiceNumber = invoicePreview.InvoiceNumber;
                 var monthName = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified)
@@ -1255,10 +1264,30 @@ namespace Backend.Controllers
                 var payment = await _context.MolliePayments
                     .FirstOrDefaultAsync(p => p.MolliePaymentId == molliePaymentId);
 
+                string latestStatus;
                 if (payment == null)
-                    return Ok(); // Unknown payment, ignore
+                {
+                    // A payment link webhook carries the underlying tr_ attempt. An expired
+                    // iDEAL attempt must not retire the link; the customer can open it again.
+                    var attempt = await _mollieService.GetWebhookPaymentAsync(molliePaymentId);
+                    if (attempt == null || attempt.Status is not ("paid" or "pending"))
+                        return Ok();
 
-                var latestStatus = await _mollieService.GetPaymentStatusAsync(molliePaymentId);
+                    if (!InvoiceNumbers.TryParseBilledPeriod(attempt.Description, out var billedUserId, out var billedYear, out var billedMonth))
+                        return Ok();
+
+                    payment = await _context.MolliePayments
+                        .FirstOrDefaultAsync(p => p.AppUserId == billedUserId && p.Year == billedYear && p.Month == billedMonth);
+                    if (payment == null || payment.Status == "paid")
+                        return Ok();
+
+                    latestStatus = attempt.Status;
+                }
+                else
+                {
+                    latestStatus = await _mollieService.GetPaymentStatusAsync(molliePaymentId);
+                }
+
                 if (latestStatus != payment.Status)
                 {
                     var previousStatus = payment.Status;
