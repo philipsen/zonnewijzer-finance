@@ -904,6 +904,10 @@ namespace Backend.Controllers
             var encodedMonth = WebUtility.HtmlEncode(invoiceData.MonthName);
             var encodedNumber = WebUtility.HtmlEncode(invoiceData.InvoiceNumber);
             var subject = $"Factuur {invoiceData.InvoiceNumber} – {invoiceData.MonthName}";
+            var idealSurcharge = invoiceData.MollieSurchargeEur.ToString("0.00", CultureInfo.GetCultureInfo("nl-NL"));
+            var idealNote = invoiceData.MollieSurchargeEur > 0
+                ? $"<p>PS: Je kunt met iDEAL betalen. De kosten van € {idealSurcharge} worden doorberekend.</p>"
+                : "";
             var body = $"""
                 <p>Beste {encodedName},</p>
                 <p>Bijgaand vindt u uw factuur <strong>{encodedNumber}</strong> voor {encodedMonth}.</p>
@@ -912,6 +916,7 @@ namespace Backend.Controllers
                 <p>Dank dat je gebruik maakt van ZonneWijzer en daarmee bijdraagt aan het lokaal opwekken én delen van duurzame energie.</p>
                 <p>Warme groet,</p>
                 <p>Namens collectief ZonneWijzer<br>Administratie</p>
+                {idealNote}
                 """;
 
             var invoiceBcc = _configuration["Smtp:InvoiceBcc"]?.Trim();
