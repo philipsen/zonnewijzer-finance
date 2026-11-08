@@ -386,7 +386,7 @@ public class InvoicesControllerTests : IDisposable
         _emailMock.Verify(e => e.SendAsync(
             "cardholder@test.com",
             It.Is<string>(s => s.Contains("Factuur")),
-            It.IsAny<string>(),
+            It.Is<string>(body => body.Contains("PS: Je kunt met iDEAL betalen. De kosten van € 0,32 worden doorberekend.")),
             It.Is<EmailAttachment>(a => a.Content.Length == 4 && a.FileName.EndsWith(".pdf")),
             "zonnewijzer@warmoestuin.nl"), Times.Once);
         var log = await _db.EventLogs.SingleAsync();
