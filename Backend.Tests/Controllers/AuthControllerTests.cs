@@ -40,6 +40,8 @@ public class AuthControllerTests : IDisposable
 
     private AuthController BuildController(string? validUserId = "1", bool development = true)
     {
+        _envMock.Setup(e => e.EnvironmentName)
+            .Returns(development ? Environments.Development : Environments.Production);
         _jwtMock.Setup(j => j.ValidateToken(It.IsAny<string>())).Returns(validUserId);
         _emailMock.Setup(e => e.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
