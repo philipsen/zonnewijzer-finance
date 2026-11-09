@@ -196,6 +196,27 @@ public class BankStatementsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task ImportTriodos_ImportsTheDownloadedCsv()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var when = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, when, when.AddHours(1), 44.47m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 8, PricePerKwh = 1m });
+        await _db.SaveChangesAsync();
+
+        var result = await Controller(new CsvTriodos(Csv)).ImportTriodos("session", CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(1, doc.RootElement.GetProperty("Imported").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("Review").GetProperty("Open").GetArrayLength());
+    }
+
+    [Fact]
     public async Task Upload_WithoutFile_ReturnsBadRequest()
     {
         _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
@@ -206,7 +227,7 @@ public class BankStatementsControllerTests : IDisposable
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
-    private BankStatementsController Controller()
+    private BankStatementsController Controller(ITriodosBanking? triodos = null)
     {
         _jwt.Setup(jwt => jwt.ValidateToken(It.IsAny<string>())).Returns("1");
         var http = new DefaultHttpContext();
@@ -215,10 +236,38 @@ public class BankStatementsControllerTests : IDisposable
             _db,
             _jwt.Object,
             new BankStatementService(_db, new InvoicePaymentCatalog(_db)),
+            triodos ?? new UnusedTriodos(),
             NullLogger<BankStatementsController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
+    }
+
+    private sealed class CsvTriodos : ITriodosBanking
+    {
+        private readonly string _csv;
+        public CsvTriodos(string csv) => _csv = csv;
+        public Task<TriodosLoginView> StartAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new TriodosLoginView("session", "waiting", "qr", null));
+        public Task<TriodosLoginView?> PollAsync(string sessionId, CancellationToken cancellationToken) =>
+            Task.FromResult<TriodosLoginView?>(new TriodosLoginView(sessionId, "ready", null, null));
+        public Task<string> DownloadCsvAsync(string sessionId, CancellationToken cancellationToken) =>
+            Task.FromResult(_csv);
+        public void Cancel(string sessionId) { }
+    }
+
+    private sealed class UnusedTriodos : ITriodosBanking
+    {
+        public Task<TriodosLoginView> StartAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TriodosLoginView?> PollAsync(string sessionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<string> DownloadCsvAsync(string sessionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void Cancel(string sessionId) => throw new NotSupportedException();
     }
 
     private static IFormFile CsvFile(string csv)
