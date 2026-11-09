@@ -75,6 +75,15 @@
           >
             {{ triodosBusy && !triodosQr ? '…' : 'Download from Triodos' }}
           </button>
+          <button
+            type="button"
+            class="btn-clear-bank"
+            :disabled="bankUploading || triodosBusy || bankClearing"
+            title="Remove imported bank payments and the invoice bindings made from them."
+            @click="openClearBank"
+          >
+            Clear transactions
+          </button>
           <input
             ref="bankFileInput"
             type="file"
@@ -84,6 +93,79 @@
           >
         </div>
         <p v-if="bankUploadMessage" class="bank-upload-message">{{ bankUploadMessage }}</p>
+        <div
+          v-if="downloadedTransactions"
+          class="tx-modal-backdrop"
+          @click.self="closeDownloadedTransactions"
+        >
+          <div
+            class="tx-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="downloaded-transactions-title"
+          >
+            <div class="tx-modal-header">
+              <h3 id="downloaded-transactions-title">Downloaded transactions</h3>
+              <button type="button" class="tx-modal-close" @click="closeDownloadedTransactions">Close</button>
+            </div>
+            <p class="tx-modal-summary">{{ downloadedSummary }}</p>
+            <p v-if="downloadedTransactions.length === 0" class="bank-empty">No transactions in this download.</p>
+            <div v-else class="table-wrapper tx-modal-table">
+              <table class="bank-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Name</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in downloadedTransactions" :key="index">
+                    <td>{{ formatBankDate(row.bookedOn) }}</td>
+                    <td class="bank-amount" :class="{ 'tx-debit': row.direction === 'Debit' }">
+                      {{ formatDownloadedAmount(row) }}
+                    </td>
+                    <td>{{ row.counterpartyName }}</td>
+                    <td class="bank-description" :title="row.description">
+                      {{ row.description }}
+                      <span v-if="row.alreadyImported" class="tx-duplicate">Already imported</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div
+          v-if="bankClearOpen"
+          class="tx-modal-backdrop"
+          @click.self="closeClearBank"
+        >
+          <div
+            class="tx-modal bank-clear-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-bank-title"
+          >
+            <div class="tx-modal-header">
+              <h3 id="clear-bank-title">Clear downloaded transactions?</h3>
+            </div>
+            <p class="tx-modal-summary">
+              This removes every imported bank payment and the invoice bindings made from them.
+              Invoices stay. You can import the payments again.
+            </p>
+            <p v-if="bankClearError" class="bank-clear-error">{{ bankClearError }}</p>
+            <div class="bank-clear-actions">
+              <button type="button" class="btn-csv-month" :disabled="bankClearing" @click="closeClearBank">
+                Cancel
+              </button>
+              <button type="button" class="btn-clear-bank" :disabled="bankClearing" @click="clearDownloadedTransactions">
+                {{ bankClearing ? 'Clearing…' : 'Clear transactions' }}
+              </button>
+            </div>
+          </div>
+        </div>
         <div v-if="triodosQr" class="triodos-login">
           <img :src="triodosQrSrc" alt="Triodos login QR">
           <div>
@@ -468,6 +550,11 @@ export default {
     const bankFileInput = ref(null)
     const bankUploading = ref(false)
     const bankUploadMessage = ref('')
+    const bankClearOpen = ref(false)
+    const bankClearing = ref(false)
+    const bankClearError = ref('')
+    const downloadedTransactions = ref(null)
+    const downloadedSummary = ref('')
     const triodosBusy = ref(false)
     const triodosQr = ref('')
     const triodosStatus = ref('')
@@ -1030,6 +1117,7 @@ export default {
           { headers: authHeaders() }
         )
         applyBankReview(response.data.review)
+        openDownloadedTransactions(response.data)
         finishTriodos(describeImport(response.data))
       } catch (err) {
         console.error('Failed to download Triodos transactions:', err)
@@ -1087,6 +1175,54 @@ export default {
         await axios.delete(`/api/invoices/triodos/sessions/${id}`, { headers: authHeaders() })
       } catch (err) {
         console.error('Failed to cancel Triodos login:', err)
+      }
+    }
+
+    const openDownloadedTransactions = (data) => {
+      downloadedSummary.value = describeImport(data)
+      downloadedTransactions.value = data.transactions || []
+    }
+
+    const closeDownloadedTransactions = () => {
+      downloadedTransactions.value = null
+    }
+
+    const formatDownloadedAmount = (row) => {
+      const amount = `€${Number(row.amount).toFixed(2)}`
+      return row.direction === 'Debit' ? `−${amount}` : amount
+    }
+
+    const openClearBank = () => {
+      bankClearError.value = ''
+      bankClearOpen.value = true
+    }
+
+    const closeClearBank = () => {
+      if (bankClearing.value) return
+      bankClearOpen.value = false
+      bankClearError.value = ''
+    }
+
+    const clearDownloadedTransactions = async () => {
+      bankClearing.value = true
+      bankClearError.value = ''
+      try {
+        const response = await axios.post(
+          '/api/invoices/bank-transactions/clear',
+          { confirm: true },
+          { headers: authHeaders() }
+        )
+        applyBankReview(response.data.review)
+        closeDownloadedTransactions()
+        bankClearOpen.value = false
+        const transactions = response.data.transactions ?? 0
+        const bindings = response.data.bindings ?? 0
+        bankUploadMessage.value = `Cleared ${transactions} transaction${transactions === 1 ? '' : 's'} and ${bindings} binding${bindings === 1 ? '' : 's'}.`
+      } catch (err) {
+        console.error('Failed to clear bank transactions:', err)
+        bankClearError.value = apiMessage(err, 'Failed to clear the downloaded transactions.')
+      } finally {
+        bankClearing.value = false
       }
     }
 
@@ -1441,6 +1577,16 @@ export default {
       bankFileInput,
       bankUploading,
       bankUploadMessage,
+      bankClearOpen,
+      bankClearing,
+      bankClearError,
+      openClearBank,
+      closeClearBank,
+      clearDownloadedTransactions,
+      downloadedTransactions,
+      downloadedSummary,
+      closeDownloadedTransactions,
+      formatDownloadedAmount,
       triodosBusy,
       triodosQr,
       triodosQrSrc,
@@ -1598,6 +1744,104 @@ export default {
 .bank-upload-message {
   margin: 0.75rem 0 0;
   color: #333;
+}
+
+.btn-clear-bank {
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #9b1c1c;
+  border-radius: 4px;
+  background: white;
+  color: #9b1c1c;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-clear-bank:hover:not(:disabled) {
+  background: #9b1c1c;
+  color: white;
+}
+
+.btn-clear-bank:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bank-clear-modal {
+  width: min(32rem, 100%);
+}
+
+.bank-clear-error {
+  margin: 0 0 1rem;
+  color: #9b1c1c;
+}
+
+.bank-clear-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.tx-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tx-modal {
+  width: min(52rem, 100%);
+  max-height: min(80vh, 40rem);
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.1rem 1.15rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.tx-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tx-modal-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.tx-modal-close {
+  border: 1px solid #c5ced6;
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.tx-modal-summary {
+  margin: 0.75rem 0;
+  color: #333;
+}
+
+.tx-modal-table {
+  overflow: auto;
+}
+
+.tx-debit {
+  color: #9b1c1c;
+}
+
+.tx-duplicate {
+  display: block;
+  margin-top: 0.15rem;
+  color: #666;
+  font-size: 0.75rem;
 }
 
 .triodos-login {

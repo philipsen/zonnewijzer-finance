@@ -25,6 +25,8 @@ public sealed record TriodosParseResult(IReadOnlyList<TriodosTransaction> Transa
 /// </summary>
 public static class TriodosCsvParser
 {
+    public const string CooperativeAccountIban = "NL40TRIO0321247604";
+
     private static readonly CultureInfo Dutch = CultureInfo.GetCultureInfo("nl-NL");
     private static readonly string[] DateFormats = ["dd-MM-yyyy", "d-M-yyyy"];
 

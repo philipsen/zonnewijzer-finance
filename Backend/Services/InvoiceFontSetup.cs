@@ -13,10 +13,9 @@ internal static class InvoiceFontSetup
         if (Interlocked.Exchange(ref _initialized, 1) == 1)
             return;
 
-        var fontsDir = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Fonts");
-        QuestPDF.Settings.UseEnvironmentFonts = false;
-        QuestPDF.Settings.FontDiscoveryPaths.Add(fontsDir);
+        QuestPDF.Settings.UseSystemFonts = false;
 
+        var fontsDir = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Fonts");
         foreach (var file in new[]
                  {
                      "Cambria-Regular.ttf",
@@ -29,8 +28,7 @@ internal static class InvoiceFontSetup
             if (!File.Exists(path))
                 continue;
 
-            using var stream = File.OpenRead(path);
-            FontManager.RegisterFont(stream);
+            FontManager.RegisterFontFromFile(path);
         }
     }
 }
