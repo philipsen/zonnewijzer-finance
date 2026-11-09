@@ -1,4 +1,5 @@
 using Backend.Data;
+using Backend.Services.Bank;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 
@@ -206,7 +207,7 @@ public class InvoiceComputationService : IInvoiceComputationService
             Corrections = correctionLines,
             MollieSurchargeEur = GetMollieSurchargeForMonth(energyPrices, year, month),
             PaymentUrl = molliePayment?.CheckoutUrl,
-            IsPaid = molliePayment?.Status == "paid" || (bankPaidAmount > 0 && bankPaidAmount >= roundedTotal),
+            IsPaid = molliePayment?.Status == "paid" || InvoiceSettlement.IsCoveredByBank(roundedTotal, bankPaidAmount),
             Sessions = chargingSessions.Select(cs => MapDbSession(cs, ratePerKwh)).ToList(),
             GeneratedAt = DateTime.UtcNow
         };

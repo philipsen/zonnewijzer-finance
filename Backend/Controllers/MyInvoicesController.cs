@@ -4,6 +4,7 @@ using Backend;
 using Backend.Data;
 using Backend.Models;
 using Backend.Services;
+using Backend.Services.Bank;
 
 namespace Backend.Controllers;
 
@@ -157,11 +158,11 @@ public class MyInvoicesController : ControllerBase
                     PaymentStatus = payment?.Status,
                     CheckoutUrl = payment?.CheckoutUrl,
                     IsPaid = payment?.Status == "paid"
-                        || bankPaidAmounts
-                            .Where(match => match.Year == m.Year && match.Month == m.Month)
-                            .Sum(match => match.Amount) is var bankAmount
-                            && bankAmount > 0
-                            && bankAmount >= totalAmount,
+                        || InvoiceSettlement.IsCoveredByBank(
+                            totalAmount,
+                            bankPaidAmounts
+                                .Where(match => match.Year == m.Year && match.Month == m.Month)
+                                .Sum(match => match.Amount)),
                     IsOngoingMonth = BrusselsTime.IsCurrentBrusselsMonth(m.Year, m.Month)
                 };
             }).ToList();

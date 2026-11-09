@@ -213,7 +213,7 @@
                     <span v-else-if="!row.allocations?.length" class="bank-unmatched">No match</span>
                     <ul v-if="row.allocations?.length" class="bank-allocations">
                       <li v-for="link in row.allocations" :key="link.matchId">
-                        €{{ Number(link.amount).toFixed(2) }} · {{ link.userName }} · {{ link.invoiceNumber }}
+                        {{ formatBalance(link.amount) }} · {{ link.userName }} · {{ link.invoiceNumber }}
                         <button
                           type="button"
                           class="btn-bank btn-bank-muted"
@@ -274,22 +274,22 @@
                             @change="toggleLinkPart(row.id, part.key)"
                           >
                           <span>{{ part.label }}</span>
-                          <span>€{{ Number(part.amount).toFixed(2) }}</span>
+                          <span :class="{ 'bank-part-refund': part.amount < 0 }">{{ formatBalance(part.amount) }}</span>
                         </label>
                       </div>
                       <input
                         v-model="bankLinkDraft[row.id].amount"
                         type="number"
-                        min="0.01"
                         step="0.01"
                         class="bank-amount-input"
                         aria-label="Amount to apply"
+                        title="Negative when this payment settles a refund"
                         @input="clearLinkParts(row.id)"
                       >
                       <button
                         type="button"
                         class="btn-bank"
-                        :disabled="bankBusyId === row.id || !bankLinkDraft[row.id].periodKey || !bankLinkDraft[row.id].amount"
+                        :disabled="bankBusyId === row.id || !bankLinkDraft[row.id].periodKey || !linkAmountReady(row.id)"
                         @click="confirmDraft(row)"
                       >
                         Link
@@ -304,8 +304,8 @@
             <summary>Confirmed ({{ bankConfirmed.length }})</summary>
             <ul>
               <li v-for="row in bankConfirmed" :key="row.matchId || row.id">
-                {{ formatBankDate(row.bookedOn) }} · €{{ Number(row.allocatedAmount || row.amount).toFixed(2) }}
-                <template v-if="Number(row.allocatedAmount) > 0 && Number(row.allocatedAmount) < Number(row.amount)"> of €{{ row.amount.toFixed(2) }}</template>
+                {{ formatBankDate(row.bookedOn) }} · {{ formatBalance(row.allocatedAmount || row.amount) }}
+                <template v-if="Math.abs(Number(row.allocatedAmount)) > 0 && Math.abs(Number(row.allocatedAmount)) < Number(row.amount)"> of €{{ row.amount.toFixed(2) }}</template>
                 · {{ row.counterpartyName }}
                 <span v-if="row.description" class="bank-confirmed-payment" :title="row.description">· {{ row.description }}</span>
                 → {{ row.userName }} · {{ row.invoiceNumber }}
@@ -739,14 +739,18 @@ export default {
     const isBankPaid = (userId, year, month) => {
       const total = invoiceTotal(userId, year, month)
       const paid = bankPaidAmount(userId, year, month)
-      return total != null && paid > 0 && cents(paid) >= cents(total)
+      if (total == null || total === 0) return false
+      if (total > 0) return paid > 0 && cents(paid) >= cents(total)
+      return paid < 0 && cents(paid) <= cents(total)
     }
 
     const isPartiallyPaid = (userId, year, month) => {
       if (isMolliePaid(userId, year, month)) return false
       const total = invoiceTotal(userId, year, month)
       const paid = bankPaidAmount(userId, year, month)
-      return total != null && paid > 0 && cents(paid) < cents(total)
+      if (total == null || total === 0 || paid === 0) return false
+      if (total > 0) return paid > 0 && cents(paid) < cents(total)
+      return paid < 0 && cents(paid) > cents(total)
     }
 
     const isPaymentPaid = (userId, year, month) =>
@@ -844,7 +848,8 @@ export default {
       const total = invoiceTotal(userId, year, month)
       const paid = bankPaidAmount(userId, year, month)
       if (total == null) return ''
-      return `Paid €${paid.toFixed(2)} of €${total.toFixed(2)}`
+      const label = total < 0 ? 'Refunded' : 'Paid'
+      return `${label} ${formatBalance(paid)} of ${formatBalance(total)}`
     }
 
     const isPaymentLinkLoading = (userId, year, month) =>
@@ -1324,9 +1329,19 @@ export default {
       const [year, month] = String(draft.periodKey || '').split('-').map(Number)
       const invoice = invoicesForUser(draft.userId).find(item => item.year === year && item.month === month)
       if (!invoice || !year || !month) return left > 0 ? left.toFixed(2) : ''
-      const outstanding = Math.max(0, invoice.totalAmount - bankPaidAmount(draft.userId, year, month))
-      const amount = Math.min(left, outstanding > 0 ? outstanding : left)
+      const outstanding = Number(invoice.totalAmount) - bankPaidAmount(draft.userId, year, month)
+      if (outstanding < 0) {
+        const refund = Math.max(outstanding, left > 0 ? -left : outstanding)
+        return refund < 0 ? refund.toFixed(2) : ''
+      }
+      if (!(left > 0) || !(outstanding > 0)) return ''
+      const amount = Math.min(left, outstanding)
       return amount > 0 ? amount.toFixed(2) : ''
+    }
+
+    const linkAmountReady = (rowId) => {
+      const value = Number(bankLinkDraft.value[rowId]?.amount)
+      return Number.isFinite(value) && value !== 0
     }
 
     const onBankLinkUser = (rowId) => {
@@ -1612,6 +1627,7 @@ export default {
       onBankLinkUser,
       onBankLinkPeriod,
       linkParts,
+      linkAmountReady,
       isPartSelected,
       toggleLinkPart,
       clearLinkParts,
@@ -1958,6 +1974,10 @@ export default {
   display: flex;
   gap: 0.35rem;
   align-items: baseline;
+}
+
+.bank-part-refund {
+  color: #b45309;
 }
 
 .bank-link-form select,

@@ -77,9 +77,9 @@ public static partial class BankInvoiceMatcher
         var match = resolved[0];
         if (match.IsPaid)
             return Proposal(BankMatchKind.AlreadyPaid, match);
-        if (match.TotalAmount == amount)
+        if (AmountCovers(match.TotalAmount, amount))
             return Proposal(BankMatchKind.Certain, match);
-        if (amount > 0 && amount < match.TotalAmount)
+        if (AmountIsPartial(match.TotalAmount, amount))
             return Proposal(BankMatchKind.Partial, match);
 
         return None();
@@ -104,7 +104,7 @@ public static partial class BankInvoiceMatcher
             candidate.Year == year
             && candidate.Month == month
             && string.Equals(candidate.UserName.Trim(), name, StringComparison.OrdinalIgnoreCase));
-        if (invoice == null || invoice.TotalAmount != amount)
+        if (invoice == null || !AmountCovers(invoice.TotalAmount, amount))
             return None();
 
         return Proposal(invoice.IsPaid ? BankMatchKind.AlreadyPaid : BankMatchKind.Suggested, invoice);
@@ -119,9 +119,9 @@ public static partial class BankInvoiceMatcher
         if (open.Count == 1)
         {
             var only = open[0];
-            if (only.TotalAmount == amount)
+            if (AmountCovers(only.TotalAmount, amount))
                 return Proposal(BankMatchKind.Certain, only);
-            if (amount > 0 && amount < only.TotalAmount)
+            if (AmountIsPartial(only.TotalAmount, amount))
                 return Proposal(BankMatchKind.Partial, only);
             return None();
         }
@@ -150,6 +150,18 @@ public static partial class BankInvoiceMatcher
             sum,
             shares);
     }
+
+    /// <summary>
+    /// A refund invoice has a negative total. The bank payment is still a positive amount,
+    /// equal to the refund when it covers that invoice.
+    /// </summary>
+    private static bool AmountCovers(decimal invoiceTotal, decimal amount) =>
+        invoiceTotal == amount || (invoiceTotal < 0 && amount == -invoiceTotal);
+
+    private static bool AmountIsPartial(decimal invoiceTotal, decimal amount) =>
+        amount > 0 && (
+            (invoiceTotal > 0 && amount < invoiceTotal)
+            || (invoiceTotal < 0 && amount < -invoiceTotal));
 
     private static InvoiceCandidate? Resolve(InvoiceRef reference, IReadOnlyList<InvoiceCandidate> invoices)
     {
