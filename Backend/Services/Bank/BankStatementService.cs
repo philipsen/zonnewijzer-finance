@@ -38,12 +38,26 @@ public sealed record BankReview(
     IReadOnlyList<BankReviewRow> Confirmed,
     IReadOnlyList<BankReviewRow> Ignored);
 
+public sealed record BankImportedTransaction(
+    DateOnly BookedOn,
+    decimal Amount,
+    string Direction,
+    string CounterpartyName,
+    string Description,
+    bool AlreadyImported);
+
 public sealed record BankImportOutcome(
     string? Error,
     int Imported,
     int Duplicates,
     int Skipped,
-    BankReview? Review);
+    BankReview? Review,
+    IReadOnlyList<BankImportedTransaction>? Transactions = null);
+
+public sealed class ClearBankTransactionsRequest
+{
+    public bool Confirm { get; set; }
+}
 
 public sealed class ConfirmBankMatchRequest
 {
@@ -62,6 +76,17 @@ public sealed class BankStatementService
     {
         _context = context;
         _catalog = catalog;
+    }
+
+    public async Task<(int Transactions, int Bindings)> ClearDownloadedAsync(CancellationToken cancellationToken = default)
+    {
+        var bindings = await _context.InvoiceBankMatches.ToListAsync(cancellationToken);
+        var transactions = await _context.BankTransactions.ToListAsync(cancellationToken);
+        _context.InvoiceBankMatches.RemoveRange(bindings);
+        _context.BankTransactions.RemoveRange(transactions);
+        if (bindings.Count > 0 || transactions.Count > 0)
+            await _context.SaveChangesAsync(cancellationToken);
+        return (transactions.Count, bindings.Count);
     }
 
     public async Task<BankReview> GetReviewAsync(CancellationToken cancellationToken = default)
@@ -86,13 +111,19 @@ public sealed class BankStatementService
     public async Task<BankImportOutcome> ImportAsync(string csv, CancellationToken cancellationToken = default)
     {
         var parsed = TriodosCsvParser.Parse(csv);
-        if (parsed.Transactions.Count == 0)
+        var rows = parsed.Transactions
+            .Where(row => row.AccountIban == TriodosCsvParser.CooperativeAccountIban)
+            .ToList();
+        var skipped = parsed.Skipped + parsed.Transactions.Count - rows.Count;
+        if (rows.Count == 0)
         {
             return new BankImportOutcome(
-                "No Triodos payments found. Use the headerless CSV export from Triodos.",
+                parsed.Transactions.Count == 0
+                    ? "No Triodos payments found. Use the headerless CSV export from Triodos."
+                    : $"No payments found for account {TriodosCsvParser.CooperativeAccountIban}.",
                 0,
                 0,
-                parsed.Skipped,
+                skipped,
                 null);
         }
 
@@ -102,10 +133,19 @@ public sealed class BankStatementService
         var seen = existing.ToHashSet(StringComparer.Ordinal);
         var imported = 0;
         var duplicates = 0;
+        var downloaded = new List<BankImportedTransaction>(rows.Count);
 
-        foreach (var row in parsed.Transactions)
+        foreach (var row in rows)
         {
-            if (!seen.Add(row.Fingerprint))
+            var alreadyImported = !seen.Add(row.Fingerprint);
+            downloaded.Add(new BankImportedTransaction(
+                row.BookedOn,
+                row.Amount,
+                row.Direction,
+                row.CounterpartyName,
+                row.Description,
+                alreadyImported));
+            if (alreadyImported)
             {
                 duplicates++;
                 continue;
@@ -134,7 +174,7 @@ public sealed class BankStatementService
             await _context.SaveChangesAsync(cancellationToken);
 
         var review = await GetReviewAsync(cancellationToken);
-        return new BankImportOutcome(null, imported, duplicates, parsed.Skipped, review);
+        return new BankImportOutcome(null, imported, duplicates, skipped, review, downloaded);
     }
 
     public async Task<(string? Error, BankReview? Review)> ConfirmAsync(

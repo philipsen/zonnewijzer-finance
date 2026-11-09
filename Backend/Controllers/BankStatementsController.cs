@@ -32,6 +32,27 @@ public class BankStatementsController : ControllerBase
         _logger = logger;
     }
 
+    [HttpPost("bank-transactions/clear")]
+    public async Task<IActionResult> ClearDownloaded([FromBody] ClearBankTransactionsRequest? request, CancellationToken cancellationToken)
+    {
+        if (await RequireAdminAsync(cancellationToken) is { } denied)
+            return denied;
+        if (request?.Confirm != true)
+            return BadRequest(new { message = "Confirm clearing the downloaded transactions." });
+
+        var (transactions, bindings) = await _statements.ClearDownloadedAsync(cancellationToken);
+        _logger.LogWarning(
+            "Cleared {Transactions} downloaded bank transactions and {Bindings} invoice bindings",
+            transactions,
+            bindings);
+        return Ok(new
+        {
+            transactions,
+            bindings,
+            Review = await _statements.GetReviewAsync(cancellationToken)
+        });
+    }
+
     [HttpGet("bank-transactions")]
     public async Task<IActionResult> GetReview(CancellationToken cancellationToken)
     {
@@ -64,12 +85,14 @@ public class BankStatementsController : ControllerBase
             outcome.Duplicates,
             outcome.Skipped);
 
+        var transactions = outcome.Transactions ?? Array.Empty<BankImportedTransaction>();
         return Ok(new
         {
             outcome.Imported,
             outcome.Duplicates,
             outcome.Skipped,
-            outcome.Review
+            outcome.Review,
+            Transactions = transactions
         });
     }
 
@@ -137,12 +160,14 @@ public class BankStatementsController : ControllerBase
             outcome.Duplicates,
             outcome.Skipped);
 
+        var transactions = outcome.Transactions ?? Array.Empty<BankImportedTransaction>();
         return Ok(new
         {
             outcome.Imported,
             outcome.Duplicates,
             outcome.Skipped,
-            outcome.Review
+            outcome.Review,
+            Transactions = transactions
         });
     }
 

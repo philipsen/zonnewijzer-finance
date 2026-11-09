@@ -266,7 +266,7 @@ internal static class TriodosBankingClient
         var accounts = await GetJsonAsync(http, "banking/v4/accounts/list", cancellationToken);
         var uuids = ProductUuids(accounts);
         if (uuids.Count == 0)
-            throw new TriodosException("Triodos returned no accounts to export.");
+            throw new TriodosException(MissingAccountMessage(accounts));
 
         var formats = await GetJsonAsync(http, "banking/v4/transaction-download/formats", cancellationToken);
         var format = CsvFormatKey(formats);
@@ -290,32 +290,47 @@ internal static class TriodosBankingClient
 
         var createdId = string.IsNullOrWhiteSpace(createdBody) ? null : ReadString(createdBody, "id");
         var deadline = DateTime.UtcNow.AddSeconds(60);
-        string? readyId = null;
-        while (readyId == null)
+        DownloadRequestRow? ready = null;
+        while (ready == null)
         {
             var rows = DownloadRequests(await GetJsonAsync(http, "banking/v4/transaction-download/requests", cancellationToken));
             var ours = rows.Where(row => row.Id == createdId || !existing.Contains(row.Id)).ToList();
-            if (ours.Any(row => row.State is "PROBLEM" or "ERROR"))
+            if (ours.Any(row => row.State is "PROBLEM" or "ERROR" or "FAILED"))
                 throw new TriodosException("Triodos could not create the transaction export.");
-            readyId = ours.FirstOrDefault(row => row.State == "PROCESSED").Id;
-            if (string.IsNullOrEmpty(readyId))
-                readyId = null;
-            if (DateTime.UtcNow >= deadline)
+            ready = ours.FirstOrDefault(row => row.Id == createdId && row.State == "PROCESSED")
+                ?? ours.FirstOrDefault(row => row.State == "PROCESSED");
+            if (ready == null && DateTime.UtcNow >= deadline)
                 throw new TriodosException("The Triodos export was not ready in time. Try again.");
-            await Task.Delay(TimeSpan.FromSeconds(1.5), cancellationToken);
+            if (ready == null)
+                await Task.Delay(TimeSpan.FromSeconds(1.5), cancellationToken);
         }
 
-        foreach (var uuid in uuids)
+        var productIds = new List<string>();
+        void AddProduct(string? id)
         {
-            var bytes = await GetFileAsync(http, $"banking/v4/transaction-download/{Uri.EscapeDataString(uuid)}/requests/{Uri.EscapeDataString(readyId)}", cancellationToken);
-            if (bytes == null)
-                continue;
-            var csv = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetString(bytes).TrimStart('\uFEFF');
-            if (!string.IsNullOrWhiteSpace(csv))
-                return csv;
+            if (!string.IsNullOrWhiteSpace(id) && !productIds.Contains(id, StringComparer.Ordinal))
+                productIds.Add(id);
+        }
+        foreach (var id in AccountProductIds(accounts))
+            AddProduct(id);
+        AddProduct(ready.ProductId);
+        foreach (var id in uuids)
+            AddProduct(id);
+        productIds = productIds.OrderBy(LooksLikeUuid).ToList();
+
+        string? failure = null;
+        foreach (var productId in productIds)
+        {
+            var file = await GetFileAsync(
+                http,
+                $"banking/v4/transaction-download/{Uri.EscapeDataString(productId)}/requests/{Uri.EscapeDataString(ready.Id)}",
+                cancellationToken);
+            if (file.Csv != null)
+                return file.Csv;
+            failure ??= file.Error;
         }
 
-        throw new TriodosException("Triodos did not return the CSV file.");
+        throw new TriodosException(failure ?? "Triodos did not return the CSV file.");
     }
 
     internal static IReadOnlyList<string> ProductUuids(string json)
@@ -324,6 +339,8 @@ internal static class TriodosBankingClient
         var ids = new List<string>();
         foreach (var obj in Walk(doc.RootElement))
         {
+            if (!IsCooperativeAccount(obj))
+                continue;
             var uuid = FirstString(obj, "productUuid", "productUUID");
             if (!string.IsNullOrWhiteSpace(uuid) && !ids.Contains(uuid, StringComparer.Ordinal))
                 ids.Add(uuid);
@@ -355,18 +372,135 @@ internal static class TriodosBankingClient
         return fallback != null && fallback.Contains("CSV", StringComparison.OrdinalIgnoreCase) ? fallback : null;
     }
 
-    internal static IReadOnlyList<(string Id, string State)> DownloadRequests(string json)
+    internal sealed record DownloadRequestRow(string Id, string State, string? ProductId);
+
+    internal static IReadOnlyList<DownloadRequestRow> DownloadRequests(string json)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "[]" : json);
-        var rows = new List<(string, string)>();
+        var rows = new List<DownloadRequestRow>();
         foreach (var obj in Walk(doc.RootElement))
         {
             var id = FirstString(obj, "id", "downloadRequestID");
             var state = FirstString(obj, "state", "status");
-            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(state))
-                rows.Add((id, state));
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(state))
+                continue;
+            rows.Add(new DownloadRequestRow(id, state, FirstString(obj, "productId", "productUuid", "productUUID")));
         }
         return rows;
+    }
+
+    internal static IReadOnlyList<string> AccountProductIds(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var ids = new List<string>();
+        foreach (var obj in Walk(doc.RootElement))
+        {
+            if (!IsCooperativeAccount(obj))
+                continue;
+            var uuid = FirstString(obj, "productUuid", "productUUID");
+            foreach (var id in new[]
+            {
+                FirstId(obj, "productId"),
+                uuid,
+                FirstId(obj, "id")
+            })
+            {
+                if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id, StringComparer.Ordinal))
+                    ids.Add(id);
+            }
+        }
+        return ids;
+    }
+
+    internal readonly record struct ListedAccount(string? Name, string? Iban, string? ProductId, string? ProductUuid);
+
+    internal static string MissingAccountMessage(string json)
+    {
+        var found = ListedAccounts(json);
+        var list = found.Count == 0
+            ? "none"
+            : string.Join("; ", found.Select(FormatAccount));
+        return $"Triodos did not return account {TriodosCsvParser.CooperativeAccountIban}. Accounts found: {list}.";
+    }
+
+    internal static IReadOnlyList<ListedAccount> ListedAccounts(string json)
+    {
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        var accounts = new List<ListedAccount>();
+        foreach (var obj in Walk(doc.RootElement))
+        {
+            var uuid = FirstString(obj, "productUuid", "productUUID");
+            var productId = FirstId(obj, "productId");
+            if (string.IsNullOrWhiteSpace(uuid) && string.IsNullOrWhiteSpace(productId))
+                continue;
+            if (accounts.Any(account =>
+                    (!string.IsNullOrWhiteSpace(uuid) && account.ProductUuid == uuid)
+                    || (!string.IsNullOrWhiteSpace(productId) && account.ProductId == productId && account.ProductUuid == uuid)))
+                continue;
+            accounts.Add(new ListedAccount(
+                FirstString(obj, "name", "accountName"),
+                FindIban(obj),
+                productId,
+                uuid));
+        }
+        return accounts;
+    }
+
+    private static string FormatAccount(ListedAccount account)
+    {
+        var name = string.IsNullOrWhiteSpace(account.Name) ? "Unnamed account" : account.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(account.Iban))
+            return $"{name} {account.Iban}";
+        if (!string.IsNullOrWhiteSpace(account.ProductId))
+            return $"{name} product {account.ProductId}";
+        return $"{name} product {account.ProductUuid}";
+    }
+
+    private static bool IsCooperativeAccount(JsonElement obj) =>
+        FindIban(obj) == TriodosCsvParser.CooperativeAccountIban;
+
+    private static string? FindIban(JsonElement obj)
+    {
+        foreach (var property in obj.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.String)
+            {
+                var normalized = NormalizeIban(property.Value.GetString());
+                if (IsIban(normalized))
+                    return normalized;
+            }
+            else if (property.Value.ValueKind == JsonValueKind.Object)
+            {
+                var nested = FindIban(property.Value);
+                if (nested != null)
+                    return nested;
+            }
+        }
+        return null;
+    }
+
+    private static string NormalizeIban(string? value) =>
+        (value ?? string.Empty).Replace(" ", "", StringComparison.Ordinal).ToUpperInvariant();
+
+    private static bool IsIban(string value) =>
+        value.Length is >= 15 and <= 34
+        && char.IsLetter(value[0])
+        && char.IsLetter(value[1])
+        && char.IsDigit(value[2])
+        && value.All(char.IsLetterOrDigit);
+
+    private static bool LooksLikeUuid(string id) => Guid.TryParse(id, out _);
+
+    private static string? FirstId(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var value))
+            return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => string.IsNullOrWhiteSpace(value.GetString()) ? null : value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            _ => null
+        };
     }
 
     private static async Task<string> GetJsonAsync(HttpClient http, string path, CancellationToken cancellationToken)
@@ -378,17 +512,82 @@ internal static class TriodosBankingClient
         return body;
     }
 
-    private static async Task<byte[]?> GetFileAsync(HttpClient http, string path, CancellationToken cancellationToken)
+    private readonly record struct ExportFile(string? Csv, string? Error);
+
+    private static async Task<ExportFile> GetFileAsync(HttpClient http, string path, CancellationToken cancellationToken)
     {
-        using var response = await SendAsync(http, HttpMethod.Get, path, null, "application/octet-stream", cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
+        using var response = await SendAsync(
+            http,
+            HttpMethod.Get,
+            path,
+            null,
+            "application/octet-stream, text/csv",
+            cancellationToken);
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode || bytes.Length == 0 || bytes[0] == (byte)'{')
-            return null;
         if (bytes.Length > 2_000_000)
             throw new TriodosException("The Triodos export is too large to import.");
-        return bytes;
+        if (!response.IsSuccessStatusCode || bytes.Length == 0)
+            return new ExportFile(null, FileFailure(response.StatusCode, bytes));
+
+        var text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetString(bytes).TrimStart('\uFEFF').Trim();
+        if (text.StartsWith('{') || text.StartsWith('['))
+        {
+            var embedded = CsvInsideJson(text);
+            if (embedded != null)
+                return new ExportFile(embedded, null);
+            return new ExportFile(null, FileFailure(response.StatusCode, bytes));
+        }
+
+        return new ExportFile(text, null);
+    }
+
+    private static string FileFailure(HttpStatusCode status, byte[] bytes)
+    {
+        var detail = JsonMessage(bytes);
+        if (!string.IsNullOrWhiteSpace(detail))
+            return $"Triodos did not return the CSV file ({(int)status}: {detail}).";
+        return $"Triodos did not return the CSV file (HTTP {(int)status}).";
+    }
+
+    private static string? JsonMessage(byte[] bytes)
+    {
+        if (bytes.Length == 0 || bytes[0] != (byte)'{')
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+            return FirstString(doc.RootElement, "message", "detail", "error", "code", "title");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? CsvInsideJson(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var obj in Walk(doc.RootElement))
+            {
+                foreach (var property in obj.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                        continue;
+                    var value = property.Value.GetString();
+                    if (value != null && value.Contains("Credit", StringComparison.OrdinalIgnoreCase) && value.Contains(','))
+                        return value.Trim();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        return null;
     }
 
     private static async Task<HttpResponseMessage> SendAsync(
@@ -404,7 +603,8 @@ internal static class TriodosBankingClient
         request.Headers.TryAddWithoutValidation("X-Triodos-Administration", "TBNL");
         request.Headers.TryAddWithoutValidation("X-Triodos-Accept-Language", "nl-NL");
         request.Headers.TryAddWithoutValidation("X-Triodos-Channel", "BANKING_WEB");
-        request.Headers.Accept.ParseAdd(accept);
+        foreach (var mediaType in accept.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            request.Headers.Accept.ParseAdd(mediaType);
         if (json != null)
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
         return await http.SendAsync(request, cancellationToken);

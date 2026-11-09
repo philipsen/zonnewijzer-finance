@@ -50,6 +50,11 @@ public class BankStatementsControllerTests : IDisposable
         var uploaded = System.Text.Json.JsonSerializer.Serialize(uploadOk.Value);
         using var doc = System.Text.Json.JsonDocument.Parse(uploaded);
         Assert.Equal(1, doc.RootElement.GetProperty("Imported").GetInt32());
+        var downloaded = doc.RootElement.GetProperty("Transactions");
+        Assert.Equal(1, downloaded.GetArrayLength());
+        Assert.Equal("R. en M. Hendriks B.V.", downloaded[0].GetProperty("CounterpartyName").GetString());
+        Assert.Equal("Credit", downloaded[0].GetProperty("Direction").GetString());
+        Assert.False(downloaded[0].GetProperty("AlreadyImported").GetBoolean());
         var open = doc.RootElement.GetProperty("Review").GetProperty("Open");
         Assert.Equal(1, open.GetArrayLength());
         Assert.Equal("Certain", open[0].GetProperty("SuggestionKind").GetString());
@@ -70,6 +75,7 @@ public class BankStatementsControllerTests : IDisposable
         using var againDoc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(againOk.Value));
         Assert.Equal(0, againDoc.RootElement.GetProperty("Imported").GetInt32());
         Assert.Equal(1, againDoc.RootElement.GetProperty("Duplicates").GetInt32());
+        Assert.True(againDoc.RootElement.GetProperty("Transactions")[0].GetProperty("AlreadyImported").GetBoolean());
         Assert.Equal(0, againDoc.RootElement.GetProperty("Review").GetProperty("Open").GetArrayLength());
         Assert.Equal(1, againDoc.RootElement.GetProperty("Review").GetProperty("Confirmed").GetArrayLength());
 
@@ -213,7 +219,70 @@ public class BankStatementsControllerTests : IDisposable
         var ok = Assert.IsType<OkObjectResult>(result);
         using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
         Assert.Equal(1, doc.RootElement.GetProperty("Imported").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("Transactions").GetArrayLength());
         Assert.Equal(1, doc.RootElement.GetProperty("Review").GetProperty("Open").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Upload_IgnoresTransactionsForOtherAccounts()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        await _db.SaveChangesAsync();
+        var csv = Csv + "\n" +
+            "\"06-10-2026\",\"NL12TRIO0123456789\",\"10,00\",\"Debit\",\"Energy\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"power\",\"1.000,00\"";
+
+        var upload = await Controller().Upload(CsvFile(csv), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(upload);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(1, doc.RootElement.GetProperty("Imported").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("Skipped").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("Transactions").GetArrayLength());
+        Assert.Equal(1, await _db.BankTransactions.CountAsync());
+        Assert.Equal("NL40TRIO0321247604", await _db.BankTransactions.Select(row => row.AccountIban).SingleAsync());
+    }
+
+    [Fact]
+    public async Task ClearDownloaded_RemovesTransactionsAndInvoiceBindings()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var when = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, when, when.AddHours(1), 44.47m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 8, PricePerKwh = 1m });
+        await _db.SaveChangesAsync();
+
+        var upload = await Controller().Upload(CsvFile(Csv), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var uploaded = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var id = uploaded.RootElement.GetProperty("Review").GetProperty("Open")[0].GetProperty("Id").GetInt32();
+        Assert.IsType<OkObjectResult>(await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 8
+        }, CancellationToken.None));
+
+        var refused = await Controller().ClearDownloaded(new ClearBankTransactionsRequest(), CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(refused);
+        Assert.Equal(1, await _db.BankTransactions.CountAsync());
+
+        var cleared = await Controller().ClearDownloaded(new ClearBankTransactionsRequest { Confirm = true }, CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(cleared);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(1, doc.RootElement.GetProperty("transactions").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("bindings").GetInt32());
+        Assert.Equal(0, doc.RootElement.GetProperty("Review").GetProperty("Open").GetArrayLength());
+        Assert.Equal(0, doc.RootElement.GetProperty("Review").GetProperty("Confirmed").GetArrayLength());
+        Assert.Equal(0, await _db.BankTransactions.CountAsync());
+        Assert.Equal(0, await _db.InvoiceBankMatches.CountAsync());
+
+        var invoice = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
+        Assert.False((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
     }
 
     [Fact]
