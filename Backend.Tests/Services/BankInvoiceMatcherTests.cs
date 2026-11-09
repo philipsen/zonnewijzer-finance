@@ -116,4 +116,21 @@ public class BankInvoiceMatcherTests
 
         Assert.Equal(BankMatchKind.AlreadyPaid, proposal.Kind);
     }
+
+    [Fact]
+    public void NegativeTotal_PaymentOfTheRefund_IsCertain()
+    {
+        var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14", 20m, [August(-20m)]);
+
+        Assert.Equal(BankMatchKind.Certain, proposal.Kind);
+        Assert.Equal(-20m, proposal.InvoiceAmount);
+    }
+
+    [Fact]
+    public void NegativeTotal_SmallerPayment_IsPartial()
+    {
+        var proposal = BankInvoiceMatcher.Match("INV-2026-08-U14", 5m, [August(-20m)]);
+
+        Assert.Equal(BankMatchKind.Partial, proposal.Kind);
+    }
 }

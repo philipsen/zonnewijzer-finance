@@ -119,7 +119,7 @@ public sealed class InvoicePaymentCatalog
                     month,
                     invoiceNumber,
                     totalAmount,
-                    paid.Contains((userId, year, month)) || (bankAmount > 0 && bankAmount >= totalAmount)));
+                    paid.Contains((userId, year, month)) || InvoiceSettlement.IsCoveredByBank(totalAmount, bankAmount)));
             }
         }
 

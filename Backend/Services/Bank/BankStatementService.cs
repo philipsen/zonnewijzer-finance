@@ -195,7 +195,7 @@ public sealed class BankStatementService
         var links = await _context.InvoiceBankMatches
             .Where(match => match.BankTransactionId == transactionId)
             .ToListAsync(cancellationToken);
-        var unallocated = transaction.Amount - links.Sum(match => match.Amount);
+        var unallocated = transaction.Amount - links.Sum(match => Math.Abs(match.Amount));
         if (unallocated <= 0)
             return ("This payment is already matched.", null);
 
@@ -213,25 +213,35 @@ public sealed class BankStatementService
                 && match.Year == invoice.Year
                 && match.Month == invoice.Month)
             .SumAsync(match => (decimal?)match.Amount, cancellationToken) ?? 0m;
-        var outstanding = invoice.IsPaid ? 0m : Math.Max(0m, invoice.TotalAmount - alreadyOnInvoice);
+        var outstanding = invoice.IsPaid ? 0m : invoice.TotalAmount - alreadyOnInvoice;
 
         decimal amount;
         if (request.Amount is decimal requested)
         {
-            if (requested <= 0)
-                return ("Enter an amount greater than zero.", null);
-            if (requested > unallocated)
-                return ("That is more than this payment has left.", null);
             amount = decimal.Round(requested, 2, MidpointRounding.AwayFromZero);
+            if (amount == 0)
+                return ("Enter an amount other than zero.", null);
+            if (Math.Abs(amount) > unallocated)
+                return ("That is more than this payment has left.", null);
+            if (amount < 0 && outstanding >= 0)
+                return ("A negative amount is only for a refund that is still open.", null);
+            if (amount < 0 && amount < outstanding)
+                return ("That is more than the refund on this invoice.", null);
+        }
+        else if (outstanding > 0)
+        {
+            amount = Math.Min(unallocated, outstanding);
+        }
+        else if (outstanding < 0)
+        {
+            amount = Math.Max(-unallocated, outstanding);
         }
         else
         {
-            if (outstanding <= 0)
-                return ("That invoice is already paid.", null);
-            amount = Math.Min(unallocated, outstanding);
+            return ("That invoice is already paid.", null);
         }
 
-        if (amount <= 0)
+        if (amount == 0)
             return ("That invoice is already paid.", null);
 
         var proposal = BankInvoiceMatcher.Match(transaction.Description, transaction.Amount, catalog);
@@ -272,7 +282,7 @@ public sealed class BankStatementService
             sameInvoice.InvoiceNumber = invoice.InvoiceNumber;
         }
 
-        transaction.ReviewStatus = unallocated - amount <= 0
+        transaction.ReviewStatus = unallocated - Math.Abs(amount) <= 0
             ? BankTransaction.StatusConfirmed
             : BankTransaction.StatusOpen;
         await _context.SaveChangesAsync(cancellationToken);
@@ -323,7 +333,7 @@ public sealed class BankStatementService
         var removed = matchId ?? 0;
         var stillAllocated = matches
             .Where(match => matchId == null || match.Id != removed)
-            .Sum(match => match.Amount);
+            .Sum(match => Math.Abs(match.Amount));
         transaction.ReviewStatus = matchId != null && stillAllocated >= transaction.Amount
             ? BankTransaction.StatusConfirmed
             : BankTransaction.StatusOpen;
@@ -351,7 +361,7 @@ public sealed class BankStatementService
 
             matchesByTransaction.TryGetValue(transaction.Id, out var links);
             links ??= [];
-            var allocated = links.Sum(match => match.Amount);
+            var allocated = links.Sum(match => Math.Abs(match.Amount));
             var unallocated = transaction.Amount - allocated;
             if (links.Count > 0 && unallocated <= 0)
             {

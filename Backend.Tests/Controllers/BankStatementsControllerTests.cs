@@ -286,6 +286,123 @@ public class BankStatementsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Confirm_MatchesTheNetWhenACorrectionIsARefund()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var when = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, when, when.AddHours(1), 100m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 8, PricePerKwh = 1m });
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = 14,
+            Date = new DateOnly(2026, 8, 12),
+            Description = "Refund",
+            Amount = -20m
+        });
+        await _db.SaveChangesAsync();
+
+        const string csv =
+            "\"06-10-2026\",\"NL40TRIO0321247604\",\"80,00\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-08-U14\",\"1.500,00\"";
+        var upload = await Controller().Upload(CsvFile(csv), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var uploaded = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var open = uploaded.RootElement.GetProperty("Review").GetProperty("Open");
+        Assert.Equal("Certain", open[0].GetProperty("SuggestionKind").GetString());
+        var id = open[0].GetProperty("Id").GetInt32();
+
+        Assert.IsType<OkObjectResult>(await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 8,
+            Amount = 80m
+        }, CancellationToken.None));
+
+        Assert.Equal(80m, await _db.InvoiceBankMatches.Select(match => match.Amount).SingleAsync());
+        var invoice = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
+        Assert.True((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+    }
+
+    [Fact]
+    public async Task Confirm_StoresANegativeAmountForARefundInvoice()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        await _db.SaveChangesAsync();
+        _db.InvoiceCorrections.Add(new InvoiceCorrection
+        {
+            UserId = 14,
+            Date = new DateOnly(2026, 8, 12),
+            Description = "Refund",
+            Amount = -20m
+        });
+        await _db.SaveChangesAsync();
+
+        const string csv =
+            "\"06-10-2026\",\"NL40TRIO0321247604\",\"20,00\",\"Credit\",\"R. en M. Hendriks B.V.\",\"RABONL2U NL22RABO0129901962\",\"ET\",\"INV-2026-08-U14\",\"1.500,00\"";
+        var upload = await Controller().Upload(CsvFile(csv), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var uploaded = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var open = uploaded.RootElement.GetProperty("Review").GetProperty("Open");
+        Assert.Equal("Certain", open[0].GetProperty("SuggestionKind").GetString());
+        Assert.Equal(-20m, open[0].GetProperty("InvoiceAmount").GetDecimal());
+        var id = open[0].GetProperty("Id").GetInt32();
+
+        var confirm = await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 8
+        }, CancellationToken.None);
+        var confirmOk = Assert.IsType<OkObjectResult>(confirm);
+        using var confirmed = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(confirmOk.Value));
+        Assert.Equal(0, confirmed.RootElement.GetProperty("Open").GetArrayLength());
+        Assert.Equal(-20m, confirmed.RootElement.GetProperty("Confirmed")[0].GetProperty("AllocatedAmount").GetDecimal());
+        Assert.Equal(-20m, await _db.InvoiceBankMatches.Select(match => match.Amount).SingleAsync());
+
+        var invoice = new InvoiceComputationService(_db, new DbBackedCombinedInvoiceSessionSource(_db));
+        Assert.True((await invoice.BuildInvoiceDataForAppUserAsync(14, 2026, 8))!.IsPaid);
+    }
+
+    [Fact]
+    public async Task Confirm_RejectsANegativeAmountWhenTheInvoiceIsNotARefund()
+    {
+        _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
+        _db.Users.Add(new User { Id = 14, Email = "t@test.com", Name = "T. van Leeuwen", GoogleId = "g14", Role = UserRole.Base });
+        var card = new ChargeCard { Value = "card-14" };
+        _db.ChargeCards.Add(card);
+        await _db.SaveChangesAsync();
+        _db.UserChargeCards.Add(new UserChargeCard { UserId = 14, ChargeCardId = card.Id });
+        var when = new DateTime(2026, 8, 10, 10, 0, 0, DateTimeKind.Utc);
+        _db.ChargingSessions.Add(TestData.Session(card.Id, 1, when, when.AddHours(1), 44.47m));
+        _db.EnergyPrices.Add(new EnergyPrice { Year = 2026, Month = 8, PricePerKwh = 1m });
+        await _db.SaveChangesAsync();
+
+        var upload = await Controller().Upload(CsvFile(Csv), CancellationToken.None);
+        var uploadOk = Assert.IsType<OkObjectResult>(upload);
+        using var uploaded = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(uploadOk.Value));
+        var id = uploaded.RootElement.GetProperty("Review").GetProperty("Open")[0].GetProperty("Id").GetInt32();
+
+        var result = await Controller().Confirm(id, new ConfirmBankMatchRequest
+        {
+            AppUserId = 14,
+            Year = 2026,
+            Month = 8,
+            Amount = -10m
+        }, CancellationToken.None);
+
+        var denied = Assert.IsType<BadRequestObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(denied.Value));
+        Assert.Equal("A negative amount is only for a refund that is still open.", doc.RootElement.GetProperty("message").GetString());
+        Assert.Equal(0, await _db.InvoiceBankMatches.CountAsync());
+    }
+
+    [Fact]
     public async Task Upload_WithoutFile_ReturnsBadRequest()
     {
         _db.Users.Add(new User { Id = 1, Email = "admin@test.com", Name = "Admin", GoogleId = "g1", Role = UserRole.Admin });
