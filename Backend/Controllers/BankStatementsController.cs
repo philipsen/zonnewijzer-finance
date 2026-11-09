@@ -15,17 +15,20 @@ public class BankStatementsController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly BankStatementService _statements;
+    private readonly ITriodosBanking _triodos;
     private readonly ILogger<BankStatementsController> _logger;
 
     public BankStatementsController(
         ApplicationDbContext context,
         IJwtService jwtService,
         BankStatementService statements,
+        ITriodosBanking triodos,
         ILogger<BankStatementsController> logger)
     {
         _context = context;
         _jwtService = jwtService;
         _statements = statements;
+        _triodos = triodos;
         _logger = logger;
     }
 
@@ -57,6 +60,79 @@ public class BankStatementsController : ControllerBase
 
         _logger.LogInformation(
             "Imported {Imported} Triodos rows ({Duplicates} duplicates, {Skipped} skipped)",
+            outcome.Imported,
+            outcome.Duplicates,
+            outcome.Skipped);
+
+        return Ok(new
+        {
+            outcome.Imported,
+            outcome.Duplicates,
+            outcome.Skipped,
+            outcome.Review
+        });
+    }
+
+    [HttpPost("triodos/sessions")]
+    public async Task<IActionResult> StartTriodos(CancellationToken cancellationToken)
+    {
+        if (await RequireAdminAsync(cancellationToken) is { } denied)
+            return denied;
+
+        try
+        {
+            return Ok(await _triodos.StartAsync(cancellationToken));
+        }
+        catch (TriodosException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("triodos/sessions/{id}")]
+    public async Task<IActionResult> TriodosStatus(string id, CancellationToken cancellationToken)
+    {
+        if (await RequireAdminAsync(cancellationToken) is { } denied)
+            return denied;
+
+        var view = await _triodos.PollAsync(id, cancellationToken);
+        if (view == null)
+            return NotFound(new { message = "The Triodos login expired. Start again." });
+        return Ok(view);
+    }
+
+    [HttpDelete("triodos/sessions/{id}")]
+    public async Task<IActionResult> CancelTriodos(string id, CancellationToken cancellationToken)
+    {
+        if (await RequireAdminAsync(cancellationToken) is { } denied)
+            return denied;
+
+        _triodos.Cancel(id);
+        return NoContent();
+    }
+
+    [HttpPost("triodos/sessions/{id}/import")]
+    public async Task<IActionResult> ImportTriodos(string id, CancellationToken cancellationToken)
+    {
+        if (await RequireAdminAsync(cancellationToken) is { } denied)
+            return denied;
+
+        string csv;
+        try
+        {
+            csv = await _triodos.DownloadCsvAsync(id, cancellationToken);
+        }
+        catch (TriodosException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+
+        var outcome = await _statements.ImportAsync(csv, cancellationToken);
+        if (outcome.Error != null)
+            return BadRequest(new { message = outcome.Error });
+
+        _logger.LogInformation(
+            "Imported {Imported} Triodos rows from Internet Banking ({Duplicates} duplicates, {Skipped} skipped)",
             outcome.Imported,
             outcome.Duplicates,
             outcome.Skipped);

@@ -138,6 +138,7 @@ builder.Services.AddScoped<ISmappeeCombinedInvoiceSessionSource, SmappeeCombined
 builder.Services.AddScoped<IInvoiceComputationService, InvoiceComputationService>();
 builder.Services.AddScoped<Backend.Services.Bank.InvoicePaymentCatalog>();
 builder.Services.AddScoped<Backend.Services.Bank.BankStatementService>();
+builder.Services.AddSingleton<Backend.Services.Bank.ITriodosBanking, Backend.Services.Bank.TriodosSessionService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
 builder.Services.AddHttpClient("Mollie");
 builder.Services.AddScoped<IMollieService, MollieService>();

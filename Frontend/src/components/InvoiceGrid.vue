@@ -60,11 +60,20 @@
           <button
             type="button"
             class="btn-csv-month"
-            :disabled="bankUploading"
+            :disabled="bankUploading || triodosBusy"
             title="Upload a headerless Triodos CSV and match incoming payments to invoices."
             @click="openBankFile"
           >
             {{ bankUploading ? '…' : 'Upload bank CSV' }}
+          </button>
+          <button
+            type="button"
+            class="btn-csv-month"
+            :disabled="bankUploading || triodosBusy"
+            title="Sign in with the Triodos app and import transactions from the last 2 months."
+            @click="startTriodosDownload"
+          >
+            {{ triodosBusy && !triodosQr ? '…' : 'Download from Triodos' }}
           </button>
           <input
             ref="bankFileInput"
@@ -75,6 +84,13 @@
           >
         </div>
         <p v-if="bankUploadMessage" class="bank-upload-message">{{ bankUploadMessage }}</p>
+        <div v-if="triodosQr" class="triodos-login">
+          <img :src="triodosQrSrc" alt="Triodos login QR">
+          <div>
+            <p>{{ triodosHint }}</p>
+            <button type="button" class="btn-csv-month" @click="cancelTriodos">Cancel</button>
+          </div>
+        </div>
         <section v-if="bankOpen.length || bankConfirmed.length || bankIgnored.length" class="bank-review">
           <div class="bank-review-header">
             <h3>Bank payments</h3>
@@ -431,7 +447,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -452,6 +468,11 @@ export default {
     const bankFileInput = ref(null)
     const bankUploading = ref(false)
     const bankUploadMessage = ref('')
+    const triodosBusy = ref(false)
+    const triodosQr = ref('')
+    const triodosStatus = ref('')
+    const triodosSessionId = ref('')
+    let triodosTimer = null
     const bankOpen = ref([])
     const hideSmallBalances = ref(true)
     const bankConfirmed = ref([])
@@ -961,6 +982,114 @@ export default {
       return data.message || fallback
     }
 
+    const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` })
+
+    const triodosHint = computed(() => {
+      if (triodosStatus.value === 'scanned') return 'Confirm the login in the Triodos app.'
+      return 'Open the Triodos app, tap the QR button, and scan this code.'
+    })
+
+    const triodosQrSrc = computed(() =>
+      triodosQr.value ? `data:image/png;base64,${triodosQr.value}` : ''
+    )
+
+    const stopTriodosPoll = () => {
+      if (triodosTimer) {
+        clearInterval(triodosTimer)
+        triodosTimer = null
+      }
+    }
+
+    const finishTriodos = (message) => {
+      stopTriodosPoll()
+      triodosQr.value = ''
+      triodosStatus.value = ''
+      triodosSessionId.value = ''
+      triodosBusy.value = false
+      if (message) bankUploadMessage.value = message
+    }
+
+    const describeImport = (data) => {
+      const imported = data.imported ?? 0
+      const duplicates = data.duplicates ?? 0
+      const skipped = data.skipped ?? 0
+      const parts = [`Imported ${imported} row${imported === 1 ? '' : 's'}.`]
+      if (duplicates) parts.push(`${duplicates} already imported.`)
+      if (skipped) parts.push(`${skipped} row${skipped === 1 ? '' : 's'} skipped.`)
+      return parts.join(' ')
+    }
+
+    const importTriodosCsv = async () => {
+      stopTriodosPoll()
+      triodosQr.value = ''
+      bankUploadMessage.value = 'Downloading transactions…'
+      try {
+        const response = await axios.post(
+          `/api/invoices/triodos/sessions/${triodosSessionId.value}/import`,
+          null,
+          { headers: authHeaders() }
+        )
+        applyBankReview(response.data.review)
+        finishTriodos(describeImport(response.data))
+      } catch (err) {
+        console.error('Failed to download Triodos transactions:', err)
+        finishTriodos(apiMessage(err, 'Failed to download the Triodos transactions.'))
+      }
+    }
+
+    const pollTriodos = async () => {
+      if (!triodosSessionId.value) return
+      try {
+        const response = await axios.get(
+          `/api/invoices/triodos/sessions/${triodosSessionId.value}`,
+          { headers: authHeaders() }
+        )
+        const status = response.data.status
+        triodosStatus.value = status
+        if (response.data.qrImage) triodosQr.value = response.data.qrImage
+        if (status === 'ready') {
+          await importTriodosCsv()
+          return
+        }
+        if (status === 'expired' || status === 'cancelled' || status === 'error') {
+          finishTriodos(response.data.message || 'The Triodos login stopped. Start again.')
+        }
+      } catch (err) {
+        console.error('Failed to check Triodos login:', err)
+        finishTriodos(apiMessage(err, 'The Triodos login expired. Start again.'))
+      }
+    }
+
+    const startTriodosDownload = async () => {
+      stopTriodosPoll()
+      triodosBusy.value = true
+      triodosQr.value = ''
+      bankUploadMessage.value = ''
+      try {
+        const response = await axios.post('/api/invoices/triodos/sessions', null, {
+          headers: authHeaders()
+        })
+        triodosSessionId.value = response.data.sessionId
+        triodosStatus.value = response.data.status
+        triodosQr.value = response.data.qrImage || ''
+        triodosTimer = setInterval(pollTriodos, 2000)
+      } catch (err) {
+        console.error('Failed to start Triodos login:', err)
+        finishTriodos(apiMessage(err, 'Failed to start the Triodos login.'))
+      }
+    }
+
+    const cancelTriodos = async () => {
+      const id = triodosSessionId.value
+      finishTriodos('')
+      if (!id) return
+      try {
+        await axios.delete(`/api/invoices/triodos/sessions/${id}`, { headers: authHeaders() })
+      } catch (err) {
+        console.error('Failed to cancel Triodos login:', err)
+      }
+    }
+
     const openBankFile = () => {
       if (bankFileInput.value) {
         bankFileInput.value.value = ''
@@ -981,13 +1110,7 @@ export default {
           headers: { Authorization: `Bearer ${token}` }
         })
         applyBankReview(response.data.review)
-        const imported = response.data.imported ?? 0
-        const duplicates = response.data.duplicates ?? 0
-        const skipped = response.data.skipped ?? 0
-        const parts = [`Imported ${imported} row${imported === 1 ? '' : 's'}.`]
-        if (duplicates) parts.push(`${duplicates} already imported.`)
-        if (skipped) parts.push(`${skipped} row${skipped === 1 ? '' : 's'} skipped.`)
-        bankUploadMessage.value = parts.join(' ')
+        bankUploadMessage.value = describeImport(response.data)
       } catch (err) {
         console.error('Failed to upload bank CSV:', err)
         bankUploadMessage.value = apiMessage(err, 'Failed to upload the bank CSV.')
@@ -1270,6 +1393,10 @@ export default {
       fetchBankReview()
     })
 
+    onUnmounted(() => {
+      stopTriodosPoll()
+    })
+
     return {
       gridData,
       users,
@@ -1314,6 +1441,12 @@ export default {
       bankFileInput,
       bankUploading,
       bankUploadMessage,
+      triodosBusy,
+      triodosQr,
+      triodosQrSrc,
+      triodosHint,
+      startTriodosDownload,
+      cancelTriodos,
       bankOpen,
       hideSmallBalances,
       visibleBankOpen,
@@ -1465,6 +1598,27 @@ export default {
 .bank-upload-message {
   margin: 0.75rem 0 0;
   color: #333;
+}
+
+.triodos-login {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  max-width: 36rem;
+}
+
+.triodos-login img {
+  width: 180px;
+  height: 180px;
+}
+
+.triodos-login p {
+  margin: 0 0 0.75rem;
 }
 
 .bank-review {
